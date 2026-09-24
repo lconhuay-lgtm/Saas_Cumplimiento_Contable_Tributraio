@@ -22,7 +22,7 @@ from app.schemas import (
     UltimoMensajeResumen,
 )
 from app.security import cifrar_clave_sol, descifrar_clave_sol, crear_token_ingreso_directo, decodificar_token
-from app.rate_limit import adquirir_slot_global, liberar_slot_global
+from app.rate_limit import adquirir_slot_global, liberar_slot_global, LimiteExcedido
 from app.queue_conn import cola_consultas
 from app.deps import get_usuario_actual
 
@@ -437,6 +437,15 @@ def ingreso_directo(empresa_id: str, token: str, db: Session = Depends(get_db)):
 
     if resultado is not None:
         logger.info(f"Ingreso directo para {empresa.ruc}: usando ticket pre-calentado (sin abrir Selenium).")
+        # Fix (analisis de "Ir a SUNAT" lento): el ticket es de un solo uso
+        # y compartido entre CUALQUIER empresa -- sin esto, el primer clic
+        # de la sesion es rapido pero el SIGUIENTE siempre cae al camino
+        # lento de abajo, porque nadie vuelve a pedir un prewarm hasta que
+        # se recarga la lista de empresas entera. Se encola en segundo
+        # plano (no se espera) para que la respuesta de ESTE clic no se
+        # demore por esto.
+        from app.ingreso_directo_cache import prewarm_ingreso_directo_job
+        cola_consultas.enqueue(prewarm_ingreso_directo_job, job_timeout="2m")
     else:
         # Mismo motivo que en el chequeo canario (Fase 3, bug real encontrado
         # el 18/09): esta funcion abre una sesion real de Selenium con
@@ -448,7 +457,23 @@ def ingreso_directo(empresa_id: str, token: str, db: Session = Depends(get_db)):
             display = Display(visible=False, size=(1600, 1000))
             display.start()
 
-        adquirir_slot_global()
+        try:
+            # Fix (analisis de "Ir a SUNAT" lento): timeout de espera de
+            # cupo mas corto que el default (240s) -- este endpoint
+            # responde a un usuario mirando una pestana en blanco en ese
+            # momento, no a un job de fondo. Mejor fallar rapido con un
+            # mensaje claro (y sugerir el boton manual) que dejarlo
+            # colgado hasta 4 minutos.
+            adquirir_slot_global(espera_maxima_seg=45)
+        except LimiteExcedido as e:
+            if display is not None:
+                display.stop()
+            return HTMLResponse(
+                _pagina_error_ingreso_directo(
+                    f"{e} Entra a SUNAT de la forma normal (boton 'Ir -- Op. en Linea') mientras tanto."
+                ),
+                status_code=503,
+            )
         try:
             from adapter import preparar_ingreso_directo
             resultado = preparar_ingreso_directo(ruc=empresa.ruc)
