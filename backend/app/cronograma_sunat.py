@@ -294,23 +294,28 @@ def _con_utc(momento: datetime) -> datetime:
     return momento
 
 
-# "Baja de oficio", "Baja provisional", "Baja definitiva" -- cualquier
-# variante de baja significa que el RUC ya no opera, asi que no tiene
-# sentido seguir avisando vencimientos de esa empresa. OJO: esto es
-# DISTINTO de condicion_domicilio (Habido/No Habido/No Hallado) -- una
-# empresa "No Habido" sigue activa como contribuyente y SI debe seguir
-# apareciendo en el cronograma (de hecho es la que mas conviene vigilar).
-_PATRON_BAJA = "%BAJA%"
+# "Baja de oficio", "Baja provisional", "Baja definitiva", "Suspension
+# temporal" -- cualquiera de estos estados significa que el RUC no tiene
+# obligaciones tributarias corrientes, asi que no tiene sentido seguir
+# avisando vencimientos de esa empresa (confirmado explicitamente: baja y
+# suspension se tratan igual). OJO: esto es DISTINTO de condicion_domicilio
+# (Habido/No Habido/No Hallado) -- una empresa "No Habido" sigue activa
+# como contribuyente y SI debe seguir apareciendo en el cronograma (de
+# hecho es la que mas conviene vigilar).
+_PATRONES_SIN_OBLIGACIONES = ("%BAJA%", "%SUSPENSION%")
 
 
 def _empresas_para_cronograma(db: Session, tenant_id: str) -> list[Empresa]:
     """
     Empresas del tenant que corresponde considerar para el cronograma:
-    activas (Empresa.activo=True) y sin un estado_contribuyente de baja
-    (de oficio, provisional o definitiva). No filtra por condicion_domicilio
-    a proposito -- "No Habido"/"No Hallado" siguen siendo contribuyentes
-    activos y deben seguir apareciendo.
+    activas (Empresa.activo=True) y sin un estado_contribuyente de baja o
+    suspension. No filtra por condicion_domicilio a proposito -- "No
+    Habido"/"No Hallado" siguen siendo contribuyentes activos y deben
+    seguir apareciendo.
     """
+    condiciones_excluidas = or_(*[
+        Empresa.estado_contribuyente.ilike(patron) for patron in _PATRONES_SIN_OBLIGACIONES
+    ])
     return (
         db.query(Empresa)
         .filter(
@@ -323,7 +328,7 @@ def _empresas_para_cronograma(db: Session, tenant_id: str) -> list[Empresa]:
             # recien creadas desaparecerian del cronograma por error.
             or_(
                 Empresa.estado_contribuyente.is_(None),
-                ~Empresa.estado_contribuyente.ilike(_PATRON_BAJA),
+                ~condiciones_excluidas,
             ),
         )
         .all()
