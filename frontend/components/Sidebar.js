@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
-import { LayoutDashboard, Building2, LogOut, Inbox, HeartPulse, CalendarDays, ListChecks } from "lucide-react";
+import { LayoutDashboard, Building2, LogOut, Inbox, HeartPulse, CalendarDays, ListChecks, Users } from "lucide-react";
 import { api, clearToken } from "../lib/api";
 
 const ENLACES = [
@@ -11,6 +11,7 @@ const ENLACES = [
   { href: "/tareas", label: "Tareas", Icon: ListChecks },
   { href: "/cronograma", label: "Cronograma", Icon: CalendarDays },
   { href: "/salud", label: "Salud del sistema", Icon: HeartPulse },
+  { href: "/equipo", label: "Mi equipo", Icon: Users },
 ];
 
 export default function Sidebar() {

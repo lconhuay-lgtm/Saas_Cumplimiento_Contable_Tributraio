@@ -69,6 +69,19 @@ export const api = {
       body: JSON.stringify({ nombre_tenant: nombreTenant, email, password }),
     }),
 
+  // Invitar un usuario adicional al MISMO tenant (equipo).
+  listarInvitaciones: () => apiFetch("/invitaciones"),
+
+  crearInvitacion: (email) => apiFetch("/invitaciones", { method: "POST", body: JSON.stringify({ email }) }),
+
+  cancelarInvitacion: (id) => apiFetch(`/invitaciones/${id}`, { method: "DELETE" }),
+
+  // Publicos (sin token) -- para quien recibe el link de invitacion.
+  infoInvitacion: (token) => apiFetch(`/invitaciones/${token}/info`),
+
+  aceptarInvitacion: (token, password) =>
+    apiFetch(`/invitaciones/${token}/aceptar`, { method: "POST", body: JSON.stringify({ password }) }),
+
   me: () => apiFetch("/auth/me"),
 
   // Cartera: usuarios del propio tenant, para el selector de "asignar a".

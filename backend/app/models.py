@@ -379,3 +379,32 @@ class TareaObligacion(Base):
     empresa: Mapped["Empresa"] = relationship(back_populates="tareas")
     obligacion: Mapped["EmpresaObligacion | None"] = relationship(back_populates="tareas")
     mensaje: Mapped["MensajeBuzon | None"] = relationship()
+
+
+class InvitacionUsuario(Base):
+    """
+    Invitacion para sumar un usuario adicional al MISMO tenant -- a
+    diferencia de /auth/registro (siempre crea un tenant nuevo), esto es
+    la puerta de entrada para que un cliente con varios usuarios (ej. un
+    estudio contable con un socio + un asistente) los conecte a la misma
+    cuenta en vez de terminar con un tenant por persona.
+
+    No hay una restriccion UNIQUE de (tenant_id, email) a proposito: una
+    invitacion cancelada o expirada no debe bloquear una nueva invitacion
+    al mismo email despues -- eso se valida en el router, revisando si ya
+    hay una invitacion pendiente (usado_en/cancelado_en ambos None y
+    todavia no expiro) antes de crear una nueva.
+    """
+    __tablename__ = "invitaciones_usuario"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    invitado_por_usuario_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    expira_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    usado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    tenant: Mapped["Tenant"] = relationship()

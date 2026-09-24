@@ -140,6 +140,32 @@ def enviar_alerta_canario(destinatario: str, detalle_fallos: list[str], recupera
         logger.error(f"No se pudo enviar el correo de alerta del canario a {destinatario}: {e}")
 
 
+def enviar_invitacion_equipo(destinatario: str, nombre_tenant: str, invitado_por_email: str, link: str) -> None:
+    """
+    Correo con el link para sumarse como usuario adicional al MISMO tenant
+    (ver routers/invitaciones.py) -- mismo doble modo (prueba a archivo /
+    SMTP real) que el resto de este modulo. A diferencia de los otros dos
+    correos, este SI lanza si el envio real falla (el llamador necesita
+    saber si la invitacion realmente salio, para poder avisarle a quien la
+    genero en vez de que crea que se mando y nunca llegue).
+    """
+    asunto = f"Te invitaron a unirte a {nombre_tenant} en Buzon SUNAT"
+    cuerpo = (
+        f"{invitado_por_email} te invito a sumarte como usuario de {nombre_tenant} "
+        "en el tablero de Buzon SUNAT.\n\n"
+        f"Para aceptar la invitacion y crear tu contrasena, entra a:\n{link}\n\n"
+        "Este link vence en 7 dias. Si no esperabas esta invitacion, "
+        "podes ignorar este correo."
+    )
+
+    if _modo_prueba_activo():
+        _guardar_modo_prueba(destinatario, asunto, cuerpo)
+        return
+
+    _enviar_smtp(destinatario, asunto, cuerpo)
+    logger.info(f"Correo de invitacion enviado a {destinatario} (tenant {nombre_tenant})")
+
+
 def _enviar_smtp(destinatario: str, asunto: str, cuerpo: str) -> None:
     mensaje = MIMEMultipart()
     mensaje["From"] = SMTP_FROM

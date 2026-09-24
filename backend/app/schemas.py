@@ -406,3 +406,31 @@ class DocumentoRecienteItem(BaseModel):
     tipo: str | None = None
     fecha_publicacion: datetime
     descubierto_en: datetime
+
+
+class InvitacionCreate(BaseModel):
+    email: EmailStr
+
+
+class InvitacionResponse(BaseModel):
+    id: str
+    email: str
+    invitado_por_email: str
+    link: str
+    creado_en: datetime
+    expira_en: datetime
+    usado_en: datetime | None
+    cancelado_en: datetime | None
+
+
+class InvitacionAceptarRequest(BaseModel):
+    password: str = Field(..., min_length=8)
+
+
+class InvitacionInfoPublica(BaseModel):
+    """Lo que ve la pantalla publica /invitacion/{token} ANTES de aceptar --
+    a proposito no expone nada mas del tenant que su nombre."""
+    valido: bool
+    motivo_invalido: str | None = None
+    tenant_nombre: str | None = None
+    email: str | None = None
