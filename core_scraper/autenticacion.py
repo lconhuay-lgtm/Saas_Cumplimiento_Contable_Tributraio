@@ -466,6 +466,38 @@ class AutenticacionMixin:
             
             # Esperar un momento después del login
             time.sleep(3)
+
+            # SUNAT agrego (24/09) un paso nuevo despues de enviar las
+            # credenciales: una pantalla "Autenticacion de Seguridad" que
+            # pide elegir entre "Continuar con codigo seguro" (2FA por
+            # SMS/correo, no automatizable) o "Continuar sin codigo"
+            # (btnWithOutCode -- sigue exactamente igual que antes). Sin
+            # este clic el login se queda a mitad de camino y todo lo que
+            # sigue (leer razon social, abrir el Buzon) fallaba con un
+            # error que no menciona esta pantalla para nada. Timeout corto
+            # a proposito: si SUNAT deja de mostrarla, no debe demorar el
+            # login normal ni un segundo de mas.
+            try:
+                boton_sin_codigo = WebDriverWait(self.driver, 6).until(
+                    EC.element_to_be_clickable((By.ID, "btnWithOutCode"))
+                )
+                boton_sin_codigo.click()
+                logger.info("Pantalla 'Autenticacion de Seguridad' detectada, se continuo sin codigo")
+                time.sleep(3)
+            except TimeoutException:
+                pass  # SUNAT no mostro esta pantalla esta vez -- sigue el flujo normal
+
+            # Si el usuario/clave son incorrectos, SUNAT muestra esta
+            # pantalla de error en vez de dejar seguir -- detectarla aca
+            # explicitamente evita que el resto del flujo siga a ciegas y
+            # termine fallando mucho mas tarde (al intentar abrir el
+            # Buzon) con un mensaje enganoso que no menciona para nada que
+            # el problema real es el usuario/clave (confirmado en
+            # produccion: paso exactamente eso con un RUC real).
+            if self.driver.find_elements(By.ID, "btnVolver"):
+                logger.error("SUNAT rechazo el usuario/clave SOL ingresados")
+                return False
+
             try:
                 self.driver.maximize_window()
             except Exception as e:
