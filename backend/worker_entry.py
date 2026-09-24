@@ -43,7 +43,52 @@ logger.info(f"Pantalla virtual lista en DISPLAY={os.environ.get('DISPLAY')}")
 from rq import Worker
 from app.queue_conn import redis_conn, cola_consultas
 
+
+def _reconciliar_al_arrancar():
+    """
+    Fix (hallazgo real, 24/09 -- diagnosticando por que "Ir a SUNAT" no
+    cargaba): si un worker anterior murio a mitad de un job (crash, OOM,
+    `docker restart`), el job queda "en_progreso" para siempre Y el cupo
+    que ocupaba en el semaforo global (sunat:consultas_en_curso, ver
+    app/rate_limit.py) nunca se libera -- adquirir_slot_global() nunca
+    vuelve a ver ese cupo libre, sin importar cuanto tiempo pase, porque
+    nadie ejecuta el liberar_slot_global() que le correspondia. Se
+    encontro asi en produccion: 5 jobs "en_progreso" de hasta 6 dias de
+    antiguedad, contador en 3/3 sin un solo Chrome corriendo.
+
+    Al arrancar un worker fresco, cualquier job que siga "en_progreso" es
+    por definicion huerfano -- este proceso todavia no proceso nada.
+    Simplificacion aceptada para la topologia actual (un solo worker, sin
+    replicas, confirmado en docker-compose.yml): resetear el contador
+    global a 0 asume que este worker es el unico dueño real de esos cupos.
+    Si en el futuro corre mas de un worker a la vez, esto se deberia
+    reemplazar por un esquema de tokens con TTL en vez de un contador
+    simple -- anotado, no bloqueante para el lanzamiento inicial.
+    """
+    from datetime import datetime, timezone
+    from app.database import SessionLocal
+    from app.models import ConsultaJob
+    from app.rate_limit import _CLAVE_CONCURRENCIA
+
+    db = SessionLocal()
+    try:
+        huerfanos = db.query(ConsultaJob).filter(ConsultaJob.estado == "en_progreso").all()
+        for job in huerfanos:
+            job.estado = "error"
+            job.finalizado_en = datetime.now(timezone.utc)
+            job.error = "Job huerfano: el worker anterior se reinicio o fallo antes de terminar (limpiado automaticamente al arrancar)"
+        if huerfanos:
+            db.commit()
+            logger.warning(f"Reconciliacion al arrancar: {len(huerfanos)} job(s) huerfano(s) marcados como error.")
+    finally:
+        db.close()
+
+    redis_conn.set(_CLAVE_CONCURRENCIA, 0)
+    logger.info("Reconciliacion al arrancar: contador de concurrencia SUNAT reseteado a 0.")
+
+
 if __name__ == "__main__":
+    _reconciliar_al_arrancar()
     logger.info("Worker RQ arrancando, escuchando la cola 'consultas_buzon'...")
     worker = Worker([cola_consultas], connection=redis_conn)
     # with_scheduler=True: necesario para que funcionen los enqueue_in() que
