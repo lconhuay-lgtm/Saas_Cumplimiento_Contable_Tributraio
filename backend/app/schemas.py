@@ -204,6 +204,14 @@ class DashboardResumen(BaseModel):
     proximos_vencimientos: list[ProximoVencimientoItem] = []
 
 
+class EmpresaEnProgresoItem(BaseModel):
+    """A pedido: que empresa(s) puntual(es) esta consultando el worker AHORA MISMO, no solo el conteo agregado."""
+    empresa_id: str
+    empresa_ruc: str
+    empresa_razon_social: str
+    etapa: str | None = None
+
+
 class EstadoConsultasResponse(BaseModel):
     en_curso: bool
     total: int = 0
@@ -212,6 +220,7 @@ class EstadoConsultasResponse(BaseModel):
     pendientes: int = 0
     con_error: int = 0
     iniciado_en: datetime | None = None
+    empresas_en_progreso: list[EmpresaEnProgresoItem] = []
 
 
 class EmpresaImportadaItem(BaseModel):

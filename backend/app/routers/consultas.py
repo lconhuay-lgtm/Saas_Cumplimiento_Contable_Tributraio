@@ -6,7 +6,14 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Empresa, ConsultaJob, CredencialSol, MensajeBuzon, Usuario
-from app.schemas import JobResponse, MensajeBuzonResponse, MensajeUpdate, MarcarLeidosResponse, EstadoConsultasResponse
+from app.schemas import (
+    JobResponse,
+    MensajeBuzonResponse,
+    MensajeUpdate,
+    MarcarLeidosResponse,
+    EstadoConsultasResponse,
+    EmpresaEnProgresoItem,
+)
 from app.deps import get_usuario_actual
 from app.queue_conn import cola_consultas
 from app.jobs import ejecutar_consulta_buzon
@@ -119,20 +126,35 @@ def estado_consultas(
     minutos para las empresas de este tenant.
     """
     desde = datetime.now(timezone.utc) - timedelta(minutes=VENTANA_ESTADO_CONSULTAS_MIN)
-    jobs_recientes = (
-        db.query(ConsultaJob)
+    filas_recientes = (
+        db.query(ConsultaJob, Empresa)
         .join(Empresa, Empresa.id == ConsultaJob.empresa_id)
         .filter(Empresa.tenant_id == usuario.tenant_id, ConsultaJob.creado_en >= desde)
         .all()
     )
 
-    if not jobs_recientes:
+    if not filas_recientes:
         return EstadoConsultasResponse(en_curso=False)
 
+    jobs_recientes = [j for j, _ in filas_recientes]
     completados = sum(1 for j in jobs_recientes if j.estado == "completado")
     en_progreso = sum(1 for j in jobs_recientes if j.estado == "en_progreso")
     pendientes = sum(1 for j in jobs_recientes if j.estado == "pendiente")
     con_error = sum(1 for j in jobs_recientes if j.estado == "error")
+
+    # A pedido: no solo el conteo agregado -- que empresa(s) puntuales esta
+    # procesando el worker AHORA MISMO, para que el boton no parezca
+    # "colgado" cuando en realidad esta trabajando en una consulta real.
+    empresas_en_progreso = [
+        EmpresaEnProgresoItem(
+            empresa_id=empresa.id,
+            empresa_ruc=empresa.ruc,
+            empresa_razon_social=empresa.razon_social,
+            etapa=job.etapa,
+        )
+        for job, empresa in filas_recientes
+        if job.estado == "en_progreso"
+    ]
 
     return EstadoConsultasResponse(
         en_curso=(pendientes + en_progreso) > 0,
@@ -142,6 +164,7 @@ def estado_consultas(
         pendientes=pendientes,
         con_error=con_error,
         iniciado_en=min(j.creado_en for j in jobs_recientes),
+        empresas_en_progreso=empresas_en_progreso,
     )
 
 

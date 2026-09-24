@@ -1,5 +1,5 @@
 "use client";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -128,6 +128,8 @@ function EmpresasPageContenido() {
   const [busqueda, setBusqueda] = useState("");
   // El Dashboard enlaza aca con ?hoy=1 para llegar directo con el filtro activado.
   const [soloHoy, setSoloHoy] = useState(searchParams.get("hoy") === "1");
+  const [filtroEstadoContribuyente, setFiltroEstadoContribuyente] = useState("");
+  const [filtroCondicionDomicilio, setFiltroCondicionDomicilio] = useState("");
   const [pdfRapido, setPdfRapido] = useState(null); // {empresaId, mensaje} | null
   const [estadoConsultas, setEstadoConsultas] = useState(null);
   const [generandoFicha, setGenerandoFicha] = useState({});
@@ -379,6 +381,17 @@ function EmpresasPageContenido() {
     }
   }
 
+  // Opciones armadas de los valores que de verdad trae SUNAT hoy (no una
+  // lista fija de catalogo) -- ver comentario junto a los <select> de abajo.
+  const opcionesEstadoContribuyente = useMemo(
+    () => Array.from(new Set(empresas.map((e) => e.estado_contribuyente).filter(Boolean))).sort(),
+    [empresas]
+  );
+  const opcionesCondicionDomicilio = useMemo(
+    () => Array.from(new Set(empresas.map((e) => e.condicion_domicilio).filter(Boolean))).sort(),
+    [empresas]
+  );
+
   const textoBusqueda = busqueda.trim().toLowerCase();
   const empresasFiltradas = empresas.filter((e) => {
     const coincideBusqueda =
@@ -386,7 +399,9 @@ function EmpresasPageContenido() {
       e.razon_social.toLowerCase().includes(textoBusqueda) ||
       e.ruc.includes(textoBusqueda);
     const coincideHoy = !soloHoy || e.mensajes_hoy > 0;
-    return coincideBusqueda && coincideHoy;
+    const coincideEstado = !filtroEstadoContribuyente || e.estado_contribuyente === filtroEstadoContribuyente;
+    const coincideDomicilio = !filtroCondicionDomicilio || e.condicion_domicilio === filtroCondicionDomicilio;
+    return coincideBusqueda && coincideHoy && coincideEstado && coincideDomicilio;
   });
   const empresasConNovedadesHoy = empresas.filter((e) => e.mensajes_hoy > 0).length;
 
@@ -494,6 +509,38 @@ function EmpresasPageContenido() {
                   </span>
                 )}
               </button>
+
+              {/* Opciones armadas de los valores que de verdad aparecen en tus
+                  empresas (no una lista fija) -- asi el filtro nunca queda
+                  vacio por una diferencia de texto entre como SUNAT lo
+                  escribe realmente y como se nombra "oficialmente". */}
+              <select
+                value={filtroEstadoContribuyente}
+                onChange={(e) => setFiltroEstadoContribuyente(e.target.value)}
+                title="Filtrar por Estado del Contribuyente"
+                className="shrink-0 rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-600 outline-none focus:border-accent"
+              >
+                <option value="">Estado: todos</option>
+                {opcionesEstadoContribuyente.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={filtroCondicionDomicilio}
+                onChange={(e) => setFiltroCondicionDomicilio(e.target.value)}
+                title="Filtrar por Condicion de Domicilio"
+                className="shrink-0 rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-600 outline-none focus:border-accent"
+              >
+                <option value="">Domicilio: todos</option>
+                {opcionesCondicionDomicilio.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <p className="mt-4 text-xs font-medium uppercase tracking-wide text-slate-400">
@@ -547,31 +594,40 @@ function BotonConsultarTodas({ onClick, consultando, estado, disabled }) {
   const enCurso = !!estado?.en_curso;
   const ocupado = consultando || enCurso;
   const porcentaje = enCurso && estado.total > 0 ? Math.round((estado.completados / estado.total) * 100) : 0;
+  const empresasEnProgreso = estado?.empresas_en_progreso || [];
+  // A pedido: mostrar CUAL empresa se esta consultando ahora mismo, no solo
+  // el conteo -- sin esto el boton parece "colgado" en una tanda larga
+  // (con muchas empresas, espaciadas ~45s entre si, puede tardar horas).
+  const primeraEnProgreso = empresasEnProgreso[0];
 
   return (
     <div className="group relative">
       <button
         onClick={onClick}
         disabled={ocupado || disabled}
-        className="flex items-center gap-1.5 rounded-lg border border-accent/30 bg-accent-light px-4 py-2 text-sm font-semibold text-accent transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+        className="flex max-w-xs items-center gap-1.5 rounded-lg border border-accent/30 bg-accent-light px-4 py-2 text-sm font-semibold text-accent transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
       >
         {ocupado ? (
-          <Loader2 size={15} strokeWidth={1.5} className="animate-spin" />
+          <Loader2 size={15} strokeWidth={1.5} className="shrink-0 animate-spin" />
         ) : (
-          <Zap size={15} strokeWidth={1.5} />
+          <Zap size={15} strokeWidth={1.5} className="shrink-0" />
         )}
-        {enCurso
-          ? `Consultando ${estado.completados}/${estado.total}`
-          : consultando
-          ? "Encolando..."
-          : "Consultar todas"}
+        <span className="truncate">
+          {enCurso
+            ? primeraEnProgreso
+              ? `${estado.completados}/${estado.total} · ${primeraEnProgreso.empresa_razon_social}`
+              : `Consultando ${estado.completados}/${estado.total}`
+            : consultando
+            ? "Encolando..."
+            : "Consultar todas"}
+        </span>
       </button>
 
       {/* "Nube" con el avance -- aparece al pasar el mouse mientras hay una
           tanda en curso, sea porque el usuario la disparo desde aca o
           porque la disparo el chequeo automatico (11am/7:30pm). */}
       {enCurso && (
-        <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-60 -translate-x-1/2 opacity-0 transition-opacity duration-200 ease-out group-hover:opacity-100">
+        <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-72 -translate-x-1/2 opacity-0 transition-opacity duration-200 ease-out group-hover:opacity-100">
           <div className="absolute -top-1.5 left-1/2 h-3 w-3 -translate-x-1/2 rotate-45 rounded-sm bg-ink" />
           <div className="rounded-xl bg-ink px-3.5 py-3 text-white shadow-soft-lg">
             <div className="flex items-center justify-between text-xs font-semibold">
@@ -588,6 +644,16 @@ function BotonConsultarTodas({ onClick, consultando, estado, disabled }) {
               {estado.completados} completada{estado.completados === 1 ? "" : "s"}, {estado.pendientes + estado.en_progreso} en cola
               {estado.con_error > 0 ? `, ${estado.con_error} con error` : ""}
             </p>
+            {empresasEnProgreso.length > 0 && (
+              <div className="mt-2 space-y-1 border-t border-white/10 pt-2">
+                {empresasEnProgreso.map((e) => (
+                  <p key={e.empresa_id} className="truncate text-[11px] text-white">
+                    <span className="font-semibold">{e.empresa_razon_social}</span>
+                    <span className="text-slate-300"> — {infoEtapaConsulta(e.etapa).etiqueta}</span>
+                  </p>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
