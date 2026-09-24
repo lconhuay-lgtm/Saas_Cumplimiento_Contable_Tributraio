@@ -130,6 +130,7 @@ function EmpresasPageContenido() {
   const [soloHoy, setSoloHoy] = useState(searchParams.get("hoy") === "1");
   const [filtroEstadoContribuyente, setFiltroEstadoContribuyente] = useState("");
   const [filtroCondicionDomicilio, setFiltroCondicionDomicilio] = useState("");
+  const [filtroUltimoDigito, setFiltroUltimoDigito] = useState("");
   const [pdfRapido, setPdfRapido] = useState(null); // {empresaId, mensaje} | null
   const [estadoConsultas, setEstadoConsultas] = useState(null);
   const [generandoFicha, setGenerandoFicha] = useState({});
@@ -401,7 +402,8 @@ function EmpresasPageContenido() {
     const coincideHoy = !soloHoy || e.mensajes_hoy > 0;
     const coincideEstado = !filtroEstadoContribuyente || e.estado_contribuyente === filtroEstadoContribuyente;
     const coincideDomicilio = !filtroCondicionDomicilio || e.condicion_domicilio === filtroCondicionDomicilio;
-    return coincideBusqueda && coincideHoy && coincideEstado && coincideDomicilio;
+    const coincideDigito = !filtroUltimoDigito || e.ruc.slice(-1) === filtroUltimoDigito;
+    return coincideBusqueda && coincideHoy && coincideEstado && coincideDomicilio && coincideDigito;
   });
   const empresasConNovedadesHoy = empresas.filter((e) => e.mensajes_hoy > 0).length;
 
@@ -538,6 +540,20 @@ function EmpresasPageContenido() {
                 {opcionesCondicionDomicilio.map((v) => (
                   <option key={v} value={v}>
                     {v}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={filtroUltimoDigito}
+                onChange={(e) => setFiltroUltimoDigito(e.target.value)}
+                title="Filtrar por ultimo digito del RUC"
+                className="shrink-0 rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-600 outline-none focus:border-accent"
+              >
+                <option value="">Ultimo digito: todos</option>
+                {["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
+                  <option key={d} value={d}>
+                    Termina en {d}
                   </option>
                 ))}
               </select>
@@ -1047,12 +1063,17 @@ function FormularioEmpresa({ onCreada }) {
   const [razonSocial, setRazonSocial] = useState("");
   const [usuarioSol, setUsuarioSol] = useState("");
   const [claveSol, setClaveSol] = useState("");
+  const [claveSolRepetir, setClaveSolRepetir] = useState("");
   const [error, setError] = useState("");
   const [guardando, setGuardando] = useState(false);
 
   async function onSubmit(e) {
     e.preventDefault();
     setError("");
+    if (claveSol !== claveSolRepetir) {
+      setError("La clave SOL y su repeticion no coinciden.");
+      return;
+    }
     setGuardando(true);
     try {
       await api.crearEmpresa({
@@ -1110,6 +1131,16 @@ function FormularioEmpresa({ onCreada }) {
             type="password"
             value={claveSol}
             onChange={(e) => setClaveSol(e.target.value)}
+            required
+            className="campo-input"
+          />
+        </Campo>
+        <Campo id="claveSolRepetir" label="Repetir clave SOL">
+          <input
+            id="claveSolRepetir"
+            type="password"
+            value={claveSolRepetir}
+            onChange={(e) => setClaveSolRepetir(e.target.value)}
             required
             className="campo-input"
           />

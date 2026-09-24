@@ -87,6 +87,14 @@ class EmpresaUpdate(BaseModel):
     asignado_a_usuario_id: str | None = None
 
 
+class EmpresaCredencialesUpdate(BaseModel):
+    """Cambiar el usuario/clave SOL guardados de una empresa -- endpoint
+    separado de EmpresaUpdate a proposito, mismo criterio que credenciales_sol
+    es su propia tabla (aislamiento de lo sensible)."""
+    usuario_sol: str = Field(..., min_length=1, max_length=100)
+    clave_sol: str = Field(..., min_length=1, max_length=200)
+
+
 class JobResponse(BaseModel):
     id: str
     empresa_id: str

@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, CheckCheck, Mail, MailOpen, FileText, Loader2, Inbox, Filter, X, RadioTower, Award, ListChecks, Plus, Trash2, UserCog, ClipboardPlus, ClipboardCheck } from "lucide-react";
+import { ArrowLeft, CheckCheck, Mail, MailOpen, FileText, Loader2, Inbox, Filter, X, RadioTower, Award, ListChecks, Plus, Trash2, UserCog, ClipboardPlus, ClipboardCheck, KeyRound } from "lucide-react";
 import Sidebar from "../../../components/Sidebar";
 import { api, getToken } from "../../../lib/api";
 import { colorPuntoTipo } from "../../../lib/tiposMensaje";
@@ -34,6 +34,7 @@ export default function DetalleEmpresaPage() {
   // una creada (boton "Crear tarea" se vuelve "Ver tarea").
   const [tareasPorMensaje, setTareasPorMensaje] = useState({});
   const [mensajeParaTarea, setMensajeParaTarea] = useState(null); // mensaje completo | null
+  const [mostrarEditarCredenciales, setMostrarEditarCredenciales] = useState(false);
 
   useEffect(() => {
     if (!getToken()) {
@@ -132,6 +133,18 @@ export default function DetalleEmpresaPage() {
         es_buen_contribuyente: !empresa.es_buen_contribuyente,
       });
       cargar();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async function eliminarEmpresa() {
+    if (!confirm(`Eliminar "${empresa.razon_social}"? Se borra tambien su historial de mensajes, tareas y credenciales guardadas. Esto no se puede deshacer.`)) {
+      return;
+    }
+    try {
+      await api.eliminarEmpresa(id);
+      router.push("/empresas");
     } catch (err) {
       alert(err.message);
     }
@@ -262,6 +275,26 @@ export default function DetalleEmpresaPage() {
               <CheckCheck size={15} strokeWidth={1.5} />
               Marcar todos como leidos
             </button>
+            {empresa && (
+              <button
+                onClick={() => setMostrarEditarCredenciales(true)}
+                title="Cambiar el usuario/clave SOL guardados de esta empresa"
+                className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-500 transition-all duration-300 ease-out hover:border-accent hover:text-accent"
+              >
+                <KeyRound size={15} strokeWidth={1.5} />
+                Credenciales
+              </button>
+            )}
+            {empresa && (
+              <button
+                onClick={eliminarEmpresa}
+                title="Eliminar esta empresa y todo su historial"
+                className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-500 transition-all duration-300 ease-out hover:border-red-300 hover:text-red-600"
+              >
+                <Trash2 size={15} strokeWidth={1.5} />
+                Eliminar
+              </button>
+            )}
           </div>
         </div>
 
@@ -440,7 +473,87 @@ export default function DetalleEmpresaPage() {
             }}
           />
         )}
+
+        {mostrarEditarCredenciales && (
+          <ModalEditarCredenciales
+            empresaId={id}
+            onCerrar={() => setMostrarEditarCredenciales(false)}
+            onGuardado={() => {
+              setMostrarEditarCredenciales(false);
+              cargar();
+            }}
+          />
+        )}
       </main>
+    </div>
+  );
+}
+
+function ModalEditarCredenciales({ empresaId, onCerrar, onGuardado }) {
+  const [usuarioSol, setUsuarioSol] = useState("");
+  const [claveSol, setClaveSol] = useState("");
+  const [claveSolRepetir, setClaveSolRepetir] = useState("");
+  const [error, setError] = useState("");
+  const [guardando, setGuardando] = useState(false);
+
+  async function onSubmit(e) {
+    e.preventDefault();
+    setError("");
+    if (claveSol !== claveSolRepetir) {
+      setError("La clave SOL y su repeticion no coinciden.");
+      return;
+    }
+    setGuardando(true);
+    try {
+      await api.actualizarCredencialesEmpresa(empresaId, usuarioSol, claveSol);
+      onGuardado();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+      <div className="surface-card w-full max-w-sm p-6">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-bold text-ink">Cambiar usuario/clave SOL</h3>
+          <button onClick={onCerrar} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-ink" aria-label="Cerrar">
+            <X size={16} strokeWidth={1.5} />
+          </button>
+        </div>
+        <p className="mt-1 text-xs text-slate-500">
+          Reemplaza por completo lo guardado -- usalo cuando el cliente cambio su clave en SUNAT.
+        </p>
+
+        {error && (
+          <div className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>
+        )}
+
+        <form onSubmit={onSubmit} className="mt-4 space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Usuario SOL</label>
+            <input value={usuarioSol} onChange={(e) => setUsuarioSol(e.target.value)} required className="campo-input" />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Clave SOL</label>
+            <input type="password" value={claveSol} onChange={(e) => setClaveSol(e.target.value)} required className="campo-input" />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Repetir clave SOL</label>
+            <input type="password" value={claveSolRepetir} onChange={(e) => setClaveSolRepetir(e.target.value)} required className="campo-input" />
+          </div>
+          <button
+            type="submit"
+            disabled={guardando}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent py-2.5 text-sm font-semibold text-white shadow-soft transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-accent-dark disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {guardando && <Loader2 size={15} strokeWidth={2} className="animate-spin" />}
+            {guardando ? "Guardando..." : "Guardar credenciales"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

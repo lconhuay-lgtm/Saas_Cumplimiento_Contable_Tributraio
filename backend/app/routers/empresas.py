@@ -17,6 +17,7 @@ from app.schemas import (
     EmpresaCreate,
     EmpresaResponse,
     EmpresaUpdate,
+    EmpresaCredencialesUpdate,
     ImportarEmpresasResponse,
     EmpresaImportadaItem,
     UltimoMensajeResumen,
@@ -358,6 +359,41 @@ def actualizar_empresa(
                     detail="El usuario a asignar no existe o no pertenece a este tenant",
                 )
         empresa.asignado_a_usuario_id = nuevo_asignado_id
+    db.commit()
+    db.refresh(empresa)
+    return _con_estadisticas([empresa], db)[0]
+
+
+@router.patch("/{empresa_id}/credenciales", response_model=EmpresaResponse)
+def actualizar_credenciales_empresa(
+    empresa_id: str,
+    data: EmpresaCredencialesUpdate,
+    usuario: Usuario = Depends(get_usuario_actual),
+    db: Session = Depends(get_db),
+):
+    """
+    Cambiar el usuario/clave SOL guardados -- por ejemplo cuando el cliente
+    cambio su clave en SUNAT y las consultas empiezan a fallar por
+    credenciales invalidas. Re-cifra de cero (nueva DEK, igual que al crear
+    la empresa) en vez de reusar la DEK vieja -- mas simple y sigue el
+    mismo patron de "una DEK al azar por operacion de cifrado".
+    """
+    empresa = (
+        db.query(Empresa)
+        .filter(Empresa.id == empresa_id, Empresa.tenant_id == usuario.tenant_id)
+        .first()
+    )
+    if not empresa:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada")
+
+    credencial = db.query(CredencialSol).filter(CredencialSol.empresa_id == empresa.id).first()
+    if not credencial:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Esta empresa no tiene credenciales SOL guardadas")
+
+    clave_cifrada, dek_cifrada = cifrar_clave_sol(data.clave_sol)
+    credencial.usuario_sol = data.usuario_sol
+    credencial.clave_cifrada = clave_cifrada
+    credencial.dek_cifrada = dek_cifrada
     db.commit()
     db.refresh(empresa)
     return _con_estadisticas([empresa], db)[0]

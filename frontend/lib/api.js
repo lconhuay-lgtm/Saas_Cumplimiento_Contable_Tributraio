@@ -96,6 +96,12 @@ export const api = {
   actualizarEmpresa: (id, data) =>
     apiFetch(`/empresas/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
 
+  actualizarCredencialesEmpresa: (id, usuarioSol, claveSol) =>
+    apiFetch(`/empresas/${id}/credenciales`, {
+      method: "PATCH",
+      body: JSON.stringify({ usuario_sol: usuarioSol, clave_sol: claveSol }),
+    }),
+
   eliminarEmpresa: (id) => apiFetch(`/empresas/${id}`, { method: "DELETE" }),
 
   consultarEmpresa: (id) => apiFetch(`/empresas/${id}/consultar`, { method: "POST" }),
