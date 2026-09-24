@@ -1,5 +1,6 @@
 """Punto de entrada de la API -- Fase 0 + Fase 1."""
 import logging
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,9 +13,19 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# Fix Fase R3: antes era allow_origins=["*"] con allow_credentials=True --
+# cualquier sitio podia intentar llamar a la API en nombre de un usuario con
+# el token en localStorage. ALLOWED_ORIGINS es una lista separada por comas
+# (ver .env.example); el default de abajo solo cubre desarrollo local.
+_ALLOWED_ORIGINS = [
+    origen.strip()
+    for origen in os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+    if origen.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ajustar a dominios reales antes de produccion
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

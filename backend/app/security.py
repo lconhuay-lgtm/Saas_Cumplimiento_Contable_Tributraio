@@ -30,7 +30,26 @@ from passlib.context import CryptContext
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "dev-secret-cambiar-en-produccion")
+# Fix Fase R3: antes JWT_SECRET_KEY tenia un default hardcodeado que
+# funcionaba igual en dev y en produccion -- si alguna vez se desplegaba sin
+# fijar la variable de entorno, cualquiera podia forjar tokens validos para
+# cualquier tenant con ese valor, que es publico (esta en este archivo).
+# Ahora: en ENTORNO=prod, falta la variable = la app ni arranca. En dev seguimos
+# permitiendo el fallback para no exigir configuracion extra en cada clon local.
+ENTORNO = os.environ.get("ENTORNO", "dev")
+JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "")
+if not JWT_SECRET_KEY:
+    if ENTORNO == "prod":
+        raise RuntimeError(
+            "JWT_SECRET_KEY es obligatorio cuando ENTORNO=prod -- sin esto, "
+            "cualquiera puede forjar tokens validos para cualquier tenant. "
+            'Generar uno con: python -c "import secrets; print(secrets.token_urlsafe(64))"'
+        )
+    print(
+        "[AVISO] JWT_SECRET_KEY no esta configurada -- usando un valor fijo de "
+        "desarrollo (no usar en produccion, ver ENTORNO en .env.example)."
+    )
+    JWT_SECRET_KEY = "dev-secret-cambiar-en-produccion"
 JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES", 1440))
 
