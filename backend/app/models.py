@@ -45,6 +45,16 @@ class Usuario(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     rol: Mapped[str] = mapped_column(String(20), default="admin", nullable=False)  # admin | miembro
+    # Staff de LA PLATAFORMA (nuestro equipo), NO un rol dentro del tenant del
+    # cliente -- separado a proposito de `rol` de arriba. Antes de esto,
+    # /admin/chequeo-nocturno, /admin/enviar-resumenes, /admin/canario/ejecutar
+    # y /admin/reclasificar-mensajes solo exigian estar logueado, sin importar
+    # el tenant: cualquier estudio contable registrado podia disparar el
+    # chequeo nocturno de TODOS los tenants o forzar la reclasificacion de
+    # todos los mensajes de la base (fix Fase R2). Default False -- se marca
+    # a mano en la base para las cuentas del equipo operador, nunca desde un
+    # endpoint publico.
+    es_staff_plataforma: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
     ultimo_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

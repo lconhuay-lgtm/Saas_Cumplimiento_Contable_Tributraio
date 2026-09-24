@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Usuario, MensajeBuzon, CanarioCheck, ConsultaJob, Empresa
-from app.deps import get_usuario_actual
+from app.deps import get_usuario_actual, get_staff_actual
 from app.scheduler_job import (
     encolar_chequeo_nocturno,
     enviar_resumenes_diarios,
@@ -46,7 +46,7 @@ def _con_utc(momento):
 @router.post("/chequeo-nocturno")
 def disparar_chequeo_nocturno(
     espaciado_seg: int = 45,
-    usuario: Usuario = Depends(get_usuario_actual),
+    usuario: Usuario = Depends(get_staff_actual),
 ):
     return encolar_chequeo_nocturno(espaciado_seg=espaciado_seg)
 
@@ -54,14 +54,14 @@ def disparar_chequeo_nocturno(
 @router.post("/enviar-resumenes")
 def disparar_resumenes(
     horas_atras: int = 12,
-    usuario: Usuario = Depends(get_usuario_actual),
+    usuario: Usuario = Depends(get_staff_actual),
 ):
     return enviar_resumenes_diarios(horas_atras=horas_atras)
 
 
 @router.post("/reclasificar-mensajes")
 def reclasificar_mensajes(
-    usuario: Usuario = Depends(get_usuario_actual),
+    usuario: Usuario = Depends(get_staff_actual),
     db: Session = Depends(get_db),
 ):
     mensajes = db.query(MensajeBuzon).all()
@@ -77,7 +77,7 @@ def reclasificar_mensajes(
 
 @router.post("/canario/ejecutar")
 def disparar_chequeo_canario(
-    usuario: Usuario = Depends(get_usuario_actual),
+    usuario: Usuario = Depends(get_staff_actual),
 ):
     """Corre el chequeo canario ahora mismo, sin esperar al intervalo programado (ver scheduler_entry.py)."""
     return ejecutar_chequeo_canario()
