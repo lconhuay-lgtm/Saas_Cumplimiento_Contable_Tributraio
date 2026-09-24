@@ -112,6 +112,17 @@ Cada credencial SOL se cifra con su propia clave (DEK) generada al azar; esa DEK
 
 **Importante:** `CREDENCIALES_FERNET_KEY` debe existir en al menos 2 lugares independientes (el `.env` del servidor y el gestor de contraseñas del equipo) — perderla sin backup significa que ningún cliente puede volver a consultar SUNAT hasta que vuelva a cargar su usuario/clave SOL. Ver `RUNBOOK_OPERACIONES.md` para el procedimiento completo si esto llega a pasar.
 
+## Pruebas automatizadas
+
+Suite mínima (Fase R6 del plan de remediación) sobre SQLite en memoria + fakeredis -- no toca Postgres/Redis reales, no depende de que `docker-compose` esté levantado:
+
+```
+docker compose exec backend pip install -r requirements-test.txt   # una sola vez
+docker compose exec backend python -m pytest tests/ -v
+```
+
+Prioriza lo que más daño hace si se rompe sin avisar, no cobertura total: aislamiento entre tenants en `/admin` (`test_multi_tenant_admin.py`, regresión directa del bug de la Fase R1), el gate de staff de plataforma (`test_staff_only.py`, Fase R2), cifrado de credenciales (`test_cifrado.py`), rate limiting (`test_rate_limit.py`) y auth básico (`test_auth.py`).
+
 ## Estado
 
 **Fase 0 (semanas 1-2) — completa y verificada.**

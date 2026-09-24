@@ -1,0 +1,7 @@
+# Dependencias SOLO para correr la suite de pruebas (Fase R6) -- no se
+# instalan en la imagen de produccion (backend/Dockerfile no las usa).
+-r requirements.txt
+
+pytest==8.3.4
+httpx==0.28.1
+fakeredis==2.26.2
