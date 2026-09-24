@@ -95,14 +95,28 @@ def obtener_salud(
     tenants) y las consultas normales (lo que de verdad usan los clientes)
     -- porque pueden fallar por razones distintas y mezclarlas escondería
     cual de las dos esta realmente rota.
+
+    Filtrado por tenant_id en ambas queries (fix Fase R1): antes devolvia
+    canario_checks y consultas_jobs de TODOS los tenants sin filtrar, asi
+    que cualquier usuario logueado veia metricas agregadas de otros
+    estudios contables. Efecto colateral esperado: solo el tenant dueño de
+    la empresa marcada es_canario vera datos de canario aqui -- correcto,
+    porque ese chequeo es una cuenta de prueba interna, no un dato de
+    cliente que deba ser publico entre tenants.
     """
     desde = datetime.now(timezone.utc) - timedelta(hours=horas_atras)
 
-    tiene_empresa_canario = db.query(Empresa.id).filter(Empresa.es_canario.is_(True)).first() is not None
+    tiene_empresa_canario = (
+        db.query(Empresa.id)
+        .filter(Empresa.es_canario.is_(True), Empresa.tenant_id == usuario.tenant_id)
+        .first()
+        is not None
+    )
 
     checks = (
         db.query(CanarioCheck)
-        .filter(CanarioCheck.ejecutado_en >= desde)
+        .join(Empresa, Empresa.id == CanarioCheck.empresa_id)
+        .filter(CanarioCheck.ejecutado_en >= desde, Empresa.tenant_id == usuario.tenant_id)
         .order_by(CanarioCheck.ejecutado_en.desc())
         .all()
     )
@@ -141,7 +155,9 @@ def obtener_salud(
 
     jobs = (
         db.query(ConsultaJob)
+        .join(Empresa, Empresa.id == ConsultaJob.empresa_id)
         .filter(
+            Empresa.tenant_id == usuario.tenant_id,
             ConsultaJob.estado.in_(["completado", "error"]),
             ConsultaJob.finalizado_en.isnot(None),
             ConsultaJob.finalizado_en >= desde,
@@ -181,13 +197,17 @@ def obtener_errores_recientes(
     de "SUNAT cambio algo, ¿que se revisa primero?": ver de un vistazo si
     el problema es solo del canario, solo de consultas de clientes, o
     ambos (lo que apunta mas fuerte a un cambio real en el portal).
+
+    Filtrado por tenant_id en ambas queries (fix Fase R1): esta era la
+    fuga mas seria del panel de salud -- devolvia empresa_ruc y
+    empresa_razon_social de CUALQUIER tenant a cualquier usuario logueado.
     """
     items: list[ErrorRecienteItem] = []
 
     checks_fallidos = (
         db.query(CanarioCheck, Empresa)
         .join(Empresa, Empresa.id == CanarioCheck.empresa_id)
-        .filter(CanarioCheck.exito.is_(False))
+        .filter(CanarioCheck.exito.is_(False), Empresa.tenant_id == usuario.tenant_id)
         .order_by(CanarioCheck.ejecutado_en.desc())
         .limit(limite)
         .all()
@@ -204,7 +224,7 @@ def obtener_errores_recientes(
     jobs_fallidos = (
         db.query(ConsultaJob, Empresa)
         .join(Empresa, Empresa.id == ConsultaJob.empresa_id)
-        .filter(ConsultaJob.estado == "error")
+        .filter(ConsultaJob.estado == "error", Empresa.tenant_id == usuario.tenant_id)
         .order_by(ConsultaJob.finalizado_en.desc())
         .limit(limite)
         .all()
