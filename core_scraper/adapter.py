@@ -253,7 +253,32 @@ def _escanear_mensajes(navegador, limite):
     clickeable (para poder entrar a descargar su documento). Se separa de
     _leer_lista_mensajes porque ese solo necesita texto -- aca ademas
     necesitamos la referencia al elemento del DOM.
+
+    IMPORTANTE (confirmado en produccion, 24/09): el listado de mensajes se
+    carga DENTRO de un iframe -- segun por donde termino navegando
+    _navegar_a_buzon_notificaciones() (y sobre todo en cuentas donde SUNAT
+    mostro el modal extra de "Flujo 1" tras el login), el driver a veces
+    queda posicionado en el contexto de arriba (default_content) en vez de
+    dentro de ese iframe. La pagina se ve perfecta a simple vista (una
+    captura de pantalla lo confirma) pero find_elements busca en el
+    contexto EQUIVOCADO y no encuentra nada -- una empresa con mensajes
+    reales quedaba guardada como si el buzon estuviera vacio. Por eso se
+    busca primero en default_content, y si no aparece nada ahi, se recorre
+    cada iframe de primer nivel hasta encontrar el que sí tiene los
+    mensajes, dejando el driver posicionado ahi antes de escanear.
     """
+    if not navegador.driver.find_elements(By.CLASS_NAME, "fecPublica"):
+        navegador.driver.switch_to.default_content()
+        for iframe in navegador.driver.find_elements(By.TAG_NAME, "iframe"):
+            try:
+                navegador.driver.switch_to.frame(iframe)
+            except Exception:
+                navegador.driver.switch_to.default_content()
+                continue
+            if navegador.driver.find_elements(By.CLASS_NAME, "fecPublica"):
+                break
+            navegador.driver.switch_to.default_content()
+
     resultado = []
     vistos = set()
     elementos_fecha = navegador.driver.find_elements(By.CLASS_NAME, "fecPublica")

@@ -51,7 +51,27 @@ class NavegacionBuzonMixin:
             logger.info(f"Número de iframes encontrados: {len(iframes)}")
             
             # Intentar varias estrategias para encontrar el Buzón Notificaciones
-            
+
+            # Estrategia 0: id estable del link real (confirmado en produccion,
+            # 24/09, tras el rediseno de SUNAT -- el texto del link cambio de
+            # "Buzón Notificaciones" a "Buzón Electrónico", por eso las
+            # Estrategias 1 y 2 (XPath viejo y busqueda por ese texto viejo)
+            # empezaron a fallar siempre y el flujo dependia por completo de
+            # los fallbacks 3/4, que son mas lentos y no siempre confiables
+            # (a veces terminan en una vista sin la lista de mensajes
+            # cargada). id="aOpcionBuzon" es el selector mas estable posible.
+            try:
+                logger.info("Estrategia 0: Buscando Buzón Electrónico por id 'aOpcionBuzon'...")
+                buzon_elemento = WebDriverWait(self.driver, 5).until(
+                    EC.element_to_be_clickable((By.ID, "aOpcionBuzon"))
+                )
+                buzon_elemento.click()
+                logger.info("Clic exitoso usando Estrategia 0")
+                time.sleep(3)
+                return True
+            except Exception as e:
+                logger.warning(f"Estrategia 0 falló: {str(e)}")
+
             # Estrategia 1: Buscar directamente sin cambiar a iframe
             try:
                 logger.info("Estrategia 1: Buscando Buzón Notificaciones en la página principal...")
