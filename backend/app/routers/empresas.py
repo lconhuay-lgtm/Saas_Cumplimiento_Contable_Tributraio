@@ -3,7 +3,7 @@ import io
 import os
 import html
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
@@ -22,9 +22,15 @@ from app.schemas import (
     UltimoMensajeResumen,
 )
 from app.security import cifrar_clave_sol, descifrar_clave_sol, crear_token_ingreso_directo, decodificar_token
-from app.rate_limit import adquirir_slot_global, liberar_slot_global, LimiteExcedido
+from app.rate_limit import adquirir_slot_global, liberar_slot_global, verificar_limite_ruc, LimiteExcedido
 from app.queue_conn import cola_consultas
+from app.jobs import ejecutar_consulta_buzon
 from app.deps import get_usuario_actual
+
+# Mismo espaciado que "Consultar todas" (ver routers/consultas.py) -- se
+# repite aca en vez de importarlo para no crear una dependencia cruzada
+# entre routers por una sola constante.
+ESPACIADO_IMPORTACION_SEG = 45
 
 logger = logging.getLogger("app.routers.empresas")
 
@@ -158,7 +164,38 @@ def crear_empresa(
     db.add(credencial)
     db.commit()
     db.refresh(empresa)
+
+    _encolar_consulta_automatica(empresa, usuario, db)
+
     return empresa
+
+
+def _encolar_consulta_automatica(empresa: Empresa, usuario: Usuario, db: Session) -> None:
+    """
+    A pedido: al agregar una empresa nueva, consultarla en vivo enseguida
+    en vez de dejarla "vacia" hasta que alguien se acuerde de apretar
+    "Consultar" a mano -- asi el usuario ya tiene mensajes reales para
+    mapear la empresa desde el primer momento. Una consulta normal ya trae
+    hasta 20 mensajes (el limite de siempre, ver adapter.consultar_buzon),
+    mas que suficiente para eso -- no hace falta un modo especial de
+    "primera consulta".
+
+    Nunca debe tumbar la creacion de la empresa en si: si el RUC choca con
+    el limite por-RUC (caso extremadamente raro para un RUC recien creado,
+    solo pasaria si se borro y se volvio a crear el mismo RUC segundos
+    antes) simplemente no se encola nada, la empresa queda creada igual.
+    """
+    try:
+        verificar_limite_ruc(empresa.ruc)
+    except LimiteExcedido:
+        logger.info(f"Consulta automatica omitida para {empresa.ruc} (limite por RUC, caso raro para una empresa nueva)")
+        return
+
+    job = ConsultaJob(empresa_id=empresa.id, solicitado_por=usuario.id, estado="pendiente")
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    cola_consultas.enqueue(ejecutar_consulta_buzon, job.id, job_timeout="10m")
 
 
 def _limpiar_ruc(valor) -> str:
@@ -250,6 +287,26 @@ async def importar_empresas(
                 dek_cifrada=dek_cifrada,
             ))
             db.commit()
+
+            # A pedido: igual que crear_empresa() de a una, pero espaciadas
+            # (mismo patron que "Consultar todas") para no mandarle a SUNAT
+            # una rafaga de decenas de logins de golpe. Un fallo encolando
+            # NUNCA debe marcar la fila como error -- la empresa ya quedo
+            # creada bien, el usuario siempre puede apretar "Consultar" a
+            # mano despues si esto no llegara a dispararse.
+            try:
+                job = ConsultaJob(empresa_id=empresa.id, solicitado_por=usuario.id, estado="pendiente")
+                db.add(job)
+                db.commit()
+                db.refresh(job)
+                cola_consultas.enqueue_in(
+                    timedelta(seconds=creadas * ESPACIADO_IMPORTACION_SEG),
+                    ejecutar_consulta_buzon,
+                    job.id,
+                    job_timeout="10m",
+                )
+            except Exception as e:
+                logger.warning(f"No se pudo encolar la consulta automatica para {ruc} recien importado: {e}")
 
             creadas += 1
             detalle.append(EmpresaImportadaItem(ruc=ruc, razon_social=razon_social, resultado="creada"))

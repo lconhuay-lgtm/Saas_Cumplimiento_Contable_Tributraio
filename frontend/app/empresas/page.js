@@ -37,6 +37,19 @@ import { colorBadgeTipo } from "../../lib/tiposMensaje";
 // como siempre. Nunca pasamos ninguna credencial por esta URL.
 const URL_SUNAT_MENU = "https://e-menu.sunat.gob.pe/cl-ti-itmenu/MenuInternet.htm?pestana=*&agrupacion=*";
 
+// "Consultar todas" espacia cada empresa ~45s de la siguiente para no
+// parecer trafico sospechoso ante SUNAT -- con varias decenas de empresas
+// eso ya son horas, no "unos minutos". Mostrar la estimacion real evita
+// que el boton parezca colgado cuando en realidad esta avanzando bien,
+// solo que despacio por diseño.
+function formatoDuracionEstimada(cantidadEmpresas, espaciadoSeg = 45) {
+  const totalMin = Math.ceil((cantidadEmpresas * espaciadoSeg) / 60);
+  if (totalMin < 60) return `~${totalMin} minuto${totalMin === 1 ? "" : "s"}`;
+  const horas = Math.floor(totalMin / 60);
+  const minutosRestantes = totalMin % 60;
+  return `~${horas}h${minutosRestantes > 0 ? ` ${minutosRestantes}min` : ""}`;
+}
+
 // Etapas que reporta el backend mientras se genera la Ficha RUC (ver
 // core_scraper/adapter.py::generar_ficha_ruc_pdf y app/jobs.py) -- el
 // porcentaje es una estimacion fija por etapa (no hay forma de medir
@@ -247,7 +260,18 @@ function EmpresasPageContenido() {
   }
 
   async function consultarTodas() {
-    if (!confirm(`Esto va a consultar en vivo las ${empresas.filter((e) => e.activo).length} empresa(s) activa(s), espaciadas en el tiempo para no sobrecargar SUNAT. Puede tardar varios minutos en total. Continuar?`)) {
+    const cantidad = empresas.filter((e) => e.activo).length;
+    // Espaciadas ~45s entre si para no parecer trafico sospechoso ante
+    // SUNAT (ver ESPACIADO_CONSULTAR_TODAS_SEG en el backend) -- con
+    // varias decenas de empresas esto es realmente HORAS, no "unos
+    // minutos" como decia antes este mensaje (eso hacia parecer que el
+    // boton estaba colgado cuando en realidad estaba avanzando bien,
+    // solo que muy despacio por diseño).
+    if (
+      !confirm(
+        `Esto va a consultar en vivo las ${cantidad} empresa(s) activa(s), espaciadas ~45s entre si para no sobrecargar SUNAT -- tiempo estimado total: ${formatoDuracionEstimada(cantidad)}. No hace falta dejar esta pantalla abierta, se sigue procesando igual. Continuar?`
+      )
+    ) {
       return;
     }
     setConsultandoTodas(true);
@@ -258,7 +282,8 @@ function EmpresasPageContenido() {
           (resultado.saltadas_sin_credencial > 0
             ? `, ${resultado.saltadas_sin_credencial} salteada(s) por falta de credenciales.`
             : ".") +
-          " Se iran procesando de a poco -- revisa el Dashboard o cada empresa en unos minutos."
+          ` Tiempo estimado total: ${formatoDuracionEstimada(resultado.empresas_encoladas, resultado.espaciado_seg)}. ` +
+          "Se iran procesando de a poco -- el boton va a mostrar el avance (X/Y) mientras tanto."
       );
       await cargar();
     } catch (err) {
