@@ -250,16 +250,21 @@ class DescargaDocumentosMixin:
                 # Si encontramos un enlace con javascript:goArchivoDescarga, extraer los parámetros
                 if href and 'goArchivoDescarga' in href:
                     logger.info(f"Encontrado enlace con goArchivoDescarga: {href}")
-                    
-                    # Extraer los parámetros: goArchivoDescarga(id_archivo, algo, cod_mensaje)
+
+                    # Ejecutar el JavaScript del propio link TAL CUAL, en vez
+                    # de parsear los parametros a mano y reconstruir la
+                    # llamada asumiendo siempre 3 (id_archivo, 0, cod_mensaje)
+                    # -- confirmado en produccion (24/09) que algunas
+                    # notificaciones (ej. "Resolucion Coactiva Nro: ...")
+                    # traen goArchivoDescarga con solo 2 parametros
+                    # (sin cod_mensaje), y el indice fijo params[2] reventaba
+                    # con IndexError, dejando esos mensajes sin PDF para
+                    # siempre. Replicar el href original funciona sin
+                    # importar cuantos argumentos tenga esta vez.
                     try:
-                        params = href.split('goArchivoDescarga(')[1].split(')')[0].split(',')
-                        id_archivo = params[0].strip()
-                        cod_mensaje = params[2].strip()
-                        
-                        # Ejecutar directamente el JavaScript
-                        logger.info(f"Ejecutando: goArchivoDescarga({id_archivo},0,{cod_mensaje})")
-                        self.driver.execute_script(f"goArchivoDescarga({id_archivo},0,{cod_mensaje})")
+                        js = href[len("javascript:"):] if href.startswith("javascript:") else href
+                        logger.info(f"Ejecutando: {js}")
+                        self.driver.execute_script(js)
                         
                         # Esperar a que se complete la descarga
                         if self._esperar_descarga(timeout=30):
