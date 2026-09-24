@@ -59,6 +59,7 @@ class EmpresaResponse(BaseModel):
     condicion_domicilio: str | None = None
     estado_contribuyente: str | None = None
     ficha_ruc_generada_en: datetime | None = None
+    ficha_ruc_qr_generada_en: datetime | None = None
     # Fase 3: si esta empresa es la "cuenta controlada" usada por el
     # chequeo canario (ver app.scheduler_job.ejecutar_chequeo_canario).
     es_canario: bool = False
@@ -115,6 +116,7 @@ class FichaRucJobResponse(BaseModel):
     empresa_id: str
     estado: str
     etapa: str | None = None
+    con_qr: bool
     creado_en: datetime
     iniciado_en: datetime | None
     finalizado_en: datetime | None
@@ -122,6 +124,11 @@ class FichaRucJobResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class LimiteQrFichaRucResponse(BaseModel):
+    usados_hoy: int
+    limite: int
 
 
 class MensajeBuzonResponse(BaseModel):

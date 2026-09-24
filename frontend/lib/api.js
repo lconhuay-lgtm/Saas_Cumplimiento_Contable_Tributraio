@@ -167,20 +167,22 @@ export const api = {
    */
   prewarmIngresoDirecto: () => apiFetch("/empresas/ingreso-directo/prewarm", { method: "POST" }),
 
-  generarFichaRuc: (empresaId) =>
-    apiFetch(`/empresas/${empresaId}/ficha-ruc`, { method: "POST" }),
+  generarFichaRuc: (empresaId, conQr = false) =>
+    apiFetch(`/empresas/${empresaId}/ficha-ruc?con_qr=${conQr}`, { method: "POST" }),
 
   obtenerJobFichaRuc: (empresaId, jobId) =>
     apiFetch(`/empresas/${empresaId}/ficha-ruc/jobs/${jobId}`),
+
+  obtenerLimiteQrFichaRuc: (empresaId) => apiFetch(`/empresas/${empresaId}/ficha-ruc/limite-qr`),
 
   /**
    * Igual que obtenerDocumentoUrl: hay que pasar por fetch() con el header
    * Authorization porque un <iframe>/<a> no lo manda solo. Quien use esto
    * debe llamar URL.revokeObjectURL(url) cuando termine.
    */
-  obtenerFichaRucPdfUrl: async (empresaId) => {
+  obtenerFichaRucPdfUrl: async (empresaId, conQr = false) => {
     const token = getToken();
-    const res = await fetch(`${API_URL}/empresas/${empresaId}/ficha-ruc/pdf`, {
+    const res = await fetch(`${API_URL}/empresas/${empresaId}/ficha-ruc/pdf?con_qr=${conQr}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!res.ok) {

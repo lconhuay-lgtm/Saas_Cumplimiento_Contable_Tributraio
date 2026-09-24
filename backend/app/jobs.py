@@ -383,6 +383,7 @@ def ejecutar_generar_ficha_ruc(job_id: str):
                 razon_social=empresa.razon_social,
                 headless=False,
                 on_progreso=_reportar_etapa,
+                con_qr=job.con_qr,
             )
         finally:
             liberar_slot_global()
@@ -398,7 +399,9 @@ def ejecutar_generar_ficha_ruc(job_id: str):
 
         _reportar_etapa("guardando")
         try:
-            referencia = guardar_documento_bytes(resultado["pdf_bytes"], empresa.id, "ficha-ruc")
+            referencia = guardar_documento_bytes(
+                resultado["pdf_bytes"], empresa.id, "ficha-ruc-qr" if job.con_qr else "ficha-ruc"
+            )
         except AlmacenamientoError as e:
             job.estado = "error"
             job.error = f"No se pudo guardar el PDF generado: {e}"[:1000]
@@ -408,8 +411,12 @@ def ejecutar_generar_ficha_ruc(job_id: str):
             logger.error(f"FichaRucJob {job_id}: {job.error}")
             return
 
-        empresa.ficha_ruc_pdf_ref = referencia
-        empresa.ficha_ruc_generada_en = datetime.now(timezone.utc)
+        if job.con_qr:
+            empresa.ficha_ruc_qr_pdf_ref = referencia
+            empresa.ficha_ruc_qr_generada_en = datetime.now(timezone.utc)
+        else:
+            empresa.ficha_ruc_pdf_ref = referencia
+            empresa.ficha_ruc_generada_en = datetime.now(timezone.utc)
         job.estado = "completado"
         job.finalizado_en = datetime.now(timezone.utc)
         db.commit()

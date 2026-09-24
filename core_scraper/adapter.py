@@ -430,6 +430,7 @@ def generar_ficha_ruc_pdf(
     razon_social: str = "",
     headless: bool = True,
     on_progreso=None,
+    con_qr: bool = False,
 ) -> dict:
     """
     Inicia sesion en SUNAT SOL, abre la "Ficha RUC" del contribuyente
@@ -444,8 +445,10 @@ def generar_ficha_ruc_pdf(
     fallo del callback en si (p.ej. la base de datos no responde un
     instante) NUNCA debe tumbar la generacion del PDF.
 
-    Logica verificada con un diagnostico real contra produccion
-    (diagnostico_ficha_ruc.py) antes de incorporarla aca:
+    con_qr: si es False (default), genera el documento de siempre -- la
+    "CIR - Constancia de Informacion Registrada" completa, via
+    Page.printToPDF (logica verificada con un diagnostico real contra
+    produccion, diagnostico_ficha_ruc.py):
       1. El boton "Ver Ficha Ruc" vive en el desplegable que se abre al
          hacer clic en el nombre de la empresa (#aOpcionUsuario2) del
          navbar del Menu SOL.
@@ -458,6 +461,19 @@ def generar_ficha_ruc_pdf(
          pestaña nueva (la sesion ya esta autenticada via cookies, carga
          igual) y se usa el comando de Chrome DevTools Page.printToPDF, que
          genera el PDF directamente sin ningun dialogo.
+
+    Si con_qr es True, genera el "Reporte de Ficha RUC" -- un documento
+    DISTINTO, firmado y con un codigo QR de verificacion en la ultima
+    pagina (confirmado en produccion, 24/09: valida contra una URL propia
+    de SUNAT). Se llega por un boton separado, "Descargar Ficha RUC", en
+    la misma pantalla de edicion de la Ficha RUC -- abre una pantalla de
+    aviso con botones "Enviar por Correo" / "Descargar" / "Cancelar"; se
+    usa "Descargar" (no necesita correo) y SUNAT dispara una descarga de
+    archivo real en vez de abrir una pestaña nueva. OJO: SUNAT limita esto
+    a 3 generaciones por dia POR EMPRESA -- a partir de la 4ta, devuelve
+    en silencio el ultimo reporte ya generado (nunca un error). El
+    llamador (jobs.py) es responsable de avisarle al usuario ANTES de
+    llegar a ese limite, contando FichaRucJob.con_qr=True de hoy.
 
     Returns:
         dict: {"ok": bool, "pdf_bytes": bytes | None, "error": str | None}
@@ -531,6 +547,56 @@ def generar_ficha_ruc_pdf(
         # completa -- es la pantalla "Datos de Ficha RUC - Modificacion..."
         # (un formulario de edicion con los botones "Descargar Ficha RUC /
         # Ficha RUC / Aceptar / Cancelar" alrededor de los mismos datos).
+        if con_qr:
+            _reportar("generando_pdf")
+            try:
+                boton_descargar_ficha = WebDriverWait(driver, 8).until(
+                    EC.element_to_be_clickable((By.XPATH, "//input[@value='Descargar Ficha RUC']"))
+                )
+            except Exception as e:
+                return {"ok": False, "pdf_bytes": None, "error": f"No se encontro el boton 'Descargar Ficha RUC': {e}"}
+            try:
+                boton_descargar_ficha.click()
+            except Exception:
+                driver.execute_script("arguments[0].click();", boton_descargar_ficha)
+            time.sleep(3)
+
+            # Pantalla de aviso (max 3 reportes/dia) con "Enviar por Correo"
+            # (btnCorreo) / "Descargar" (btnAceptar) / "Cancelar"
+            # (btnCancelar) -- se usa Descargar, no necesita correo y SUNAT
+            # dispara una descarga de archivo real (no una pestaña nueva).
+            try:
+                boton_aceptar = WebDriverWait(driver, 10).until(
+                    EC.element_to_be_clickable((By.ID, "btnAceptar"))
+                )
+            except Exception as e:
+                return {"ok": False, "pdf_bytes": None, "error": f"No aparecio la pantalla de descarga del Reporte de Ficha RUC: {e}"}
+
+            archivos_antes = set(os.listdir(navegador.download_dir))
+            try:
+                boton_aceptar.click()
+            except Exception:
+                driver.execute_script("arguments[0].click();", boton_aceptar)
+
+            if not navegador._esperar_descarga(timeout=30):
+                return {"ok": False, "pdf_bytes": None, "error": "El Reporte de Ficha RUC (con QR) no termino de descargarse a tiempo"}
+
+            archivos_nuevos = [
+                f for f in (set(os.listdir(navegador.download_dir)) - archivos_antes)
+                if f.lower().endswith(".pdf")
+            ]
+            if not archivos_nuevos:
+                return {"ok": False, "pdf_bytes": None, "error": "La descarga del Reporte de Ficha RUC no dejo ningun PDF nuevo"}
+            ruta_pdf = os.path.join(navegador.download_dir, archivos_nuevos[0])
+            with open(ruta_pdf, "rb") as f:
+                pdf_bytes = f.read()
+
+            if not pdf_bytes:
+                return {"ok": False, "pdf_bytes": None, "error": "El Reporte de Ficha RUC descargado quedo vacio"}
+
+            logger.info(f"Reporte de Ficha RUC (con QR) generado correctamente para {ruc} ({len(pdf_bytes)} bytes)")
+            return {"ok": True, "pdf_bytes": pdf_bytes, "error": None}
+
         # Confirmado con un diagnostico real (comparando el PDF de antes y
         # despues de este cambio): hay que hacer clic en el boton interno
         # "Ficha RUC" (un <input type="submit" value="Ficha RUC">) para que

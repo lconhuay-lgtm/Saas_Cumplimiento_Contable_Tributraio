@@ -98,6 +98,15 @@ class Empresa(Base):
     # a diferencia de los documentos de mensajes que se conservan todos.
     ficha_ruc_pdf_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
     ficha_ruc_generada_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # "Reporte de Ficha RUC" firmado con codigo QR de verificacion -- un
+    # documento DISTINTO al de arriba (SUNAT lo genera por una pantalla
+    # separada, "Descargar Ficha RUC"), asi que se guarda aparte en vez de
+    # pisar ficha_ruc_pdf_ref. SUNAT limita este a 3 generaciones por dia
+    # POR EMPRESA (a partir de la 4ta, devuelve la ultima ya generada sin
+    # avisar) -- el conteo diario se calcula sobre FichaRucJob.con_qr, no
+    # hace falta duplicarlo aca.
+    ficha_ruc_qr_pdf_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    ficha_ruc_qr_generada_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Fase 3 (confiabilidad/observabilidad): si es True, esta empresa se usa
     # como "cuenta controlada" para el chequeo canario periodico (ver
     # scheduler_job.ejecutar_chequeo_canario) -- una consulta de prueba
@@ -225,6 +234,12 @@ class FichaRucJob(Base):
     empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
     solicitado_por: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
     estado: Mapped[str] = mapped_column(String(20), default="pendiente", nullable=False, index=True)
+    # Si se pidio el "Reporte de Ficha RUC" firmado con QR (limitado por
+    # SUNAT a 3 por dia por empresa) en vez del documento normal (CIR, sin
+    # limite conocido) -- ver Empresa.ficha_ruc_qr_pdf_ref. Tambien sirve
+    # para calcular cuantos van generados hoy y avisarle al usuario ANTES
+    # de que choque con el limite silencioso de SUNAT.
+    con_qr: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Etapa dentro de "en_progreso" -- iniciando_sesion / autenticando /
     # abriendo_ficha / generando_pdf / guardando -- solo para darle al
     # usuario una barra de progreso con perspectiva real del tiempo que

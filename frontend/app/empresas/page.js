@@ -135,7 +135,8 @@ function EmpresasPageContenido() {
   const [estadoConsultas, setEstadoConsultas] = useState(null);
   const [generandoFicha, setGenerandoFicha] = useState({});
   const [progresoFicha, setProgresoFicha] = useState({}); // { [empresaId]: {estado, etapa} }
-  const [fichaRucModal, setFichaRucModal] = useState(null); // {empresaId, razonSocial, generadaEn} | null
+  const [fichaRucModal, setFichaRucModal] = useState(null); // {empresaId, razonSocial, generadaEn, conQr} | null
+  const [eligiendoTipoFicha, setEligiendoTipoFicha] = useState(null); // {empresa, forzarRegenerar} | null
   const [entrandoDirecto, setEntrandoDirecto] = useState({}); // { [empresaId]: boolean }
   const [marcandoTodoLeido, setMarcandoTodoLeido] = useState(false);
   const enCursoAnteriorRef = useRef(false);
@@ -312,18 +313,27 @@ function EmpresasPageContenido() {
     throw new Error("La generacion de la Ficha RUC esta tardando mas de lo esperado. Intenta de nuevo en un momento.");
   }
 
-  // Si ya se genero una Ficha RUC antes Y no se pide forzar, la abre
-  // directo (rapido, sin volver a entrar a SUNAT). Si no existe todavia, o
-  // si forzarRegenerar=true (el usuario pidio explicitamente una version
-  // nueva porque la guardada puede estar desactualizada), primero la
-  // genera en vivo y recien despues la abre.
-  async function verFichaRuc(empresa, forzarRegenerar = false) {
+  // Muestra primero la eleccion Con QR / Sin QR (a pedido: el "Reporte de
+  // Ficha RUC" con QR es un documento distinto al de siempre, y SUNAT lo
+  // limita a 3 generaciones por dia por empresa) -- recien con la
+  // respuesta se llama a verFichaRuc con el tipo elegido.
+  function pedirTipoFichaRuc(empresa, forzarRegenerar = false) {
+    setEligiendoTipoFicha({ empresa, forzarRegenerar });
+  }
+
+  // Si ya se genero una Ficha RUC de este tipo antes Y no se pide forzar,
+  // la abre directo (rapido, sin volver a entrar a SUNAT). Si no existe
+  // todavia, o si forzarRegenerar=true (el usuario pidio explicitamente
+  // una version nueva porque la guardada puede estar desactualizada),
+  // primero la genera en vivo y recien despues la abre.
+  async function verFichaRuc(empresa, forzarRegenerar = false, conQr = false) {
     setGenerandoFicha((prev) => ({ ...prev, [empresa.id]: true }));
     setProgresoFicha((prev) => ({ ...prev, [empresa.id]: { estado: "pendiente", etapa: null } }));
     try {
-      let generadaEn = empresa.ficha_ruc_generada_en;
-      if (forzarRegenerar || !empresa.ficha_ruc_generada_en) {
-        const job = await api.generarFichaRuc(empresa.id);
+      const yaGeneradaEn = conQr ? empresa.ficha_ruc_qr_generada_en : empresa.ficha_ruc_generada_en;
+      let generadaEn = yaGeneradaEn;
+      if (forzarRegenerar || !yaGeneradaEn) {
+        const job = await api.generarFichaRuc(empresa.id, conQr);
         const jobFinal = await esperarJobFichaRuc(empresa.id, job.id);
         if (jobFinal.estado === "error") {
           alert(`No se pudo generar la Ficha RUC: ${jobFinal.error || "error desconocido"}`);
@@ -332,7 +342,7 @@ function EmpresasPageContenido() {
         generadaEn = new Date().toISOString();
         cargar(); // refresca en segundo plano para que quede marcada como ya generada
       }
-      setFichaRucModal({ empresa, empresaId: empresa.id, razonSocial: empresa.razon_social, generadaEn });
+      setFichaRucModal({ empresa, empresaId: empresa.id, razonSocial: empresa.razon_social, generadaEn, conQr });
     } catch (err) {
       alert(err.message);
     } finally {
@@ -578,8 +588,8 @@ function EmpresasPageContenido() {
                     onVerPdfRapido={() => setPdfRapido({ empresaId: e.id, mensaje: e.ultimo_mensaje })}
                     generandoFicha={!!generandoFicha[e.id]}
                     progresoFicha={progresoFicha[e.id]}
-                    onVerFichaRuc={() => verFichaRuc(e, false)}
-                    onRegenerarFichaRuc={() => verFichaRuc(e, true)}
+                    onVerFichaRuc={() => pedirTipoFichaRuc(e, false)}
+                    onRegenerarFichaRuc={() => pedirTipoFichaRuc(e, true)}
                     entrandoDirecto={!!entrandoDirecto[e.id]}
                     onEntrarDirecto={() => entrarDirectoASunat(e.id)}
                   />
@@ -591,14 +601,26 @@ function EmpresasPageContenido() {
       </main>
 
       {pdfRapido && <ModalPdfRapido info={pdfRapido} onClose={() => setPdfRapido(null)} />}
+      {eligiendoTipoFicha && (
+        <ModalElegirTipoFichaRuc
+          info={eligiendoTipoFicha}
+          onCancelar={() => setEligiendoTipoFicha(null)}
+          onElegir={(conQr) => {
+            const { empresa, forzarRegenerar } = eligiendoTipoFicha;
+            setEligiendoTipoFicha(null);
+            verFichaRuc(empresa, forzarRegenerar, conQr);
+          }}
+        />
+      )}
       {fichaRucModal && (
         <ModalFichaRuc
           info={fichaRucModal}
           onClose={() => setFichaRucModal(null)}
           onRegenerar={() => {
             const empresa = fichaRucModal.empresa;
+            const conQr = fichaRucModal.conQr;
             setFichaRucModal(null);
-            verFichaRuc(empresa, true);
+            verFichaRuc(empresa, true, conQr);
           }}
         />
       )}
@@ -979,6 +1001,74 @@ function ModalPdfRapido({ info, onClose }) {
   );
 }
 
+function ModalElegirTipoFichaRuc({ info, onCancelar, onElegir }) {
+  const [limite, setLimite] = useState(null); // {usados_hoy, limite} | null
+  const [cargandoLimite, setCargandoLimite] = useState(true);
+
+  useEffect(() => {
+    let cancelado = false;
+    api
+      .obtenerLimiteQrFichaRuc(info.empresa.id)
+      .then((data) => {
+        if (!cancelado) setLimite(data);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelado) setCargandoLimite(false);
+      });
+    return () => {
+      cancelado = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [info.empresa.id]);
+
+  const limiteAlcanzado = limite && limite.usados_hoy >= limite.limite;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-6" onClick={onCancelar}>
+      <div
+        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-soft-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-base font-bold text-ink">Ficha RUC de {info.empresa.razon_social}</h3>
+        <p className="mt-2 text-sm text-slate-600">
+          Quieres la version con codigo QR de verificacion (Reporte de Ficha RUC, firmado por SUNAT), o la version
+          normal (Constancia de Informacion Registrada)?
+        </p>
+        <p className="mt-2 text-xs text-slate-400">
+          {cargandoLimite
+            ? "Consultando cuantas veces se genero hoy..."
+            : limite
+            ? `SUNAT permite generar la version con QR solo ${limite.limite} veces al dia por empresa -- ya usaste ${limite.usados_hoy} de ${limite.limite} hoy.`
+            : "SUNAT permite generar la version con QR solo 3 veces al dia por empresa."}
+        </p>
+        <div className="mt-5 flex flex-col gap-2">
+          <button
+            onClick={() => onElegir(true)}
+            disabled={cargandoLimite}
+            title={limiteAlcanzado ? "Ya usaste el limite de hoy -- SUNAT devolvera el ultimo reporte con QR ya generado" : undefined}
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-soft transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+          >
+            Si, con codigo QR{limiteAlcanzado ? " (limite del dia alcanzado)" : ""}
+          </button>
+          <button
+            onClick={() => onElegir(false)}
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-all duration-300 ease-out hover:border-violet-300 hover:text-violet-700"
+          >
+            No, la version normal
+          </button>
+          <button
+            onClick={onCancelar}
+            className="mt-1 flex items-center justify-center rounded-lg px-4 py-2 text-xs font-medium text-slate-400 transition-colors duration-300 ease-out hover:text-slate-600"
+          >
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ModalFichaRuc({ info, onClose, onRegenerar }) {
   const [url, setUrl] = useState(null);
   const [cargando, setCargando] = useState(true);
@@ -989,7 +1079,7 @@ function ModalFichaRuc({ info, onClose, onRegenerar }) {
     setCargando(true);
     setError("");
     api
-      .obtenerFichaRucPdfUrl(info.empresaId)
+      .obtenerFichaRucPdfUrl(info.empresaId, info.conQr)
       .then((u) => {
         if (!cancelado) setUrl(u);
       })
@@ -1018,7 +1108,9 @@ function ModalFichaRuc({ info, onClose, onRegenerar }) {
       >
         <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
           <div className="min-w-0">
-            <span className="block truncate text-sm font-semibold text-ink">Ficha RUC -- {info.razonSocial}</span>
+            <span className="block truncate text-sm font-semibold text-ink">
+              {info.conQr ? "Reporte de Ficha RUC (con QR)" : "Ficha RUC"} -- {info.razonSocial}
+            </span>
             {info.generadaEn && (
               <span className="text-xs text-slate-400">
                 Generada {formatoRelativo(info.generadaEn)} -- puede estar desactualizada si algo cambio despues
