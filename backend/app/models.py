@@ -140,6 +140,7 @@ class Empresa(Base):
     mensajes: Mapped[list["MensajeBuzon"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     jobs: Mapped[list["ConsultaJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     ficha_ruc_jobs: Mapped[list["FichaRucJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    reporte_tributario_jobs: Mapped[list["ReporteTributarioJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     canario_checks: Mapped[list["CanarioCheck"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     obligaciones: Mapped[list["EmpresaObligacion"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     tareas: Mapped[list["TareaObligacion"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
@@ -252,6 +253,34 @@ class FichaRucJob(Base):
     error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="ficha_ruc_jobs")
+
+
+class ReporteTributarioJob(Base):
+    """
+    Cola/bitacora de solicitudes del "Reporte Tributario para Terceros"
+    (informacion RESERVADA segun el Art. 85 del Codigo Tributario, a
+    diferencia de la Ficha RUC que es publica) -- SUNAT lo genera y lo
+    manda por su cuenta al correo indicado, no hay ningun PDF que este
+    sistema descargue ni guarde: el trabajo del job es solo entrar,
+    aceptar el aviso legal, escribir el correo y confirmar el envio.
+    SUNAT limita esto a 3 solicitudes por dia por empresa (igual que la
+    Ficha RUC con QR) -- a partir de la 4ta, reenvia la ultima ya
+    generada sin avisar.
+    """
+    __tablename__ = "reporte_tributario_jobs"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    solicitado_por: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
+    estado: Mapped[str] = mapped_column(String(20), default="pendiente", nullable=False, index=True)
+    correo_destino: Mapped[str] = mapped_column(String(255), nullable=False)
+    etapa: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    iniciado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finalizado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="reporte_tributario_jobs")
 
 
 class CanarioCheck(Base):

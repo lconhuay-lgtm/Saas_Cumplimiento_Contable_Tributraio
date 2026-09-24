@@ -5,7 +5,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import auth, empresas, consultas, admin, dashboard, ficha_ruc, cronograma, tareas, usuarios, invitaciones
+from app.routers import auth, empresas, consultas, admin, dashboard, ficha_ruc, reporte_tributario, cronograma, tareas, usuarios, invitaciones
 
 app = FastAPI(
     title="Buzon SUNAT multi-RUC -- API",
@@ -37,6 +37,7 @@ app.include_router(consultas.router)
 app.include_router(admin.router)
 app.include_router(dashboard.router)
 app.include_router(ficha_ruc.router)
+app.include_router(reporte_tributario.router)
 app.include_router(cronograma.router)
 app.include_router(tareas.router)
 app.include_router(usuarios.router)

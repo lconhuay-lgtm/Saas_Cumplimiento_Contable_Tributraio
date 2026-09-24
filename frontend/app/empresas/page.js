@@ -135,8 +135,10 @@ function EmpresasPageContenido() {
   const [estadoConsultas, setEstadoConsultas] = useState(null);
   const [generandoFicha, setGenerandoFicha] = useState({});
   const [progresoFicha, setProgresoFicha] = useState({}); // { [empresaId]: {estado, etapa} }
-  const [fichaRucModal, setFichaRucModal] = useState(null); // {empresaId, razonSocial, generadaEn, conQr} | null
   const [eligiendoTipoFicha, setEligiendoTipoFicha] = useState(null); // {empresa, forzarRegenerar} | null
+  const [pidiendoReporteTributario, setPidiendoReporteTributario] = useState(null); // {empresa} | null
+  const [solicitandoReporte, setSolicitandoReporte] = useState({}); // { [empresaId]: boolean }
+  const [progresoReporte, setProgresoReporte] = useState({}); // { [empresaId]: {estado, etapa} }
   const [entrandoDirecto, setEntrandoDirecto] = useState({}); // { [empresaId]: boolean }
   const [marcandoTodoLeido, setMarcandoTodoLeido] = useState(false);
   const enCursoAnteriorRef = useRef(false);
@@ -322,16 +324,18 @@ function EmpresasPageContenido() {
   }
 
   // Si ya se genero una Ficha RUC de este tipo antes Y no se pide forzar,
-  // la abre directo (rapido, sin volver a entrar a SUNAT). Si no existe
-  // todavia, o si forzarRegenerar=true (el usuario pidio explicitamente
-  // una version nueva porque la guardada puede estar desactualizada),
-  // primero la genera en vivo y recien despues la abre.
+  // la descarga directo (rapido, sin volver a entrar a SUNAT). Si no
+  // existe todavia, o si forzarRegenerar=true (el usuario pidio
+  // explicitamente una version nueva porque la guardada puede estar
+  // desactualizada), primero la genera en vivo y recien despues la
+  // descarga. A pedido: descarga directa al disco del usuario en vez de
+  // mostrarla dentro de la app (mas simple, y el archivo queda listo para
+  // archivar/reenviar, que es el uso real que le da un estudio contable).
   async function verFichaRuc(empresa, forzarRegenerar = false, conQr = false) {
     setGenerandoFicha((prev) => ({ ...prev, [empresa.id]: true }));
     setProgresoFicha((prev) => ({ ...prev, [empresa.id]: { estado: "pendiente", etapa: null } }));
     try {
       const yaGeneradaEn = conQr ? empresa.ficha_ruc_qr_generada_en : empresa.ficha_ruc_generada_en;
-      let generadaEn = yaGeneradaEn;
       if (forzarRegenerar || !yaGeneradaEn) {
         const job = await api.generarFichaRuc(empresa.id, conQr);
         const jobFinal = await esperarJobFichaRuc(empresa.id, job.id);
@@ -339,15 +343,62 @@ function EmpresasPageContenido() {
           alert(`No se pudo generar la Ficha RUC: ${jobFinal.error || "error desconocido"}`);
           return;
         }
-        generadaEn = new Date().toISOString();
         cargar(); // refresca en segundo plano para que quede marcada como ya generada
       }
-      setFichaRucModal({ empresa, empresaId: empresa.id, razonSocial: empresa.razon_social, generadaEn, conQr });
+      const url = await api.obtenerFichaRucPdfUrl(empresa.id, conQr);
+      const nombreArchivo = `${conQr ? "reporte-ficha-ruc-qr" : "ficha-ruc"}-${empresa.ruc}.pdf`;
+      const enlace = document.createElement("a");
+      enlace.href = url;
+      enlace.download = nombreArchivo;
+      document.body.appendChild(enlace);
+      enlace.click();
+      document.body.removeChild(enlace);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (err) {
       alert(err.message);
     } finally {
       setGenerandoFicha((prev) => ({ ...prev, [empresa.id]: false }));
       setProgresoFicha((prev) => {
+        const copia = { ...prev };
+        delete copia[empresa.id];
+        return copia;
+      });
+    }
+  }
+
+  function pedirReporteTributario(empresa) {
+    setPidiendoReporteTributario({ empresa });
+  }
+
+  // Reporte Tributario para Terceros: informacion RESERVADA (Art. 85 del
+  // Codigo Tributario) que SUNAT genera y manda por su cuenta al correo
+  // indicado -- a diferencia de la Ficha RUC, aca no hay ningun PDF que
+  // esta app descargue ni muestre, solo se dispara la solicitud y se
+  // confirma que SUNAT la recibio.
+  async function solicitarReporteTributario(empresa, correo) {
+    setSolicitandoReporte((prev) => ({ ...prev, [empresa.id]: true }));
+    setProgresoReporte((prev) => ({ ...prev, [empresa.id]: { estado: "pendiente", etapa: null } }));
+    try {
+      const job = await api.generarReporteTributario(empresa.id, correo);
+      for (let i = 0; i < 90; i++) {
+        const jobActual = await api.obtenerJobReporteTributario(empresa.id, job.id);
+        setProgresoReporte((prev) => ({ ...prev, [empresa.id]: { estado: jobActual.estado, etapa: jobActual.etapa } }));
+        if (jobActual.estado === "completado") {
+          alert(`Reporte Tributario solicitado correctamente. SUNAT lo enviara a ${correo} en los proximos minutos.`);
+          return;
+        }
+        if (jobActual.estado === "error") {
+          alert(`No se pudo solicitar el Reporte Tributario: ${jobActual.error || "error desconocido"}`);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      alert("La solicitud del Reporte Tributario esta tardando mas de lo esperado. Intenta de nuevo en un momento.");
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSolicitandoReporte((prev) => ({ ...prev, [empresa.id]: false }));
+      setProgresoReporte((prev) => {
         const copia = { ...prev };
         delete copia[empresa.id];
         return copia;
@@ -590,6 +641,8 @@ function EmpresasPageContenido() {
                     progresoFicha={progresoFicha[e.id]}
                     onVerFichaRuc={() => pedirTipoFichaRuc(e, false)}
                     onRegenerarFichaRuc={() => pedirTipoFichaRuc(e, true)}
+                    solicitandoReporte={!!solicitandoReporte[e.id]}
+                    onSolicitarReporteTributario={() => pedirReporteTributario(e)}
                     entrandoDirecto={!!entrandoDirecto[e.id]}
                     onEntrarDirecto={() => entrarDirectoASunat(e.id)}
                   />
@@ -612,15 +665,14 @@ function EmpresasPageContenido() {
           }}
         />
       )}
-      {fichaRucModal && (
-        <ModalFichaRuc
-          info={fichaRucModal}
-          onClose={() => setFichaRucModal(null)}
-          onRegenerar={() => {
-            const empresa = fichaRucModal.empresa;
-            const conQr = fichaRucModal.conQr;
-            setFichaRucModal(null);
-            verFichaRuc(empresa, true, conQr);
+      {pidiendoReporteTributario && (
+        <ModalReporteTributario
+          info={pidiendoReporteTributario}
+          onCancelar={() => setPidiendoReporteTributario(null)}
+          onConfirmar={(correo) => {
+            const { empresa } = pidiendoReporteTributario;
+            setPidiendoReporteTributario(null);
+            solicitarReporteTributario(empresa, correo);
           }}
         />
       )}
@@ -710,6 +762,8 @@ function TarjetaEmpresa({
   progresoFicha,
   onVerFichaRuc,
   onRegenerarFichaRuc,
+  solicitandoReporte,
+  onSolicitarReporteTributario,
   entrandoDirecto,
   onEntrarDirecto,
 }) {
@@ -832,8 +886,8 @@ function TarjetaEmpresa({
           disabled={generandoFicha}
           title={
             e.ficha_ruc_generada_en
-              ? "Ver el PDF de la Ficha RUC ya generado"
-              : "Genera el PDF de la Ficha RUC entrando en vivo a SUNAT"
+              ? "Descarga el PDF de la Ficha RUC ya generado"
+              : "Genera y descarga el PDF de la Ficha RUC entrando en vivo a SUNAT"
           }
           className="inline-flex items-center gap-1.5 rounded-lg bg-violet-50 px-2.5 py-1.5 text-xs font-bold text-violet-700 transition-all duration-300 ease-out hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:hover:translate-y-0"
         >
@@ -845,7 +899,7 @@ function TarjetaEmpresa({
           {generandoFicha
             ? `${infoEtapaFichaRuc(progresoFicha?.etapa).porcentaje}%`
             : e.ficha_ruc_generada_en
-            ? "Ver Ficha"
+            ? "Descargar Ficha"
             : "Ficha RUC"}
         </button>
         {e.ficha_ruc_generada_en && !generandoFicha && (
@@ -857,6 +911,20 @@ function TarjetaEmpresa({
             <RefreshCw size={12} strokeWidth={2} />
           </button>
         )}
+
+        <button
+          onClick={onSolicitarReporteTributario}
+          disabled={solicitandoReporte}
+          title="Solicita el Reporte Tributario para Terceros (informacion reservada) y pide que SUNAT lo envie por correo"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-bold text-amber-700 transition-all duration-300 ease-out hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+        >
+          {solicitandoReporte ? (
+            <Loader2 size={13} strokeWidth={2} className="animate-spin" />
+          ) : (
+            <Mail size={13} strokeWidth={2} />
+          )}
+          {solicitandoReporte ? "Enviando..." : "Reporte Tributario"}
+        </button>
       </div>
 
       {e.ultimo_mensaje && (
@@ -1069,83 +1137,94 @@ function ModalElegirTipoFichaRuc({ info, onCancelar, onElegir }) {
   );
 }
 
-function ModalFichaRuc({ info, onClose, onRegenerar }) {
-  const [url, setUrl] = useState(null);
-  const [cargando, setCargando] = useState(true);
-  const [error, setError] = useState("");
+function ModalReporteTributario({ info, onCancelar, onConfirmar }) {
+  const [correo, setCorreo] = useState("");
+  const [limite, setLimite] = useState(null); // {usados_hoy, limite} | null
+  const [cargandoLimite, setCargandoLimite] = useState(true);
 
   useEffect(() => {
     let cancelado = false;
-    setCargando(true);
-    setError("");
     api
-      .obtenerFichaRucPdfUrl(info.empresaId, info.conQr)
-      .then((u) => {
-        if (!cancelado) setUrl(u);
+      .obtenerLimiteReporteTributario(info.empresa.id)
+      .then((data) => {
+        if (!cancelado) setLimite(data);
       })
-      .catch((err) => {
-        if (!cancelado) setError(err.message);
-      })
+      .catch(() => {})
       .finally(() => {
-        if (!cancelado) setCargando(false);
+        if (!cancelado) setCargandoLimite(false);
       });
     return () => {
       cancelado = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [info.empresaId]);
+  }, [info.empresa.id]);
 
-  function cerrar() {
-    if (url) URL.revokeObjectURL(url);
-    onClose();
+  const limiteAlcanzado = limite && limite.usados_hoy >= limite.limite;
+
+  function onSubmit(e) {
+    e.preventDefault();
+    if (!correo) return;
+    onConfirmar(correo);
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-6" onClick={cerrar}>
-      <div
-        className="flex h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-soft-lg"
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-6" onClick={onCancelar}>
+      <form
+        onSubmit={onSubmit}
+        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-soft-lg"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
-          <div className="min-w-0">
-            <span className="block truncate text-sm font-semibold text-ink">
-              {info.conQr ? "Reporte de Ficha RUC (con QR)" : "Ficha RUC"} -- {info.razonSocial}
-            </span>
-            {info.generadaEn && (
-              <span className="text-xs text-slate-400">
-                Generada {formatoRelativo(info.generadaEn)} -- puede estar desactualizada si algo cambio despues
-              </span>
-            )}
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <button
-              onClick={onRegenerar}
-              title="Vuelve a entrar a SUNAT y genera una version nueva (tarda cerca de un minuto)"
-              className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 transition-all duration-300 ease-out hover:border-violet-300 hover:text-violet-700"
-            >
-              <RefreshCw size={13} strokeWidth={1.5} />
-              Generar de nuevo
-            </button>
-            <button
-              onClick={cerrar}
-              className="flex items-center justify-center rounded-lg p-1.5 text-slate-500 transition-colors duration-300 ease-out hover:bg-slate-100 hover:text-ink"
-              aria-label="Cerrar"
-            >
-              <X size={18} strokeWidth={1.5} />
-            </button>
-          </div>
+        <h3 className="text-base font-bold text-ink">Reporte Tributario para Terceros -- {info.empresa.razon_social}</h3>
+
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
+          <p className="font-semibold">Esta informacion es RESERVADA (Art. 85 del Codigo Tributario).</p>
+          <ul className="mt-1.5 list-disc space-y-1 pl-4">
+            <li>Corresponde a las ultimas declaraciones presentadas (incluye sustitutorias/rectificatorias).</li>
+            <li>Las declaraciones se ven con un desfase referencial de 10 dias despues de presentadas.</li>
+            <li>SUNAT permite generar solamente 3 reportes por dia -- el que se envia es el ultimo generado.</li>
+          </ul>
         </div>
-        {cargando ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-400">
-            <Loader2 size={24} strokeWidth={1.5} className="animate-spin" />
-            <p className="text-sm">Cargando Ficha RUC...</p>
-          </div>
-        ) : error ? (
-          <div className="flex h-full items-center justify-center p-8 text-center text-sm text-red-600">{error}</div>
-        ) : (
-          <iframe src={url} title={`Ficha RUC -- ${info.razonSocial}`} className="flex-1 border-0" />
-        )}
-      </div>
+
+        <p className="mt-3 text-xs text-slate-400">
+          {cargandoLimite
+            ? "Consultando cuantas veces se solicito hoy..."
+            : limite
+            ? `Ya usaste ${limite.usados_hoy} de ${limite.limite} solicitudes de hoy para esta empresa.`
+            : "SUNAT permite generar solamente 3 reportes por dia por empresa."}
+        </p>
+
+        <div className="mt-4">
+          <label htmlFor="correoReporte" className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-500">
+            Correo al que SUNAT enviara el reporte
+          </label>
+          <input
+            id="correoReporte"
+            type="email"
+            value={correo}
+            onChange={(e) => setCorreo(e.target.value)}
+            required
+            placeholder="correo@ejemplo.com"
+            className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-ink outline-none transition-all duration-300 ease-out focus:border-accent focus:ring-4 focus:ring-accent-light"
+          />
+        </div>
+
+        <div className="mt-5 flex flex-col gap-2">
+          <button
+            type="submit"
+            title={limiteAlcanzado ? "Ya usaste el limite de hoy -- SUNAT devolvera el ultimo reporte ya generado" : undefined}
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white shadow-soft transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-amber-700"
+          >
+            Confirmar y enviar{limiteAlcanzado ? " (limite del dia alcanzado)" : ""}
+          </button>
+          <button
+            type="button"
+            onClick={onCancelar}
+            className="mt-1 flex items-center justify-center rounded-lg px-4 py-2 text-xs font-medium text-slate-400 transition-colors duration-300 ease-out hover:text-slate-600"
+          >
+            Cancelar
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

@@ -126,9 +126,28 @@ class FichaRucJobResponse(BaseModel):
         from_attributes = True
 
 
-class LimiteQrFichaRucResponse(BaseModel):
+class LimiteDiarioResponse(BaseModel):
     usados_hoy: int
     limite: int
+
+
+class ReporteTributarioCreate(BaseModel):
+    correo_destino: EmailStr
+
+
+class ReporteTributarioJobResponse(BaseModel):
+    id: str
+    empresa_id: str
+    estado: str
+    etapa: str | None = None
+    correo_destino: str
+    creado_en: datetime
+    iniciado_en: datetime | None
+    finalizado_en: datetime | None
+    error: str | None
+
+    class Config:
+        from_attributes = True
 
 
 class MensajeBuzonResponse(BaseModel):

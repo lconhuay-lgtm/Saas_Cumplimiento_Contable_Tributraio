@@ -199,6 +199,17 @@ export const api = {
     return URL.createObjectURL(blob);
   },
 
+  generarReporteTributario: (empresaId, correoDestino) =>
+    apiFetch(`/empresas/${empresaId}/reporte-tributario`, {
+      method: "POST",
+      body: JSON.stringify({ correo_destino: correoDestino }),
+    }),
+
+  obtenerJobReporteTributario: (empresaId, jobId) =>
+    apiFetch(`/empresas/${empresaId}/reporte-tributario/jobs/${jobId}`),
+
+  obtenerLimiteReporteTributario: (empresaId) => apiFetch(`/empresas/${empresaId}/reporte-tributario/limite`),
+
   // Modulo de cronograma SUNAT: sincronizar a mano (por si SUNAT publica
   // una modificacion a mitad de ano), agenda por mes (calendario), y
   // proximos vencimientos (aviso del Dashboard).

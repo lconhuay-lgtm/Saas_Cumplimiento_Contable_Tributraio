@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Empresa, FichaRucJob, Usuario
-from app.schemas import FichaRucJobResponse, LimiteQrFichaRucResponse
+from app.schemas import FichaRucJobResponse, LimiteDiarioResponse
 from app.deps import get_usuario_actual
 from app.queue_conn import cola_consultas
 from app.jobs import ejecutar_generar_ficha_ruc
@@ -56,7 +56,7 @@ def generar_ficha_ruc(
     return job
 
 
-@router.get("/empresas/{empresa_id}/ficha-ruc/limite-qr", response_model=LimiteQrFichaRucResponse)
+@router.get("/empresas/{empresa_id}/ficha-ruc/limite-qr", response_model=LimiteDiarioResponse)
 def limite_qr_ficha_ruc(
     empresa_id: str,
     usuario: Usuario = Depends(get_usuario_actual),
@@ -75,7 +75,7 @@ def limite_qr_ficha_ruc(
         )
         .count()
     )
-    return LimiteQrFichaRucResponse(usados_hoy=usados_hoy, limite=LIMITE_REPORTES_QR_POR_DIA)
+    return LimiteDiarioResponse(usados_hoy=usados_hoy, limite=LIMITE_REPORTES_QR_POR_DIA)
 
 
 @router.get("/empresas/{empresa_id}/ficha-ruc/jobs/{job_id}", response_model=FichaRucJobResponse)

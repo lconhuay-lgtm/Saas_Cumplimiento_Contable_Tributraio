@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timezone
 
 from app.database import SessionLocal
-from app.models import ConsultaJob, FichaRucJob, Empresa, CredencialSol, MensajeBuzon
+from app.models import ConsultaJob, FichaRucJob, ReporteTributarioJob, Empresa, CredencialSol, MensajeBuzon
 from app.security import descifrar_clave_sol
 from app.rate_limit import adquirir_slot_global, liberar_slot_global
 from app.almacenamiento import guardar_documento, guardar_documento_bytes, AlmacenamientoError
@@ -427,6 +427,99 @@ def ejecutar_generar_ficha_ruc(job_id: str):
         logger.exception(f"Error ejecutando FichaRucJob {job_id}")
         db.rollback()
         job = db.query(FichaRucJob).filter(FichaRucJob.id == job_id).first()
+        if job:
+            job.estado = "error"
+            job.error = str(e)[:1000]
+            job.finalizado_en = datetime.now(timezone.utc)
+            db.commit()
+        _reportar_etapa(None)
+    finally:
+        db.close()
+
+
+def ejecutar_generar_reporte_tributario(job_id: str):
+    """
+    Solicita el "Reporte Tributario para Terceros" (informacion RESERVADA,
+    Art. 85 del Codigo Tributario) de una empresa -- SUNAT lo genera y lo
+    manda por su cuenta al correo indicado, asi que a diferencia de
+    ejecutar_generar_ficha_ruc este job no descarga ni guarda ningun PDF:
+    solo entra, acepta el aviso legal, y confirma el envio.
+    """
+    db = SessionLocal()
+
+    # Mismo patron (y misma razon) que en ejecutar_generar_ficha_ruc: el
+    # UNICO lugar que escribe job.etapa, para que SQLAlchemy detecte el
+    # cambio incluso al "limpiarla" a None.
+    def _reportar_etapa(etapa: str | None):
+        db_etapa = SessionLocal()
+        try:
+            job_actual = db_etapa.query(ReporteTributarioJob).filter(ReporteTributarioJob.id == job_id).first()
+            if job_actual:
+                job_actual.etapa = etapa
+                db_etapa.commit()
+        finally:
+            db_etapa.close()
+
+    try:
+        job = db.query(ReporteTributarioJob).filter(ReporteTributarioJob.id == job_id).first()
+        if not job:
+            logger.error(f"ReporteTributarioJob {job_id} no encontrado")
+            return
+
+        job.estado = "en_progreso"
+        job.iniciado_en = datetime.now(timezone.utc)
+        db.commit()
+
+        empresa = db.query(Empresa).filter(Empresa.id == job.empresa_id).first()
+        credencial = (
+            db.query(CredencialSol).filter(CredencialSol.empresa_id == job.empresa_id).first()
+            if empresa else None
+        )
+
+        if not empresa or not credencial:
+            job.estado = "error"
+            job.error = "Empresa o credenciales no encontradas"
+            job.finalizado_en = datetime.now(timezone.utc)
+            db.commit()
+            return
+
+        clave_en_claro = descifrar_clave_sol(credencial.clave_cifrada, credencial.dek_cifrada)
+
+        from adapter import generar_reporte_tributario_terceros
+
+        adquirir_slot_global()
+        try:
+            resultado = generar_reporte_tributario_terceros(
+                ruc=empresa.ruc,
+                usuario_sol=credencial.usuario_sol,
+                clave_sol=clave_en_claro,
+                correo_destino=job.correo_destino,
+                razon_social=empresa.razon_social,
+                headless=False,
+                on_progreso=_reportar_etapa,
+            )
+        finally:
+            liberar_slot_global()
+
+        if not resultado["ok"]:
+            job.estado = "error"
+            job.error = (resultado["error"] or "Error desconocido")[:1000]
+            job.finalizado_en = datetime.now(timezone.utc)
+            db.commit()
+            _reportar_etapa(None)
+            logger.warning(f"ReporteTributarioJob {job_id} fallo para {empresa.ruc}: {job.error}")
+            return
+
+        job.estado = "completado"
+        job.finalizado_en = datetime.now(timezone.utc)
+        db.commit()
+        _reportar_etapa(None)
+        logger.info(f"ReporteTributarioJob {job_id} completado para {empresa.ruc} -> {job.correo_destino}")
+
+    except Exception as e:
+        logger.exception(f"Error ejecutando ReporteTributarioJob {job_id}")
+        db.rollback()
+        job = db.query(ReporteTributarioJob).filter(ReporteTributarioJob.id == job_id).first()
         if job:
             job.estado = "error"
             job.error = str(e)[:1000]

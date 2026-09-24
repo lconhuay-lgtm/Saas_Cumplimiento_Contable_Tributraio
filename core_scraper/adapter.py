@@ -657,3 +657,198 @@ def generar_ficha_ruc_pdf(
         return {"ok": False, "pdf_bytes": None, "error": str(e)}
     finally:
         navegador.close_browser()
+
+
+def _buscar_en_algun_frame(driver, by, valor, timeout=20):
+    """
+    Busca un elemento primero en default_content y, si no aparece, lo
+    busca dentro de cada iframe de primer nivel (mismo patron que
+    _escanear_mensajes en adapter.py) -- el contenido de Menu SOL se carga
+    en iframes de forma inconsistente segun por donde se navego, asi que
+    no alcanza con asumir un solo contexto fijo. Reintenta durante
+    `timeout` segundos (confirmado en produccion, 24/09: esta pantalla en
+    particular a veces tarda en terminar de cargar via AJAX, sobre todo
+    en cuentas que pasaron por el modal "Flujo 1" post-login -- un solo
+    intento sin espera podia no encontrar nada todavia). Devuelve el
+    elemento encontrado (dejando al driver posicionado en el contexto
+    correcto) o None si no aparece en ningun lado dentro del timeout.
+    """
+    inicio = time.time()
+    while time.time() - inicio < timeout:
+        driver.switch_to.default_content()
+        try:
+            return driver.find_element(by, valor)
+        except Exception:
+            pass
+        for iframe in driver.find_elements(By.TAG_NAME, "iframe"):
+            driver.switch_to.default_content()
+            try:
+                driver.switch_to.frame(iframe)
+                return driver.find_element(by, valor)
+            except Exception:
+                continue
+        driver.switch_to.default_content()
+        time.sleep(1)
+    return None
+
+
+def generar_reporte_tributario_terceros(
+    ruc: str,
+    usuario_sol: str,
+    clave_sol: str,
+    correo_destino: str,
+    razon_social: str = "",
+    headless: bool = True,
+    on_progreso=None,
+) -> dict:
+    """
+    Inicia sesion en SUNAT SOL y solicita el "Reporte Tributario para
+    Terceros" (informacion RESERVADA segun el Art. 85 del Codigo
+    Tributario -- a diferencia de la Ficha RUC, que es publica) al correo
+    indicado. A diferencia de generar_ficha_ruc_pdf, esta funcion NO
+    descarga ningun PDF: SUNAT genera y envia el reporte por su cuenta:
+    aca solo se entra, se acepta el aviso legal, y se pide el envio.
+
+    Ruta confirmada con un diagnostico real (24/09): Menu SOL -> "Mi RUC y
+    Otros Registros" -> "Envio Reporte Tributario" -> "Reporte" ->
+    "Reporte Tributario para Terceros" (codigo de menu 10.11.1.1.1) --
+    NO confundir con "Reporte Tributario y Aduanero" (10.4), una opcion
+    DISTINTA con su propio limite (1 por dia, hasta 1 hora de espera) que
+    no es la que se automatiza aca.
+
+    OJO: SUNAT limita esto a 3 solicitudes por dia POR EMPRESA -- a partir
+    de la 4ta, reenvia la ultima ya generada sin avisar (mismo aviso que
+    en el "Reporte de Ficha RUC" con QR). El llamador (jobs.py) es
+    responsable de avisarle al usuario ANTES de llegar a ese limite.
+
+    Returns:
+        dict: {"ok": bool, "error": str | None}
+    """
+
+    def _reportar(etapa: str):
+        if on_progreso is None:
+            return
+        try:
+            on_progreso(etapa)
+        except Exception as e:
+            logger.warning(f"El callback de progreso fallo (no es grave, se sigue igual): {e}")
+
+    empresa = {"ruc": ruc, "usuario": usuario_sol, "clave": clave_sol, "razon_social": razon_social}
+    navegador = SunatWebNavigator(empresa=empresa, headless=headless)
+    try:
+        if not navegador.initialize_browser():
+            return {"ok": False, "error": "No se pudo iniciar el navegador"}
+
+        _reportar("iniciando_sesion")
+        navegador.driver.get(config.URL_SUNAT)
+        time.sleep(3)
+
+        _reportar("autenticando")
+        if not navegador._hacer_clicks_sunat(empresa):
+            return {"ok": False, "error": "No se pudo iniciar sesion en SUNAT (revisa usuario/clave)"}
+
+        driver = navegador.driver
+        ventana_original = driver.current_window_handle
+
+        _reportar("abriendo_reporte")
+        try:
+            for elid in ("nivel2_10_11", "nivel3_10_11_1", "nivel4_10_11_1_1_1"):
+                el = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, elid)))
+                try:
+                    el.click()
+                except Exception:
+                    driver.execute_script("arguments[0].click();", el)
+                time.sleep(2)
+                logger.info(f"Reporte Tributario para Terceros: clic en {elid} hecho")
+        except Exception as e:
+            return {"ok": False, "error": f"No se pudo abrir 'Reporte Tributario para Terceros' en el menu de SUNAT: {e}"}
+        # El clic en el 3er nivel del menu abre una pestaña nueva con el
+        # aviso legal (informacion reservada, Art. 85) -- cambiarse a ella.
+        # OJO (confirmado en produccion, 24/09): "cualquier ventana que no
+        # sea ventana_original" no alcanza -- puede haber OTRAS ventanas
+        # sueltas de mas temprano en el login (se confirmo una con titulo
+        # "SUNAT SOL Operaciones en Línea" / sol.html, ajena a este
+        # reporte). Se busca especificamente la ventana cuyo titulo
+        # mencione "TERCEROS", reintentando por si tarda en aparecer.
+        ventana_reporte = None
+        for _ in range(15):
+            for handle in driver.window_handles:
+                driver.switch_to.window(handle)
+                if "TERCEROS" in driver.title.upper():
+                    ventana_reporte = handle
+                    break
+            if ventana_reporte:
+                break
+            time.sleep(1)
+        logger.info(f"Reporte Tributario para Terceros: ventana del reporte encontrada = {ventana_reporte is not None}")
+        if ventana_reporte:
+            driver.switch_to.window(ventana_reporte)
+        time.sleep(2)
+
+        _reportar("aceptando_aviso")
+        checkbox_acepto = _buscar_en_algun_frame(driver, By.ID, "chkAceptar")
+        if checkbox_acepto is None:
+            logger.warning(f"Reporte Tributario para Terceros: no se encontro chkAceptar. Titulo actual: {driver.title!r}, URL: {driver.current_url!r}")
+            return {"ok": False, "error": "No aparecio el aviso legal ('Acepto') del Reporte Tributario para Terceros"}
+        # El checkbox real de SUNAT en esta pantalla no acepta un clic
+        # nativo (ElementNotInteractableException, confirmado en
+        # produccion -- probablemente esta detras de un overlay/estilo
+        # personalizado) -- se hace por JS, disparando el evento "change"
+        # a mano para que el JS de la pagina que habilita el boton
+        # "Acepto" (habilitarIngreso()) se entere igual.
+        driver.execute_script(
+            "arguments[0].click(); arguments[0].dispatchEvent(new Event('change', {bubbles: true}));",
+            checkbox_acepto,
+        )
+        time.sleep(1)
+        try:
+            boton_acepto = driver.find_element(By.ID, "btnAceptar")
+            driver.execute_script("arguments[0].click();", boton_acepto)
+        except Exception as e:
+            return {"ok": False, "error": f"No se pudo continuar despues de aceptar el aviso legal: {e}"}
+        time.sleep(4)
+
+        _reportar("enviando_correo")
+        campo_correo = _buscar_en_algun_frame(driver, By.ID, "txtCorreo")
+        if campo_correo is None:
+            return {"ok": False, "error": "No aparecio el campo de correo del Reporte Tributario para Terceros"}
+        try:
+            campo_correo.clear()
+            campo_correo.send_keys(correo_destino)
+        except Exception:
+            # Mismo problema que el checkbox de arriba -- este campo
+            # tampoco acepta interaccion nativa en esta pantalla en
+            # particular. Se setea el value por JS y se disparan los
+            # eventos que el JS de la pagina espera para reconocer el
+            # cambio (input + change, React/Vue suelen escuchar "input").
+            driver.execute_script(
+                "arguments[0].value = arguments[1];"
+                "arguments[0].dispatchEvent(new Event('input', {bubbles: true}));"
+                "arguments[0].dispatchEvent(new Event('change', {bubbles: true}));",
+                campo_correo,
+                correo_destino,
+            )
+        time.sleep(1)
+        boton_enviar = _buscar_en_algun_frame(driver, By.ID, "btnCorreo", timeout=10)
+        if boton_enviar is None:
+            return {"ok": False, "error": "No se encontro el boton 'Enviar' del Reporte Tributario para Terceros"}
+        try:
+            boton_enviar.click()
+        except Exception:
+            driver.execute_script("arguments[0].click();", boton_enviar)
+        time.sleep(4)
+
+        # SUNAT no siempre deja un mensaje de confirmacion facil de
+        # reconocer por texto -- se loguea lo que quedo en pantalla para
+        # poder diagnosticar a mano si algo falla mas adelante (p.ej. el
+        # captcha invisible de la pantalla bloqueando el envio), pero no
+        # se bloquea la respuesta por eso: el clic en "Enviar" ya se hizo.
+        logger.info(f"Reporte Tributario para Terceros solicitado para {ruc} -> {correo_destino}")
+        logger.info(f"Texto en pantalla tras el envio: {driver.find_element(By.TAG_NAME, 'body').text[:300]!r}")
+        return {"ok": True, "error": None}
+
+    except Exception as e:
+        logger.error(f"Error solicitando el Reporte Tributario para Terceros de {ruc}: {e}")
+        return {"ok": False, "error": str(e)}
+    finally:
+        navegador.close_browser()
