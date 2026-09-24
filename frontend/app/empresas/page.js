@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -89,7 +89,19 @@ function formatoRelativo(fechaIso) {
   return `hace ${diffD}d`;
 }
 
+// Fix Fase R4: useSearchParams() exige un limite de Suspense en el build de
+// produccion (next build) -- next dev nunca lo exigia, por eso no se habia
+// visto hasta ahora. EmpresasPage queda como wrapper delgado; toda la
+// logica real sigue en EmpresasPageContenido, sin cambios.
 export default function EmpresasPage() {
+  return (
+    <Suspense fallback={null}>
+      <EmpresasPageContenido />
+    </Suspense>
+  );
+}
+
+function EmpresasPageContenido() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [empresas, setEmpresas] = useState([]);

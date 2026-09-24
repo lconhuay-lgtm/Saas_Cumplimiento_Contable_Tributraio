@@ -1,0 +1,17 @@
+# Variante de DESARROLLO (next dev, hot-reload) -- usada solo via
+# docker-compose.override.yml (que Docker Compose aplica automaticamente
+# ademas de docker-compose.yml cuando corres "docker compose up" sin -f).
+# El Dockerfile de produccion real (build + start) vive en ./Dockerfile
+# desde la Fase R4 del plan de remediacion.
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package.json ./
+RUN npm install
+
+COPY . .
+
+EXPOSE 3000
+
+CMD ["npm", "run", "dev"]

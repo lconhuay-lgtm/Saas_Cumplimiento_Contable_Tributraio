@@ -93,12 +93,18 @@ mano (ver `PLAYBOOK_FALLOS_SUNAT.md`).
    python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
    ```
    Backend, worker y scheduler son procesos distintos y deben compartir esta clave.
-2. `docker-compose up --build` (la primera vez tarda varios minutos: instala Chromium en la imagen del backend/worker/scheduler, y las dependencias de Next.js en la del frontend).
+2. `docker-compose up --build` (la primera vez tarda varios minutos: instala Chromium en la imagen del backend/worker/scheduler, y las dependencias de Next.js en la del frontend). Esto arranca en modo desarrollo (hot-reload) gracias a `docker-compose.override.yml`, que Compose aplica solo, sin pasar ninguna bandera extra.
 3. Migraciones: `docker-compose exec backend alembic upgrade head`
 4. Tablero web: http://localhost:3000
 5. Documentación interactiva de la API: http://localhost:8000/docs
 6. Logs del worker en vivo (útil para ver el navegador trabajando): `docker-compose logs -f worker`
 7. Logs del scheduler (para ver los horarios programados): `docker-compose logs -f scheduler`
+
+**Producción real** (fix Fase R4): `docker-compose.yml` por sí solo (sin el override) ya es el build optimizado -- backend sin `--reload`, frontend con `next build && next start` en vez de `next dev`, sin bind mounts del código fuente. Para levantarlo así, en el servidor real:
+```
+docker compose -f docker-compose.yml up -d --build
+```
+(sin la `-f` explícita, Compose siempre suma `docker-compose.override.yml` si existe en la carpeta -- por eso en el servidor de producción ese archivo no debería existir, o hay que excluirlo explícitamente como arriba).
 
 ## Seguridad de credenciales (envelope encryption)
 

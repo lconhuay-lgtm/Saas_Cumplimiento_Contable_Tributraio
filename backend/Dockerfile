@@ -41,4 +41,9 @@ WORKDIR /app/backend
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Sin --reload (fix Fase R4): ese flag es solo para desarrollo -- reinicia
+# el proceso completo en cada cambio de archivo, no soporta multiples
+# workers, y vigila el filesystem todo el tiempo (gasto de CPU innecesario
+# en produccion). El override de desarrollo (docker-compose.override.yml)
+# lo vuelve a agregar via `command:` para local.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

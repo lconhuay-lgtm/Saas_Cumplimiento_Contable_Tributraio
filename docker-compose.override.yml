@@ -1,0 +1,46 @@
+# Overrides de DESARROLLO (fix Fase R4) -- Docker Compose aplica este
+# archivo automaticamente ademas de docker-compose.yml cuando corres
+# "docker compose up" sin pasar -f (es el nombre magico que Compose busca
+# solo, no hace falta ninguna bandera extra). Recupera exactamente el
+# comportamiento de antes de la Fase R4 (hot-reload del backend, next dev
+# en el frontend) sin que el archivo base tenga que asumir desarrollo por
+# defecto.
+#
+# Para levantar el stack de PRODUCCION real (sin estos overrides, con los
+# builds optimizados), usar explicitamente:
+#   docker compose -f docker-compose.yml up -d --build
+services:
+  backend:
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app/backend
+      - ./core_scraper:/app/core_scraper
+
+  worker:
+    volumes:
+      - ./backend:/app/backend
+      - ./core_scraper:/app/core_scraper
+
+  scheduler:
+    volumes:
+      - ./backend:/app/backend
+      - ./core_scraper:/app/core_scraper
+
+  frontend:
+    build:
+      dockerfile: Dockerfile.dev
+    environment:
+      # Docker Desktop en Windows no siempre propaga los eventos de cambio
+      # de archivo al contenedor a traves del volumen montado -- sin esto,
+      # next dev se queda sirviendo la version vieja del codigo aunque el
+      # archivo en disco ya haya cambiado, y hay que reiniciar el
+      # contenedor a mano cada vez.
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ./frontend:/app
+      # Volumenes anonimos: evitan que el bind mount de arriba (pensado
+      # para hot-reload del codigo) tape node_modules/.next generados
+      # DENTRO del contenedor durante el build de la imagen.
+      - /app/node_modules
+      - /app/.next
