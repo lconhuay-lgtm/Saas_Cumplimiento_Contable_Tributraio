@@ -110,6 +110,8 @@ docker compose -f docker-compose.yml up -d --build
 
 Cada credencial SOL se cifra con su propia clave (DEK) generada al azar; esa DEK se cifra a su vez con una "clave maestra" (`CREDENCIALES_FERNET_KEY`). En producción, la clave maestra deja de ser una variable de entorno y pasa a ser KMS real (AWS/GCP/Vault) — el cambio queda acotado a dos funciones en `security.py` (`_cifrar_master` / `_descifrar_master`), todo lo demás queda igual.
 
+**Importante:** `CREDENCIALES_FERNET_KEY` debe existir en al menos 2 lugares independientes (el `.env` del servidor y el gestor de contraseñas del equipo) — perderla sin backup significa que ningún cliente puede volver a consultar SUNAT hasta que vuelva a cargar su usuario/clave SOL. Ver `RUNBOOK_OPERACIONES.md` para el procedimiento completo si esto llega a pasar.
+
 ## Estado
 
 **Fase 0 (semanas 1-2) — completa y verificada.**
