@@ -10,12 +10,17 @@ export default function RegistroPage() {
   const [nombreTenant, setNombreTenant] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordRepetir, setPasswordRepetir] = useState("");
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
 
   async function onSubmit(e) {
     e.preventDefault();
     setError("");
+    if (password !== passwordRepetir) {
+      setError("Las contrasenas no coinciden");
+      return;
+    }
     setCargando(true);
     try {
       const data = await api.registro(nombreTenant, email, password);
@@ -93,6 +98,24 @@ export default function RegistroPage() {
             minLength={8}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            required
+            className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-ink outline-none transition-all duration-300 ease-out focus:border-accent focus:ring-4 focus:ring-accent-light"
+          />
+        </div>
+
+        <div className="mt-4">
+          <label
+            htmlFor="passwordRepetir"
+            className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-500"
+          >
+            Repetir contrasena
+          </label>
+          <input
+            id="passwordRepetir"
+            type="password"
+            minLength={8}
+            value={passwordRepetir}
+            onChange={(e) => setPasswordRepetir(e.target.value)}
             required
             className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-ink outline-none transition-all duration-300 ease-out focus:border-accent focus:ring-4 focus:ring-accent-light"
           />

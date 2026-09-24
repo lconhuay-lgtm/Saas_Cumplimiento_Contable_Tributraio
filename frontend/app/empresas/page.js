@@ -466,8 +466,8 @@ function EmpresasPageContenido() {
 
         {mostrarForm && (
           <FormularioEmpresa
-            onCreada={() => {
-              setMostrarForm(false);
+            onCreada={(opts) => {
+              if (!opts?.mantenerAbierto) setMostrarForm(false);
               cargar();
             }}
           />
@@ -1058,6 +1058,19 @@ function ModalFichaRuc({ info, onClose, onRegenerar }) {
   );
 }
 
+// Mismo texto exacto que arma adapter.py cuando SUNAT no acepta el
+// usuario/clave (ver core_scraper/adapter.py) -- se usa para distinguir
+// "credenciales rechazadas" de cualquier otro motivo de fallo (portal
+// caido, timeout, etc.), que no ameritan pedirle al usuario que las
+// corrija.
+const ERROR_CREDENCIALES_INCORRECTAS = "revisa usuario/clave";
+// Cuantas veces (cada 3s, ~90s en total) esperar a que la consulta
+// automatica de la empresa recien creada termine antes de dejar de
+// bloquear el formulario -- una consulta normal rara vez tarda mas que
+// esto, y si tarda mas el usuario igual puede seguir usando el sistema
+// mientras termina en segundo plano.
+const INTENTOS_VERIFICAR_CREDENCIALES = 30;
+
 function FormularioEmpresa({ onCreada }) {
   const [ruc, setRuc] = useState("");
   const [razonSocial, setRazonSocial] = useState("");
@@ -1066,34 +1079,115 @@ function FormularioEmpresa({ onCreada }) {
   const [claveSolRepetir, setClaveSolRepetir] = useState("");
   const [error, setError] = useState("");
   const [guardando, setGuardando] = useState(false);
+  const [verificando, setVerificando] = useState(false);
+  const [avisoCredenciales, setAvisoCredenciales] = useState(null); // { empresaId, razonSocial, detalle, esCredencialesIncorrectas } | null
 
   async function onSubmit(e) {
     e.preventDefault();
     setError("");
+    setAvisoCredenciales(null);
     if (claveSol !== claveSolRepetir) {
       setError("La clave SOL y su repeticion no coinciden.");
       return;
     }
     setGuardando(true);
     try {
-      await api.crearEmpresa({
+      const empresaCreada = await api.crearEmpresa({
         ruc,
         razon_social: razonSocial,
         usuario_sol: usuarioSol,
         clave_sol: claveSol,
       });
-      onCreada();
+      setGuardando(false);
+      await verificarCredencialesRecienCreadas(empresaCreada);
     } catch (err) {
       setError(err.message);
-    } finally {
       setGuardando(false);
     }
+  }
+
+  async function verificarCredencialesRecienCreadas(empresaCreada) {
+    setVerificando(true);
+    for (let intento = 0; intento < INTENTOS_VERIFICAR_CREDENCIALES; intento++) {
+      await new Promise((resolver) => setTimeout(resolver, 3000));
+      let jobs;
+      try {
+        jobs = await api.listarJobsDeEmpresa(empresaCreada.id);
+      } catch {
+        break; // si falla el propio polling, no trabar al usuario -- se vera igual en la lista
+      }
+      const job = jobs[0]; // el mas reciente, el backend ya ordena desc
+      if (!job) break; // no se llego a encolar nada (caso raro, ej. limite por RUC) -- no bloquear
+      if (job.estado === "completado") {
+        setVerificando(false);
+        onCreada();
+        return;
+      }
+      if (job.estado === "error") {
+        setVerificando(false);
+        setAvisoCredenciales({
+          empresaId: empresaCreada.id,
+          razonSocial: empresaCreada.razon_social,
+          detalle: job.error,
+          esCredencialesIncorrectas: (job.error || "").includes(ERROR_CREDENCIALES_INCORRECTAS),
+        });
+        onCreada({ mantenerAbierto: true }); // la empresa ya quedo creada -- refrescar la lista sin cerrar el formulario
+        return;
+      }
+      // pendiente o en_progreso -> seguir esperando
+    }
+    // se agoto la espera sin resultado definitivo: no bloquear mas, la
+    // consulta sigue en curso en segundo plano y se vera en la lista.
+    setVerificando(false);
+    onCreada();
+  }
+
+  async function eliminarEmpresaConError() {
+    if (!avisoCredenciales) return;
+    if (!confirm(`Seguro que quieres eliminar "${avisoCredenciales.razonSocial}"? Se borraran tambien sus mensajes.`)) return;
+    await api.eliminarEmpresa(avisoCredenciales.empresaId);
+    setAvisoCredenciales(null);
   }
 
   return (
     <form onSubmit={onSubmit} className="surface-card mt-6 animate-fade-in-up p-6">
       {error && (
         <div className="mb-4 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>
+      )}
+      {verificando && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-accent-light bg-accent-light/40 px-3 py-2.5 text-sm text-accent">
+          <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />
+          Verificando el usuario y clave SOL con SUNAT...
+        </div>
+      )}
+      {avisoCredenciales && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-700">
+          <div className="flex items-start gap-2">
+            <AlertTriangle size={16} strokeWidth={1.5} className="mt-0.5 shrink-0" />
+            <p>
+              {avisoCredenciales.esCredencialesIncorrectas ? (
+                <>
+                  <strong>{avisoCredenciales.razonSocial}</strong> se guardo, pero SUNAT rechazo el usuario/clave SOL
+                  ingresados. Corrigelos para que las consultas funcionen.
+                </>
+              ) : (
+                <>
+                  <strong>{avisoCredenciales.razonSocial}</strong> se guardo, pero la primera consulta fallo:{" "}
+                  {avisoCredenciales.detalle}. Puede ser algo temporal de SUNAT -- prueba "Consultar" de nuevo en un
+                  momento.
+                </>
+              )}
+            </p>
+          </div>
+          <div className="mt-2 flex gap-4 pl-6">
+            <Link href={`/empresas/${avisoCredenciales.empresaId}`} className="font-medium underline">
+              Ir a corregir credenciales
+            </Link>
+            <button type="button" onClick={eliminarEmpresaConError} className="font-medium underline">
+              Eliminar empresa
+            </button>
+          </div>
+        </div>
       )}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Campo id="ruc" label="RUC (11 digitos)">
@@ -1148,11 +1242,11 @@ function FormularioEmpresa({ onCreada }) {
       </div>
       <button
         type="submit"
-        disabled={guardando}
+        disabled={guardando || verificando}
         className="mt-5 flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white shadow-soft transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-accent-dark disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {guardando && <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />}
-        {guardando ? "Guardando..." : "Guardar empresa"}
+        {(guardando || verificando) && <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />}
+        {guardando ? "Guardando..." : verificando ? "Verificando..." : "Guardar empresa"}
       </button>
     </form>
   );

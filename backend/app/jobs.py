@@ -126,10 +126,19 @@ def ejecutar_consulta_buzon(job_id: str):
 
         from adapter import consultar_buzon
 
+        # OJO: esto le dice al scraper que documentos NO hace falta volver a
+        # descargar -- por eso se filtra a los que YA tienen documento_ref,
+        # no a "todo mensaje que ya conocemos". Un mensaje puede haberse
+        # guardado sin PDF porque la corrida anterior toco el limite de
+        # MAX_DESCARGAS_POR_CORRIDA (adapter.py) antes de llegar a el -- si
+        # aca se incluyera cualquier mensaje ya guardado (tenga o no
+        # documento), esa notificacion se quedaria SIN PDF para siempre,
+        # porque el chequeo de "mensaje nuevo" mas abajo (`existe`) igual lo
+        # va a saltar en cada corrida futura.
         ids_conocidos = {
             fila[0]
             for fila in db.query(MensajeBuzon.mensaje_externo_id)
-            .filter(MensajeBuzon.empresa_id == empresa.id)
+            .filter(MensajeBuzon.empresa_id == empresa.id, MensajeBuzon.documento_ref.isnot(None))
             .all()
         }
 
@@ -245,6 +254,17 @@ def ejecutar_consulta_buzon(job_id: str):
                 .first()
             )
             if existe:
+                # El mensaje ya estaba guardado, pero puede que le faltara
+                # el PDF de una corrida anterior (ver el comentario de
+                # ids_conocidos mas arriba) -- si esta corrida SI lo logro
+                # descargar, hay que completarlo aca, no perderlo.
+                if existe.documento_ref is None:
+                    ruta_local_pdf = documentos_descargados.get(mid)
+                    if ruta_local_pdf:
+                        try:
+                            existe.documento_ref = guardar_documento(ruta_local_pdf, empresa.id, mid)
+                        except AlmacenamientoError as e:
+                            logger.error(f"No se pudo guardar el documento del mensaje '{msg['asunto']}': {e}")
                 continue
 
             documento_ref = None

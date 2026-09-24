@@ -112,6 +112,8 @@ export const api = {
 
   obtenerJob: (jobId) => apiFetch(`/jobs/${jobId}`),
 
+  listarJobsDeEmpresa: (empresaId) => apiFetch(`/empresas/${empresaId}/jobs`),
+
   listarMensajes: (empresaId) => apiFetch(`/empresas/${empresaId}/mensajes`),
 
   marcarLeido: (empresaId, mensajeId, leido) =>
