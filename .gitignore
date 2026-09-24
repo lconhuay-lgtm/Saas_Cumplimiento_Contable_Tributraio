@@ -22,6 +22,13 @@ node_modules/
 *.sqlite3
 *.tmp*
 
+# Logs autogenerados por los scripts de scripts/ (ver_estado.bat,
+# diagnosticar_*.bat) -- se regeneran en la raiz cada vez que se corren,
+# no tiene sentido versionarlos (ver _historial_correcciones/README.md)
+resultado_*.log
+estado_actual.log
+diagnostico_red.log
+
 # Credenciales o listados sensibles que pudieran caer aqui por error
 credentials.json
 credenciales*.json

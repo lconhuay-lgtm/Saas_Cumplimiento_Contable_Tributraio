@@ -83,6 +83,11 @@ La motivación es concreta: nos enteramos de que SUNAT había cambiado su portal
 
 ## Cómo levantarlo (desarrollo local)
 
+Atajo: `scripts/levantar_y_probar.bat` hace los pasos 1-3 de abajo y corre una
+prueba end-to-end. `scripts/ver_estado.bat` y `scripts/diagnosticar_*.bat`
+sirven para chequear el estado o diagnosticar una alerta sin repetir esto a
+mano (ver `PLAYBOOK_FALLOS_SUNAT.md`).
+
 1. Copiar `.env.example` a `.env`. **Importante:** generar una `CREDENCIALES_FERNET_KEY` real (no dejarla vacía) con:
    ```
    python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
