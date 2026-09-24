@@ -1,0 +1,34 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.36
+alembic==1.14.0
+psycopg2-binary==2.9.10
+pydantic[email]==2.10.4
+pydantic-settings==2.7.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+python-multipart==0.0.20
+cryptography==44.0.0
+redis==5.2.1
+rq==2.1.0
+PyVirtualDisplay==3.0
+APScheduler==3.10.4
+
+# Importar empresas desde Excel (Fase 2, mejora post-lanzamiento)
+pandas==2.2.3
+openpyxl==3.1.5
+xlrd==2.0.1
+
+# Visor de PDF: almacenamiento S3-compatible para produccion (Cloudflare R2).
+# En modo local (default) no se usa, pero se instala igual para no tener
+# que reconstruir la imagen el dia que se prenda ALMACENAMIENTO_MODO=s3.
+boto3==1.35.50
+
+# Modulo de cronograma SUNAT: descarga+parseo de la pagina publica y
+# estatica del cronograma de vencimientos (sin Selenium -- no requiere
+# sesion, es un GET comun). requests ya viene como dependencia transitiva
+# de varios paquetes de arriba, pero se fija explicito porque cronograma_sunat.py
+# lo importa directo.
+requests==2.32.3
+beautifulsoup4==4.12.3

@@ -1,0 +1,154 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-buzon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-buzon_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-buzon_saas}
+    ports:
+      - "5432:5432"
+    volumes:
+      - buzon_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-buzon}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://buzon:buzon_dev_password@postgres:5432/buzon_saas}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend
+      - ./core_scraper:/app/core_scraper
+      # Los endpoints /admin (chequeo nocturno manual, resumen diario)
+      # corren dentro de ESTE contenedor y son los que escriben los correos
+      # en modo prueba -- sin este mount quedarian atrapados dentro del
+      # contenedor y el usuario no podria abrirlos desde Windows.
+      - ./sunat_data:/data/sunat
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    # worker_entry.py arranca su propia pantalla virtual (pyvirtualdisplay)
+    # antes de escuchar la cola -- ver ese archivo para el porque.
+    command: python worker_entry.py
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://buzon:buzon_dev_password@postgres:5432/buzon_saas}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      # Sin esto, la salida de Python queda bufferizada dentro del
+      # contenedor y "docker-compose logs" puede mostrar nada durante mucho
+      # tiempo aunque el proceso este funcionando bien -- ya nos paso.
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend
+      - ./core_scraper:/app/core_scraper
+      # Carpeta real en Windows (no un volumen interno de Docker) para que
+      # las capturas de pantalla de diagnostico se puedan abrir directo
+      # desde el Explorador de archivos.
+      - ./sunat_data:/data/sunat
+    # shm_size evita que Chromium se quede sin memoria compartida y se
+    # cuelgue a mitad de una sesion (problema conocido al correr Chrome en
+    # contenedores con el /dev/shm por defecto, que es muy chico).
+    shm_size: "1gb"
+
+  # Fase 2: dispara el chequeo nocturno (recorre empresas activas, encola sus
+  # consultas espaciadas) y, mas tarde, el correo de resumen diario. Proceso
+  # aparte del backend/worker para que un problema aqui no tumbe la API ni
+  # las consultas en curso. Reutiliza la misma imagen que backend/worker
+  # (ya tiene todo lo necesario) pero con otro comando.
+  scheduler:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    command: python scheduler_entry.py
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://buzon:buzon_dev_password@postgres:5432/buzon_saas}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend
+      - ./core_scraper:/app/core_scraper
+      # Aqui es donde caen los correos de "modo prueba" (ver
+      # backend/app/email_utils.py) cuando no hay SMTP configurado --
+      # quedan en sunat_data/emails_dev/ visibles desde Windows.
+      - ./sunat_data:/data/sunat
+
+  # Fase 2: tablero web. Corre en modo desarrollo (next dev) a proposito --
+  # ver frontend/Dockerfile para el porque. NEXT_PUBLIC_API_URL apunta a
+  # localhost:8000 porque el codigo que la usa corre en el NAVEGADOR del
+  # usuario (fuera de Docker), no dentro del contenedor -- ahi "backend" (el
+  # nombre del servicio) no resolveria a nada.
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      # Docker Desktop en Windows no siempre propaga los eventos de cambio
+      # de archivo al contenedor a traves del volumen montado -- sin esto,
+      # next dev se queda sirviendo la version vieja del codigo aunque el
+      # archivo en disco ya haya cambiado, y hay que reiniciar el
+      # contenedor a mano cada vez. Con polling, el proceso revisa los
+      # archivos el mismo en vez de esperar un aviso del sistema operativo.
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      # Volumenes anonimos: evitan que el bind mount de arriba (pensado para
+      # hot-reload del codigo) tape node_modules/.next generados DENTRO del
+      # contenedor durante el build de la imagen.
+      - /app/node_modules
+      - /app/.next
+
+volumes:
+  buzon_pgdata:

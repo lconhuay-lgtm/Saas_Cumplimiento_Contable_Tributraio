@@ -1,0 +1,22 @@
+---------------------------------------
+Probando conectividad desde DENTRO del contenedor worker
+---------------------------------------
+======================================================================
+1) www.sunat.gob.pe (sabemos que esta SI funciona con Selenium)
+======================================================================
+  DNS de www.sunat.gob.pe:
+    OK (0.1s) -> ['170.82.97.8']
+  GET https://www.sunat.gob.pe/:
+    OK, status=200, en 0.13s, primeros bytes: b'<html><head><meta content="width=device-width, initial-scale=1" name="viewport">'
+
+======================================================================
+2) e-menu.sunat.gob.pe (la que falla con ERR_EMPTY_RESPONSE)
+======================================================================
+  DNS de e-menu.sunat.gob.pe:
+    OK (0.01s) -> ['200.41.15.38']
+  GET https://e-menu.sunat.gob.pe/cl-ti-itmenucabina/MenuInternet.htm:
+    OK, status=200, en 0.06s, primeros bytes: b'\n\n<!DOCTYPE html>\n<html lang="es">\n  <head>\n  <script src="/a/js/libs/jquery/1.1'
+
+======================================================================
+Fin del diagnostico
+======================================================================

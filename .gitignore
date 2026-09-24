@@ -1,0 +1,29 @@
+.env
+.env.local
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+logs/
+chromedriver-win64/
+.pytest_cache/
+sunat_data/
+
+# Frontend (Next.js) -- generado, nunca se versiona
+frontend/node_modules/
+frontend/.next/
+node_modules/
+.next/
+
+# Bases de datos locales / archivos temporales sueltos
+*.db
+*.sqlite
+*.sqlite3
+*.tmp*
+
+# Credenciales o listados sensibles que pudieran caer aqui por error
+credentials.json
+credenciales*.json
+credenciales*.xlsx
+credenciales*.xls

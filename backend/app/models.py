@@ -1,0 +1,350 @@
+"""
+Modelos SQLAlchemy -- las 6 tablas del esquema aprobado en Fase 0.
+Coinciden con el diagrama ERD revisado: TENANTS, USUARIOS, EMPRESAS,
+CREDENCIALES_SOL, MENSAJES_BUZON, CONSULTAS_JOBS.
+"""
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import (
+    String, Boolean, DateTime, ForeignKey, UniqueConstraint, Integer, LargeBinary, Float
+)
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.database import Base
+
+
+def _uuid() -> str:
+    return str(uuid.uuid4())
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class Tenant(Base):
+    """Un estudio contable / cuenta que usa la plataforma."""
+    __tablename__ = "tenants"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    nombre: Mapped[str] = mapped_column(String(200), nullable=False)
+    activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+    usuarios: Mapped[list["Usuario"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
+    empresas: Mapped[list["Empresa"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
+
+
+class Usuario(Base):
+    """Persona que inicia sesion en el tablero, pertenece a un tenant."""
+    __tablename__ = "usuarios"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    rol: Mapped[str] = mapped_column(String(20), default="admin", nullable=False)  # admin | miembro
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    ultimo_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="usuarios")
+
+
+class Empresa(Base):
+    """Un RUC (cliente) que el tenant quiere monitorear."""
+    __tablename__ = "empresas"
+    __table_args__ = (UniqueConstraint("tenant_id", "ruc", name="uq_empresa_tenant_ruc"),)
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False, index=True)
+    ruc: Mapped[str] = mapped_column(String(11), nullable=False, index=True)
+    razon_social: Mapped[str] = mapped_column(String(255), nullable=False)
+    activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    ultima_consulta_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # "Habido" | "No Habido" | "No Hallado" -- leido del navbar del Menu SOL
+    # (span.spanEstadoDomicilio) en cada consulta exitosa, igual que la razon
+    # social. None hasta la primera consulta que logre leerlo.
+    condicion_domicilio: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Valor anterior + cuando cambio -- solo se llenan cuando el valor
+    # detectado difiere del que ya estaba guardado (no en la primera
+    # deteccion), para poder avisar en el Dashboard de cambios reales sin
+    # que la primera consulta de cada empresa cuente como "cambio".
+    condicion_domicilio_anterior: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    condicion_domicilio_actualizada_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # "Activo" | "Baja de Oficio" | etc. -- a diferencia de condicion_domicilio,
+    # esto NO vive en el navbar normal del Menu SOL, solo dentro de la Ficha
+    # RUC (confirmado con un diagnostico real) -- se lee en cada consulta
+    # con web_navigation.SunatWebNavigator._leer_estado_contribuyente().
+    # Mismo patron de "anterior" + fecha que condicion_domicilio, para el
+    # aviso de cambios en el Dashboard.
+    estado_contribuyente: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    estado_contribuyente_anterior: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    estado_contribuyente_actualizado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Referencia (formato identico a MensajeBuzon.documento_ref, mismo
+    # modulo de almacenamiento) al PDF de la Ficha RUC generado mas
+    # recientemente -- se sobreescribe cada vez que se vuelve a generar,
+    # a diferencia de los documentos de mensajes que se conservan todos.
+    ficha_ruc_pdf_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    ficha_ruc_generada_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Fase 3 (confiabilidad/observabilidad): si es True, esta empresa se usa
+    # como "cuenta controlada" para el chequeo canario periodico (ver
+    # scheduler_job.ejecutar_chequeo_canario) -- una consulta de prueba
+    # separada de las consultas normales, solo para medir si el login a
+    # SUNAT sigue funcionando. Normalmente una sola empresa del sistema
+    # tiene esto en True.
+    es_canario: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Modulo de cronograma SUNAT: si es True, esta empresa usa la columna
+    # "BUENOS CONTRIBUYENTES y UESP" del cronograma oficial (fecha de
+    # vencimiento extendida) en vez de la que le tocaria por su ultimo
+    # digito de RUC -- ver app.cronograma_sunat.grupo_para_empresa(). Por
+    # defecto False (la gran mayoria de contribuyentes usa el cronograma
+    # general).
+    es_buen_contribuyente: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="empresas")
+    credencial: Mapped["CredencialSol | None"] = relationship(
+        back_populates="empresa", uselist=False, cascade="all, delete-orphan"
+    )
+    mensajes: Mapped[list["MensajeBuzon"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    jobs: Mapped[list["ConsultaJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    ficha_ruc_jobs: Mapped[list["FichaRucJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    canario_checks: Mapped[list["CanarioCheck"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    obligaciones: Mapped[list["EmpresaObligacion"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    tareas: Mapped[list["TareaObligacion"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+
+
+class CredencialSol(Base):
+    """
+    Credenciales SOL de una empresa, en tabla aparte a proposito (aislamiento
+    de seguridad). clave_cifrada/dek_cifrada son placeholders de Fase 0 --
+    Fase 1 semana 5 reemplaza esto por cifrado real via KMS.
+    """
+    __tablename__ = "credenciales_sol"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, unique=True
+    )
+    usuario_sol: Mapped[str] = mapped_column(String(100), nullable=False)
+    clave_cifrada: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    dek_cifrada: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="credencial")
+
+
+class MensajeBuzon(Base):
+    """
+    Historial de mensajes leidos del buzon SOL. La restriccion unica sobre
+    (empresa_id, mensaje_externo_id) es la que evita el bug de duplicados
+    que arreglamos en la automatizacion original -- aqui queda resuelto a
+    nivel de base de datos.
+    """
+    __tablename__ = "mensajes_buzon"
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "mensaje_externo_id", name="uq_mensaje_empresa_externo"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    mensaje_externo_id: Mapped[str] = mapped_column(String(500), nullable=False)
+    fecha_publicacion: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    asunto: Mapped[str] = mapped_column(String(500), nullable=False)
+    tipo: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    leido: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    descubierto_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    documento_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="mensajes")
+
+
+class ConsultaJob(Base):
+    """
+    Cola/bitacora de consultas al buzon. Sirve dos propositos: (1) estado del
+    job para la cola de trabajos de Fase 1, y (2) auditoria de quien pidio
+    entrar a la cuenta SOL de cada empresa y cuando.
+    """
+    __tablename__ = "consultas_jobs"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    solicitado_por: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
+    estado: Mapped[str] = mapped_column(String(20), default="pendiente", nullable=False, index=True)
+    # Etapa dentro de "en_progreso" -- iniciando_sesion / autenticando /
+    # leyendo_estado / abriendo_buzon / leyendo_mensajes /
+    # descargando_documentos -- mismo patron que FichaRucJob.etapa, para
+    # que el boton "Consultar" de cada empresa muestre una barra de
+    # progreso real en vez de un spinner sin perspectiva de tiempo. None
+    # antes de arrancar o una vez que el job ya termino.
+    etapa: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    iniciado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finalizado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    mensajes_nuevos: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    notificado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="jobs")
+
+
+class FichaRucJob(Base):
+    """
+    Cola/bitacora de generacion de PDF de Ficha RUC -- tabla aparte de
+    ConsultaJob a proposito: es una operacion distinta (no lee el Buzon,
+    no cuenta mensajes nuevos) y mezclar los dos conceptos en una sola
+    tabla con un campo "tipo" hubiera obligado a tocar toda la logica ya
+    probada de ConsultaJob. Estructura deliberadamente identica en espiritu
+    (mismo patron encolar -> pollear -> resultado) para que sea familiar.
+    """
+    __tablename__ = "ficha_ruc_jobs"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    solicitado_por: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
+    estado: Mapped[str] = mapped_column(String(20), default="pendiente", nullable=False, index=True)
+    # Etapa dentro de "en_progreso" -- iniciando_sesion / autenticando /
+    # abriendo_ficha / generando_pdf / guardando -- solo para darle al
+    # usuario una barra de progreso con perspectiva real del tiempo que
+    # falta (ver adapter.generar_ficha_ruc_pdf(on_progreso=...)). None
+    # antes de arrancar o una vez que el job ya termino (estado ya lo dice).
+    etapa: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    iniciado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finalizado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="ficha_ruc_jobs")
+
+
+class CanarioCheck(Base):
+    """
+    Fase 3 (confiabilidad/observabilidad): bitacora de cada chequeo
+    "canario" -- un login de prueba contra una cuenta controlada
+    (Empresa.es_canario=True), disparado periodicamente por el scheduler
+    (ver app.scheduler_job.ejecutar_chequeo_canario), SEPARADO de las
+    consultas normales de los tenants. El objetivo es medir la salud del
+    login a SUNAT de forma proactiva -- que el equipo se entere de un
+    cambio en el portal de SUNAT por este chequeo, no por el reclamo de un
+    cliente (como paso una vez con la automatizacion original).
+    """
+    __tablename__ = "canario_checks"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    ejecutado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False, index=True)
+    exito: Mapped[bool] = mapped_column(Boolean, nullable=False, index=True)
+    duracion_seg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # "flujo1" | "flujo2" | "sin_flujo" -- que pantalla post-login mostro
+    # SUNAT esta vez (ver web_navigation._click_condicional). Cambios en la
+    # distribucion de estos valores a lo largo del tiempo son una señal
+    # temprana de que SUNAT esta modificando su portal, incluso antes de
+    # que algo se rompa del todo.
+    flujo_detectado: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="canario_checks")
+
+
+class CronogramaVencimiento(Base):
+    """
+    Cronograma oficial de vencimientos mensuales de SUNAT (RS 281-2022,
+    vigente de forma permanente desde 2023 -- SUNAT solo republica la tabla
+    cada ejercicio en una URL predecible, no cambia la regla). Una fila por
+    (periodo_tributario, grupo): el "grupo" es la columna de la tabla oficial
+    segun el ultimo digito del RUC -- "0", "1", "2_3", "4_5", "6_7", "8_9" --
+    o "buenos_contribuyentes" para la columna "BUENOS CONTRIBUYENTES y UESP".
+    Esta misma tabla cubre tanto la declaracion mensual de IGV-Renta
+    (PDT/F.621) como PLAME (F.601) -- no hay cronogramas separados.
+    Se llena via app.cronograma_sunat.sincronizar_cronograma(), disparado
+    automaticamente (ver asegurar_cronograma_vigente) y a mano desde
+    POST /cronograma/sincronizar.
+    """
+    __tablename__ = "cronograma_vencimientos"
+    __table_args__ = (
+        UniqueConstraint("periodo_tributario", "grupo", name="uq_cronograma_periodo_grupo"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    # Periodo tributario que se declara, formato "YYYY-MM" (ej "2026-01" =
+    # Ene-2026). NO es la fecha de vencimiento -- esa es fecha_vencimiento.
+    periodo_tributario: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
+    grupo: Mapped[str] = mapped_column(String(30), nullable=False)
+    fecha_vencimiento: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+
+class EmpresaObligacion(Base):
+    """
+    Modulo de Tareas/Agenda: que obligaciones RECURRENTES tiene una empresa
+    ademas del cronograma general de IGV-Renta/PLAME (que aplica solo con
+    estar activa, automatico -- ver cronograma_sunat.py). No todas las
+    empresas tienen trabajadores en planilla, ni todas son empleadoras
+    afiliadas a AFP, ni todas reportan a la SBS -- aca es donde se marca
+    cuales le corresponden a cada una, y con que regla se calcula su
+    vencimiento.
+
+    regla_vencimiento:
+      - "cronograma_sunat": Planilla y AFP se declaran juntas dentro de la
+        PLAME (confirmado: la PLAME incluye remuneraciones + aportes AFP/
+        ONP/EsSalud/renta 5ta en un solo envio), asi que comparten
+        EXACTAMENTE el mismo cronograma por ultimo digito de RUC que ya
+        usa cronograma_sunat.py -- no hace falta guardar una fecha aparte,
+        se reusa esa tabla.
+      - "dia_fijo_mes": vence un dia fijo de cada mes (columna dia_fijo).
+      - "manual": sin regla automatica -- para reportes SBS, cuyo plazo
+        varia mucho segun el tipo de reporte (desde horas hasta dias
+        habiles, confirmado investigando) y no sigue ningun cronograma
+        fijo. El usuario carga la fecha de vencimiento a mano cada vez.
+    """
+    __tablename__ = "empresa_obligaciones"
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "tipo", "nombre", name="uq_empresa_obligacion_tipo_nombre"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    # "planilla" | "afp" | "sbs" | "otro"
+    tipo: Mapped[str] = mapped_column(String(30), nullable=False)
+    nombre: Mapped[str] = mapped_column(String(200), nullable=False)
+    activa: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    regla_vencimiento: Mapped[str] = mapped_column(String(30), nullable=False, default="manual")
+    dia_fijo: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="obligaciones")
+    tareas: Mapped[list["TareaObligacion"]] = relationship(back_populates="obligacion", cascade="all, delete-orphan")
+
+
+class TareaObligacion(Base):
+    """
+    Modulo de Tareas/Agenda: una tarea concreta con fecha limite -- generada
+    automaticamente a partir de una EmpresaObligacion (planilla/AFP via el
+    cronograma SUNAT, o una regla de dia fijo), o creada suelta a mano
+    (empresa_obligacion_id=None) para pendientes puntuales tipo "responder
+    esquela de SUNAT" o un reporte SBS con su fecha cargada a mano.
+    """
+    __tablename__ = "tarea_obligaciones"
+    __table_args__ = (
+        UniqueConstraint("empresa_obligacion_id", "periodo", name="uq_tarea_obligacion_periodo"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    empresa_obligacion_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("empresa_obligaciones.id"), nullable=True, index=True
+    )
+    titulo: Mapped[str] = mapped_column(String(300), nullable=False)
+    tipo: Mapped[str] = mapped_column(String(30), nullable=False)  # planilla|afp|sbs|otro|manual
+    periodo: Mapped[str | None] = mapped_column(String(7), nullable=True)  # "2026-08", None si no aplica
+    fecha_vencimiento: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    estado: Mapped[str] = mapped_column(String(20), default="pendiente", nullable=False, index=True)  # pendiente|completado|no_aplica
+    prioridad: Mapped[str] = mapped_column(String(20), default="media", nullable=False)  # baja|media|alta|urgente
+    proceso: Mapped[str] = mapped_column(String(20), default="manual", nullable=False)  # automatica|manual
+    fecha_completado: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    observaciones: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="tareas")
+    obligacion: Mapped["EmpresaObligacion | None"] = relationship(back_populates="tareas")
