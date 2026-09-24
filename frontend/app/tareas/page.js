@@ -66,6 +66,12 @@ export default function TareasPage() {
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
   const [filtroEstado, setFiltroEstado] = useState("pendiente");
+  // Cartera: "" = todas, "yo" = solo las de mi cartera, o el id de otro
+  // usuario del tenant (para que un socio/admin vea la cartera de alguien
+  // mas puntual).
+  const [filtroAsignado, setFiltroAsignado] = useState("");
+  const [usuarios, setUsuarios] = useState([]);
+  const [miUsuarioId, setMiUsuarioId] = useState(null);
   const [generando, setGenerando] = useState(false);
   const [mostrarNueva, setMostrarNueva] = useState(false);
   const [tareaSeleccionada, setTareaSeleccionada] = useState(null);
@@ -76,6 +82,8 @@ export default function TareasPage() {
       return;
     }
     cargarEmpresas();
+    api.me().then((yo) => setMiUsuarioId(yo.id)).catch(() => {});
+    api.listarUsuarios().then(setUsuarios).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -83,7 +91,7 @@ export default function TareasPage() {
     if (!getToken()) return;
     cargarTareas();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtroEstado]);
+  }, [filtroEstado, filtroAsignado, miUsuarioId]);
 
   async function cargarEmpresas() {
     try {
@@ -98,7 +106,11 @@ export default function TareasPage() {
     setCargando(true);
     setError("");
     try {
-      const data = await api.listarTareas(filtroEstado ? { estado: filtroEstado } : {});
+      const filtros = {};
+      if (filtroEstado) filtros.estado = filtroEstado;
+      if (filtroAsignado === "yo" && miUsuarioId) filtros.asignadoAUsuarioId = miUsuarioId;
+      else if (filtroAsignado && filtroAsignado !== "yo") filtros.asignadoAUsuarioId = filtroAsignado;
+      const data = await api.listarTareas(filtros);
       setTareas(data);
     } catch (err) {
       setError(err.message);
@@ -174,18 +186,34 @@ export default function TareasPage() {
           </div>
         </div>
 
-        <div className="mt-6 flex flex-wrap gap-1.5">
-          {ETIQUETAS_FILTRO.map(({ valor, etiqueta }) => (
-            <button
-              key={valor || "todas"}
-              onClick={() => setFiltroEstado(valor)}
-              className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors duration-300 ease-out ${
-                filtroEstado === valor ? "bg-accent text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-              }`}
-            >
-              {etiqueta}
-            </button>
-          ))}
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-1.5">
+            {ETIQUETAS_FILTRO.map(({ valor, etiqueta }) => (
+              <button
+                key={valor || "todas"}
+                onClick={() => setFiltroEstado(valor)}
+                className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors duration-300 ease-out ${
+                  filtroEstado === valor ? "bg-accent text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                {etiqueta}
+              </button>
+            ))}
+          </div>
+          <select
+            value={filtroAsignado}
+            onChange={(e) => setFiltroAsignado(e.target.value)}
+            title="Cartera: filtrar por quien tiene asignada la empresa de cada tarea"
+            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 outline-none"
+          >
+            <option value="">Todas las carteras</option>
+            <option value="yo">Mi cartera</option>
+            {usuarios.filter((u) => u.id !== miUsuarioId).map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.email}
+              </option>
+            ))}
+          </select>
         </div>
 
         {error && (

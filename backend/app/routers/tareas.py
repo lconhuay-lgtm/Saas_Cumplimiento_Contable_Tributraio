@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Usuario, Empresa, EmpresaObligacion, TareaObligacion
+from app.models import Usuario, Empresa, EmpresaObligacion, TareaObligacion, MensajeBuzon
 from app.deps import get_usuario_actual
 from app.schemas import (
     EmpresaObligacionCreate,
@@ -54,6 +54,8 @@ def _a_respuesta_tarea(tarea: TareaObligacion, empresa: Empresa) -> TareaObligac
         empresa_ruc=empresa.ruc,
         empresa_razon_social=empresa.razon_social,
         empresa_obligacion_id=tarea.empresa_obligacion_id,
+        mensaje_buzon_id=tarea.mensaje_buzon_id,
+        empresa_asignado_a_usuario_id=empresa.asignado_a_usuario_id,
         titulo=tarea.titulo,
         tipo=tarea.tipo,
         periodo=tarea.periodo,
@@ -155,6 +157,17 @@ def listar_tareas_endpoint(
     estado: str | None = None,
     empresa_id: str | None = None,
     periodo: str | None = None,
+    # Cartera: filtrar por el usuario asignado a la EMPRESA de la tarea (no
+    # hay un campo de asignacion en la tarea misma -- se hereda de la
+    # empresa, ver TareaObligacionResponse.empresa_asignado_a_usuario_id).
+    asignado_a_usuario_id: str | None = None,
+    # Rango de fechas, para que el calendario de /cronograma pueda pedir
+    # "las tareas con vencimiento en este mes" ademas del cronograma
+    # oficial -- independiente de `periodo` (que es el periodo TRIBUTARIO,
+    # no aplica a una tarea suelta creada desde una notificacion).
+    fecha_desde: datetime | None = None,
+    fecha_hasta: datetime | None = None,
+    mensaje_buzon_id: str | None = None,
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
@@ -169,6 +182,14 @@ def listar_tareas_endpoint(
         query = query.filter(TareaObligacion.empresa_id == empresa_id)
     if periodo:
         query = query.filter(TareaObligacion.periodo == periodo)
+    if asignado_a_usuario_id:
+        query = query.filter(Empresa.asignado_a_usuario_id == asignado_a_usuario_id)
+    if fecha_desde:
+        query = query.filter(TareaObligacion.fecha_vencimiento >= fecha_desde)
+    if fecha_hasta:
+        query = query.filter(TareaObligacion.fecha_vencimiento < fecha_hasta)
+    if mensaje_buzon_id:
+        query = query.filter(TareaObligacion.mensaje_buzon_id == mensaje_buzon_id)
     # Las tareas sin fecha (regla manual todavia sin cargar) van al final,
     # no primero -- sqlite y postgres ordenan NULL distinto por defecto,
     # asi que se fuerza con un criterio explicito en vez de confiar en el
@@ -186,6 +207,19 @@ def crear_tarea_manual(
     db: Session = Depends(get_db),
 ):
     empresa = _empresa_del_tenant(data.empresa_id, usuario, db)
+
+    if data.mensaje_buzon_id:
+        mensaje = (
+            db.query(MensajeBuzon)
+            .filter(MensajeBuzon.id == data.mensaje_buzon_id, MensajeBuzon.empresa_id == empresa.id)
+            .first()
+        )
+        if not mensaje:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El mensaje no existe o no pertenece a esta empresa",
+            )
+
     tarea = TareaObligacion(
         empresa_id=empresa.id,
         titulo=data.titulo,
@@ -193,10 +227,18 @@ def crear_tarea_manual(
         fecha_vencimiento=data.fecha_vencimiento,
         prioridad=data.prioridad,
         observaciones=data.observaciones,
+        mensaje_buzon_id=data.mensaje_buzon_id,
         proceso="manual",
     )
     db.add(tarea)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Esta notificacion ya tiene una tarea creada",
+        )
     db.refresh(tarea)
     return _a_respuesta_tarea(tarea, empresa)
 

@@ -66,6 +66,10 @@ class EmpresaResponse(BaseModel):
     # Contribuyentes y UESP" en vez del cronograma general por ultimo
     # digito de RUC (ver app.cronograma_sunat.grupo_para_empresa).
     es_buen_contribuyente: bool = False
+    # Cartera: usuario del tenant que sigue esta empresa (None = sin
+    # asignar). Ver Usuario.asignado_a_usuario_id en models.py -- es
+    # informativo/filtrable, no restringe quien puede ver la empresa.
+    asignado_a_usuario_id: str | None = None
 
     class Config:
         from_attributes = True
@@ -77,6 +81,10 @@ class EmpresaUpdate(BaseModel):
     # "activo" siga funcionando exactamente igual que antes).
     es_canario: bool | None = None
     es_buen_contribuyente: bool | None = None
+    # None es un valor VALIDO aca (significa "desasignar") -- el handler en
+    # routers/empresas.py distingue "no vino en el request" de "vino como
+    # null" via model_fields_set, no con este default.
+    asignado_a_usuario_id: str | None = None
 
 
 class JobResponse(BaseModel):
@@ -314,6 +322,14 @@ class TareaObligacionResponse(BaseModel):
     empresa_ruc: str
     empresa_razon_social: str
     empresa_obligacion_id: str | None
+    # De que mensaje del buzon nacio esta tarea, si nacio de una (None para
+    # las del cronograma/obligaciones recurrentes o las sueltas a mano).
+    mensaje_buzon_id: str | None = None
+    # Cartera: quien sigue la empresa dueña de esta tarea -- se hereda de
+    # Empresa.asignado_a_usuario_id, no se guarda por separado en la tarea
+    # (asi que reasignar la empresa reasigna automaticamente sus tareas,
+    # sin tener que tocarlas una por una).
+    empresa_asignado_a_usuario_id: str | None = None
     titulo: str
     tipo: str
     periodo: str | None
@@ -340,6 +356,10 @@ class TareaObligacionCreate(BaseModel):
     fecha_vencimiento: datetime | None = None
     prioridad: str = Field("media", pattern=r"^(baja|media|alta|urgente)$")
     observaciones: str | None = Field(None, max_length=2000)
+    # Si se manda, la tarea queda vinculada a esa notificacion del buzon (ver
+    # POST /empresas/{empresa_id}/mensajes/{mensaje_id}/... en el frontend --
+    # el mensaje debe pertenecer a la MISMA empresa, se valida en el router).
+    mensaje_buzon_id: str | None = None
 
 
 class GenerarTareasResponse(BaseModel):

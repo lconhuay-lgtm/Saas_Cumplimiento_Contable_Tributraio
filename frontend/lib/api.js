@@ -71,6 +71,9 @@ export const api = {
 
   me: () => apiFetch("/auth/me"),
 
+  // Cartera: usuarios del propio tenant, para el selector de "asignar a".
+  listarUsuarios: () => apiFetch("/usuarios"),
+
   listarEmpresas: () => apiFetch("/empresas"),
 
   obtenerEmpresa: (id) => apiFetch(`/empresas/${id}`),
@@ -203,6 +206,10 @@ export const api = {
     if (filtros.estado) params.set("estado", filtros.estado);
     if (filtros.empresaId) params.set("empresa_id", filtros.empresaId);
     if (filtros.periodo) params.set("periodo", filtros.periodo);
+    if (filtros.asignadoAUsuarioId) params.set("asignado_a_usuario_id", filtros.asignadoAUsuarioId);
+    if (filtros.fechaDesde) params.set("fecha_desde", filtros.fechaDesde);
+    if (filtros.fechaHasta) params.set("fecha_hasta", filtros.fechaHasta);
+    if (filtros.mensajeBuzonId) params.set("mensaje_buzon_id", filtros.mensajeBuzonId);
     const qs = params.toString();
     return apiFetch(`/tareas${qs ? `?${qs}` : ""}`);
   },

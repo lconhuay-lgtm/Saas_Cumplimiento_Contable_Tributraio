@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, CheckCheck, Mail, MailOpen, FileText, Loader2, Inbox, Filter, X, RadioTower, Award, ListChecks, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, CheckCheck, Mail, MailOpen, FileText, Loader2, Inbox, Filter, X, RadioTower, Award, ListChecks, Plus, Trash2, UserCog, ClipboardPlus, ClipboardCheck } from "lucide-react";
 import Sidebar from "../../../components/Sidebar";
 import { api, getToken } from "../../../lib/api";
 import { colorPuntoTipo } from "../../../lib/tiposMensaje";
@@ -28,6 +28,12 @@ export default function DetalleEmpresaPage() {
   const [pdfUrl, setPdfUrl] = useState(null);
   const [cargandoPdf, setCargandoPdf] = useState(false);
   const [errorPdf, setErrorPdf] = useState("");
+  // Cartera: usuarios del tenant, para el selector "Asignado a".
+  const [usuarios, setUsuarios] = useState([]);
+  // Notificacion -> tarea: mensaje_id -> tarea, para saber cuales ya tienen
+  // una creada (boton "Crear tarea" se vuelve "Ver tarea").
+  const [tareasPorMensaje, setTareasPorMensaje] = useState({});
+  const [mensajeParaTarea, setMensajeParaTarea] = useState(null); // mensaje completo | null
 
   useEffect(() => {
     if (!getToken()) {
@@ -51,13 +57,33 @@ export default function DetalleEmpresaPage() {
     setCargando(true);
     setError("");
     try {
-      const [datosEmpresa, datosMensajes] = await Promise.all([api.obtenerEmpresa(id), api.listarMensajes(id)]);
+      const [datosEmpresa, datosMensajes, datosUsuarios, datosTareas] = await Promise.all([
+        api.obtenerEmpresa(id),
+        api.listarMensajes(id),
+        api.listarUsuarios().catch(() => []),
+        api.listarTareas({ empresaId: id }).catch(() => []),
+      ]);
       setEmpresa(datosEmpresa);
       setMensajes(datosMensajes);
+      setUsuarios(datosUsuarios);
+      const porMensaje = {};
+      for (const t of datosTareas) {
+        if (t.mensaje_buzon_id) porMensaje[t.mensaje_buzon_id] = t;
+      }
+      setTareasPorMensaje(porMensaje);
     } catch (err) {
       setError(err.message);
     } finally {
       setCargando(false);
+    }
+  }
+
+  async function cambiarAsignado(usuarioId) {
+    try {
+      await api.actualizarEmpresa(id, { activo: empresa.activo, asignado_a_usuario_id: usuarioId || null });
+      cargar();
+    } catch (err) {
+      alert(err.message);
     }
   }
 
@@ -180,6 +206,26 @@ export default function DetalleEmpresaPage() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {empresa && (
+              <div
+                className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                title="Cartera: que usuario del estudio sigue esta empresa (solo informativo, no restringe quien puede verla)"
+              >
+                <UserCog size={15} strokeWidth={1.5} className="shrink-0 text-slate-400" />
+                <select
+                  value={empresa.asignado_a_usuario_id || ""}
+                  onChange={(e) => cambiarAsignado(e.target.value)}
+                  className="bg-transparent text-sm font-medium text-slate-600 outline-none"
+                >
+                  <option value="">Sin asignar</option>
+                  {usuarios.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.email}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             {empresa && (
               <button
                 onClick={toggleCanario}
@@ -308,6 +354,28 @@ export default function DetalleEmpresaPage() {
                             )}
                           </div>
                         </div>
+                        {tareasPorMensaje[m.id] ? (
+                          <Link
+                            href="/tareas"
+                            onClick={(e) => e.stopPropagation()}
+                            title={`Ya tiene una tarea creada (${tareasPorMensaje[m.id].estado})`}
+                            className="shrink-0 rounded-lg p-1.5 text-emerald-500 transition-colors duration-300 ease-out hover:bg-emerald-50"
+                          >
+                            <ClipboardCheck size={14} strokeWidth={1.5} />
+                          </Link>
+                        ) : (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setMensajeParaTarea(m);
+                            }}
+                            className="shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors duration-300 ease-out hover:bg-slate-100 hover:text-accent"
+                            title="Crear tarea a partir de esta notificacion"
+                            aria-label="Crear tarea"
+                          >
+                            <ClipboardPlus size={14} strokeWidth={1.5} />
+                          </button>
+                        )}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -360,7 +428,127 @@ export default function DetalleEmpresaPage() {
             </div>
           </div>
         )}
+
+        {mensajeParaTarea && (
+          <ModalCrearTarea
+            empresaId={id}
+            mensaje={mensajeParaTarea}
+            onCerrar={() => setMensajeParaTarea(null)}
+            onCreada={() => {
+              setMensajeParaTarea(null);
+              cargar();
+            }}
+          />
+        )}
       </main>
+    </div>
+  );
+}
+
+// Notificacion -> tarea: se le pide al usuario la fecha real (si el
+// documento la trae), en vez de que el sistema invente un plazo legal --
+// ver la decision tomada para esta funcionalidad en el analisis del
+// producto. La tarea queda vinculada al mensaje via mensaje_buzon_id y
+// alimenta tanto /tareas como el calendario de /cronograma.
+function ModalCrearTarea({ empresaId, mensaje, onCerrar, onCreada }) {
+  const [titulo, setTitulo] = useState(mensaje.asunto);
+  const [fechaVencimiento, setFechaVencimiento] = useState("");
+  const [prioridad, setPrioridad] = useState("media");
+  const [observaciones, setObservaciones] = useState("");
+  const [error, setError] = useState("");
+  const [guardando, setGuardando] = useState(false);
+
+  async function onSubmit(e) {
+    e.preventDefault();
+    setError("");
+    setGuardando(true);
+    try {
+      await api.crearTareaManual({
+        empresa_id: empresaId,
+        mensaje_buzon_id: mensaje.id,
+        titulo,
+        tipo: "notificacion",
+        fecha_vencimiento: fechaVencimiento ? new Date(fechaVencimiento).toISOString() : null,
+        prioridad,
+        observaciones: observaciones || null,
+      });
+      onCreada();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+      <div className="surface-card w-full max-w-md p-6">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-bold text-ink">Crear tarea desde esta notificacion</h3>
+          <button
+            onClick={onCerrar}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-ink"
+            aria-label="Cerrar"
+          >
+            <X size={16} strokeWidth={1.5} />
+          </button>
+        </div>
+
+        {error && (
+          <div className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>
+        )}
+
+        <form onSubmit={onSubmit} className="mt-4 space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Titulo</label>
+            <input value={titulo} onChange={(e) => setTitulo(e.target.value)} required className="campo-input" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                Fecha de vencimiento
+              </label>
+              <input
+                type="date"
+                value={fechaVencimiento}
+                onChange={(e) => setFechaVencimiento(e.target.value)}
+                className="campo-input"
+              />
+              <p className="mt-1 text-[11px] text-slate-400">
+                Opcional -- solo si el documento trae un plazo explicito.
+              </p>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Prioridad</label>
+              <select value={prioridad} onChange={(e) => setPrioridad(e.target.value)} className="campo-input">
+                <option value="baja">Baja</option>
+                <option value="media">Media</option>
+                <option value="alta">Alta</option>
+                <option value="urgente">Urgente</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+              Observaciones
+            </label>
+            <textarea
+              value={observaciones}
+              onChange={(e) => setObservaciones(e.target.value)}
+              rows={3}
+              className="campo-input"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={guardando}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent py-2.5 text-sm font-semibold text-white shadow-soft transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-accent-dark disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {guardando && <Loader2 size={15} strokeWidth={2} className="animate-spin" />}
+            {guardando ? "Creando..." : "Crear tarea"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

@@ -35,6 +35,11 @@ const COLOR_GRUPO = {
   buenos_contribuyentes: "bg-emerald-100 text-emerald-700",
 };
 
+// Tareas creadas a mano (p.ej. desde una notificacion del buzon) no tienen
+// grupo de RUC -- se pintan aparte para distinguirlas de un vencimiento
+// oficial del cronograma SUNAT de un vistazo.
+const COLOR_TAREA = "bg-amber-100 text-amber-700";
+
 // Cuantos chips de empresa mostrar dentro de la celda del dia antes de
 // resumir el resto en "+N mas" -- mas de esto y la grilla se vuelve
 // ilegible en pantallas chicas.
@@ -73,8 +78,44 @@ export default function CronogramaPage() {
     setError("");
     setDiaSeleccionado(null);
     try {
-      const data = await api.obtenerAgendaMes(anio, mes);
-      setVencimientos(data.vencimientos);
+      // Rango del mes en UTC, mismo criterio que usa el backend para las
+      // fechas de vencimiento (ver backend/app/cronograma_sunat.py).
+      const inicioMes = new Date(Date.UTC(anio, mes - 1, 1)).toISOString();
+      const finMes = new Date(Date.UTC(mes === 12 ? anio + 1 : anio, mes === 12 ? 0 : mes, 1)).toISOString();
+
+      const [dataCronograma, dataTareas] = await Promise.all([
+        api.obtenerAgendaMes(anio, mes),
+        // Tareas sueltas con fecha propia (p.ej. creadas desde una
+        // notificacion del buzon) -- nutren el calendario ademas del
+        // cronograma oficial. Si falla, el calendario sigue mostrando el
+        // cronograma igual (no es critico).
+        api.listarTareas({ fechaDesde: inicioMes, fechaHasta: finMes }).catch(() => []),
+      ]);
+
+      const itemsCronograma = dataCronograma.vencimientos.map((v) => ({
+        tipoItem: "cronograma",
+        key: `c-${v.empresa_id}-${v.periodo_tributario}`,
+        fecha_vencimiento: v.fecha_vencimiento,
+        empresa_id: v.empresa_id,
+        empresa_ruc: v.empresa_ruc,
+        empresa_razon_social: v.empresa_razon_social,
+        periodo_tributario: v.periodo_tributario,
+        grupo: v.grupo,
+      }));
+      const itemsTareas = dataTareas
+        .filter((t) => t.fecha_vencimiento)
+        .map((t) => ({
+          tipoItem: "tarea",
+          key: `t-${t.id}`,
+          fecha_vencimiento: t.fecha_vencimiento,
+          empresa_id: t.empresa_id,
+          empresa_ruc: t.empresa_ruc,
+          empresa_razon_social: t.empresa_razon_social,
+          titulo: t.titulo,
+          prioridad: t.prioridad,
+        }));
+
+      setVencimientos([...itemsCronograma, ...itemsTareas]);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -252,10 +293,10 @@ export default function CronogramaPage() {
                         <div className="mt-0.5 flex flex-col gap-1">
                           {visibles.map((v) => (
                             <span
-                              key={`${v.empresa_id}-${v.periodo_tributario}`}
-                              title={v.empresa_razon_social}
+                              key={v.key}
+                              title={v.tipoItem === "tarea" ? v.titulo : v.empresa_razon_social}
                               className={`truncate rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                                COLOR_GRUPO[v.grupo] || "bg-slate-100 text-slate-600"
+                                v.tipoItem === "tarea" ? COLOR_TAREA : COLOR_GRUPO[v.grupo] || "bg-slate-100 text-slate-600"
                               }`}
                             >
                               {v.empresa_razon_social}
@@ -299,25 +340,29 @@ export default function CronogramaPage() {
             <div className="mt-3 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100">
               {porDia[diaSeleccionado].map((v) => (
                 <Link
-                  key={`${v.empresa_id}-${v.periodo_tributario}`}
+                  key={v.key}
                   href={`/empresas/${v.empresa_id}`}
                   className="flex items-center justify-between gap-3 px-5 py-3.5 transition-all duration-300 ease-out hover:bg-slate-50"
                 >
                   <div className="flex items-center gap-3">
                     <Building2 size={15} strokeWidth={1.5} className="shrink-0 text-slate-400" />
                     <div>
-                      <div className="text-sm font-medium text-ink">{v.empresa_razon_social}</div>
+                      <div className="text-sm font-medium text-ink">
+                        {v.tipoItem === "tarea" ? v.titulo : v.empresa_razon_social}
+                      </div>
                       <div className="text-xs text-slate-500">
-                        {v.empresa_ruc} &middot; periodo {v.periodo_tributario}
+                        {v.tipoItem === "tarea"
+                          ? `${v.empresa_razon_social} (${v.empresa_ruc})`
+                          : `${v.empresa_ruc} · periodo ${v.periodo_tributario}`}
                       </div>
                     </div>
                   </div>
                   <span
                     className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                      COLOR_GRUPO[v.grupo] || "bg-slate-100 text-slate-600"
+                      v.tipoItem === "tarea" ? COLOR_TAREA : COLOR_GRUPO[v.grupo] || "bg-slate-100 text-slate-600"
                     }`}
                   >
-                    {NOMBRES_GRUPO[v.grupo] || v.grupo}
+                    {v.tipoItem === "tarea" ? "Tarea" : NOMBRES_GRUPO[v.grupo] || v.grupo}
                   </span>
                 </Link>
               ))}

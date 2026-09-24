@@ -112,8 +112,19 @@ class Empresa(Base):
     # defecto False (la gran mayoria de contribuyentes usa el cronograma
     # general).
     es_buen_contribuyente: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Cartera: que usuario del tenant sigue esta empresa (un dueno por
+    # empresa, no una lista -- si un estudio necesita compartir una empresa
+    # entre varios asistentes, se maneja subiendo esto a una tabla aparte
+    # mas adelante, no hace falta ahora). None = sin asignar, cualquier
+    # usuario del tenant la sigue viendo igual (esto NO restringe acceso,
+    # solo es informativo/filtrable -- la autorizacion real sigue siendo
+    # por tenant_id como siempre).
+    asignado_a_usuario_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True, index=True
+    )
 
     tenant: Mapped["Tenant"] = relationship(back_populates="empresas")
+    asignado_a: Mapped["Usuario | None"] = relationship(foreign_keys=[asignado_a_usuario_id])
     credencial: Mapped["CredencialSol | None"] = relationship(
         back_populates="empresa", uselist=False, cascade="all, delete-orphan"
     )
@@ -345,8 +356,17 @@ class TareaObligacion(Base):
     empresa_obligacion_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False), ForeignKey("empresa_obligaciones.id"), nullable=True, index=True
     )
+    # De que notificacion del buzon nacio esta tarea, si nacio de una (el
+    # usuario decide crearla desde el detalle de un mensaje puntual, con la
+    # fecha real que diga el documento -- el sistema nunca inventa un plazo
+    # legal). Unique: una notificacion genera como maximo una tarea, para
+    # que el boton "Crear tarea" del mensaje se pueda convertir en "Ver
+    # tarea" sin duplicar si se aprieta mas de una vez.
+    mensaje_buzon_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("mensajes_buzon.id"), nullable=True, unique=True
+    )
     titulo: Mapped[str] = mapped_column(String(300), nullable=False)
-    tipo: Mapped[str] = mapped_column(String(30), nullable=False)  # planilla|afp|sbs|otro|manual
+    tipo: Mapped[str] = mapped_column(String(30), nullable=False)  # planilla|afp|sbs|otro|manual|notificacion
     periodo: Mapped[str | None] = mapped_column(String(7), nullable=True)  # "2026-08", None si no aplica
     fecha_vencimiento: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     estado: Mapped[str] = mapped_column(String(20), default="pendiente", nullable=False, index=True)  # pendiente|completado|no_aplica
@@ -358,3 +378,4 @@ class TareaObligacion(Base):
 
     empresa: Mapped["Empresa"] = relationship(back_populates="tareas")
     obligacion: Mapped["EmpresaObligacion | None"] = relationship(back_populates="tareas")
+    mensaje: Mapped["MensajeBuzon | None"] = relationship()

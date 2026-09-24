@@ -283,6 +283,24 @@ def actualizar_empresa(
         empresa.es_canario = data.es_canario
     if data.es_buen_contribuyente is not None:
         empresa.es_buen_contribuyente = data.es_buen_contribuyente
+    # Cartera: a diferencia de los campos de arriba, None es un valor VALIDO
+    # aca ("desasignar"), asi que "no vino en el request" y "vino como null"
+    # tienen que distinguirse con model_fields_set en vez del chequeo
+    # `is not None` que ya usan es_canario/es_buen_contribuyente.
+    if "asignado_a_usuario_id" in data.model_fields_set:
+        nuevo_asignado_id = data.asignado_a_usuario_id
+        if nuevo_asignado_id is not None:
+            asignado = (
+                db.query(Usuario)
+                .filter(Usuario.id == nuevo_asignado_id, Usuario.tenant_id == usuario.tenant_id)
+                .first()
+            )
+            if not asignado:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="El usuario a asignar no existe o no pertenece a este tenant",
+                )
+        empresa.asignado_a_usuario_id = nuevo_asignado_id
     db.commit()
     db.refresh(empresa)
     return _con_estadisticas([empresa], db)[0]
