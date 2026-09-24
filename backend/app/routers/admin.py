@@ -21,6 +21,7 @@ from app.scheduler_job import (
     _CLAVE_REDIS_CANARIO_EN_ALERTA,
 )
 from app.clasificacion import clasificar_tipo
+from app.almacenamiento import limpiar_datos_antiguos
 from app.schemas import (
     SaludResponse,
     SaludCanarioResumen,
@@ -73,6 +74,14 @@ def reclasificar_mensajes(
             actualizados += 1
     db.commit()
     return {"mensajes_revisados": len(mensajes), "mensajes_actualizados": actualizados}
+
+
+@router.post("/limpieza-diagnosticos")
+def disparar_limpieza_diagnosticos(
+    usuario: Usuario = Depends(get_staff_actual),
+):
+    """Fase R7: corre la limpieza de datos de diagnostico ahora mismo, sin esperar al horario programado (ver scheduler_entry.py)."""
+    return limpiar_datos_antiguos()
 
 
 @router.post("/canario/ejecutar")

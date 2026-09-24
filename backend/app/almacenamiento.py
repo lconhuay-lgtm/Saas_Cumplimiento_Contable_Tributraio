@@ -21,6 +21,7 @@ en modo local, "key" del objeto en modo s3). Nada fuera de este archivo
 necesita saber cual de los dos modos esta activo.
 """
 import os
+import time
 import logging
 
 logger = logging.getLogger("app.almacenamiento")
@@ -30,6 +31,14 @@ MODO = os.environ.get("ALMACENAMIENTO_MODO", "local").lower()
 # ---- Modo local ----
 LOCAL_BASE_DIR = os.environ.get("SUNAT_BASE_DIR", "/data/sunat")
 DOCUMENTOS_SUBDIR = "documentos"
+
+# Fase R7 (higiene de datos): cuantos dias se conservan las capturas de
+# diagnostico (logs/) y los correos de modo prueba (emails_dev/) -- ambas
+# carpetas crecen solas con cada fallo real contra SUNAT o cada correo sin
+# SMTP configurado, sin ningun limite propio. NUNCA se aplica a documentos/
+# (PDFs reales de clientes) -- esos se conservan siempre.
+RETENCION_DIAGNOSTICOS_DIAS = int(os.environ.get("RETENCION_DIAGNOSTICOS_DIAS", 45))
+_CARPETAS_CON_RETENCION = ("logs", "emails_dev")
 
 # ---- Modo S3 (Cloudflare R2 / AWS S3 / Backblaze B2 / MinIO) ----
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
@@ -134,3 +143,34 @@ def leer_documento(referencia: str) -> bytes:
         raise AlmacenamientoError(f"El documento ya no esta disponible: {e}") from e
     except Exception as e:
         raise AlmacenamientoError(f"No se pudo leer el documento: {e}") from e
+
+
+def limpiar_datos_antiguos() -> dict:
+    """
+    Fase R7: borra archivos con mas de RETENCION_DIAGNOSTICOS_DIAS dias en
+    logs/ y emails_dev/. Disparado a diario por el scheduler
+    (job_limpieza_diagnosticos en scheduler_entry.py) y manualmente desde
+    POST /admin/limpieza-diagnosticos. Solo aplica en modo local -- en modo
+    s3 no hay nada que limpiar aca (el bucket tiene su propia politica de
+    lifecycle si hiciera falta).
+    """
+    if MODO != "local":
+        return {"aplicado": False, "razon": f"ALMACENAMIENTO_MODO={MODO}, no hay nada que limpiar en disco local"}
+
+    limite = time.time() - RETENCION_DIAGNOSTICOS_DIAS * 86400
+    borrados = 0
+    for subcarpeta in _CARPETAS_CON_RETENCION:
+        carpeta = os.path.join(LOCAL_BASE_DIR, subcarpeta)
+        if not os.path.isdir(carpeta):
+            continue
+        for nombre in os.listdir(carpeta):
+            ruta = os.path.join(carpeta, nombre)
+            try:
+                if os.path.isfile(ruta) and os.path.getmtime(ruta) < limite:
+                    os.remove(ruta)
+                    borrados += 1
+            except OSError as e:
+                logger.warning(f"No se pudo borrar {ruta}: {e}")
+
+    logger.info(f"Limpieza de datos antiguos: {borrados} archivo(s) borrados (retencion {RETENCION_DIAGNOSTICOS_DIAS} dias).")
+    return {"aplicado": True, "archivos_borrados": borrados, "retencion_dias": RETENCION_DIAGNOSTICOS_DIAS}

@@ -42,6 +42,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.scheduler_job import encolar_chequeo_nocturno, enviar_resumenes_diarios, ejecutar_chequeo_canario
 from app.database import SessionLocal
 from app.cronograma_sunat import asegurar_cronograma_vigente
+from app.almacenamiento import limpiar_datos_antiguos
 
 CHEQUEO1_HORA_UTC = int(os.environ.get("CHEQUEO1_HORA_UTC", "16"))
 CHEQUEO1_MINUTO_UTC = int(os.environ.get("CHEQUEO1_MINUTO_UTC", "0"))
@@ -85,6 +86,16 @@ def job_canario():
         logger.info(f"Chequeo canario: {resultado}")
     except Exception:
         logger.exception("Fallo el chequeo canario")
+
+
+def job_limpieza_diagnosticos():
+    """Fase R7: borra capturas de diagnostico y correos de modo prueba viejos -- ver almacenamiento.limpiar_datos_antiguos()."""
+    logger.info("Limpiando datos antiguos de diagnostico...")
+    try:
+        resultado = limpiar_datos_antiguos()
+        logger.info(f"Limpieza de datos antiguos: {resultado}")
+    except Exception:
+        logger.exception("Fallo la limpieza de datos antiguos")
 
 
 def job_cronograma():
@@ -139,6 +150,11 @@ if __name__ == "__main__":
         CronTrigger(hour=5, minute=0),
         id="cronograma",
     )
+    scheduler.add_job(
+        job_limpieza_diagnosticos,
+        CronTrigger(hour=4, minute=30),
+        id="limpieza_diagnosticos",
+    )
     logger.info(
         "Scheduler arrancado. Chequeos diarios a las "
         f"{CHEQUEO1_HORA_UTC:02d}:{CHEQUEO1_MINUTO_UTC:02d} UTC (11:00 Peru) y "
@@ -146,7 +162,9 @@ if __name__ == "__main__":
         "con su resumen ~2h despues de cada uno. "
         f"Chequeo canario cada {CANARIO_INTERVALO_MIN} minutos. "
         "Verificacion del cronograma SUNAT a las 05:00 UTC. "
+        "Limpieza de datos de diagnostico a las 04:30 UTC. "
         "(para probar sin esperar, usa los endpoints /admin/chequeo-nocturno, "
-        "/admin/enviar-resumenes, /admin/canario/ejecutar y POST /cronograma/sincronizar)"
+        "/admin/enviar-resumenes, /admin/canario/ejecutar, /admin/limpieza-diagnosticos "
+        "y POST /cronograma/sincronizar)"
     )
     scheduler.start()
