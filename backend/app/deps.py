@@ -38,3 +38,21 @@ def get_staff_actual(usuario: Usuario = Depends(get_usuario_actual)) -> Usuario:
             detail="Este endpoint es solo para el equipo operador de la plataforma.",
         )
     return usuario
+
+
+def get_admin_actual(usuario: Usuario = Depends(get_usuario_actual)) -> Usuario:
+    """
+    Igual que get_usuario_actual, pero ademas exige rol="admin" DENTRO del
+    propio tenant -- a diferencia de get_staff_actual (que es sobre TODOS
+    los tenants, para el equipo que opera la plataforma), esto es sobre UN
+    tenant: el socio/admin de un estudio contable vs. un asistente
+    ("miembro") con una cartera de empresas asignada. Usar en endpoints que
+    no deberian ser visibles para un miembro (Salud del sistema, invitar
+    companeros de equipo).
+    """
+    if usuario.rol != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Este endpoint es solo para el administrador de la cuenta.",
+        )
+    return usuario

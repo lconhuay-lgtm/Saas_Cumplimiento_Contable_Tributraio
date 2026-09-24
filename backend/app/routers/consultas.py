@@ -19,6 +19,7 @@ from app.queue_conn import cola_consultas
 from app.jobs import ejecutar_consulta_buzon
 from app.rate_limit import verificar_limite_ruc, LimiteExcedido
 from app.almacenamiento import leer_documento, AlmacenamientoError
+from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible
 
 router = APIRouter(tags=["consultas"])
 
@@ -34,24 +35,13 @@ ESPACIADO_CONSULTAR_TODAS_SEG = 45
 VENTANA_ESTADO_CONSULTAS_MIN = 90
 
 
-def _get_empresa_del_tenant(empresa_id: str, usuario: Usuario, db: Session) -> Empresa:
-    empresa = (
-        db.query(Empresa)
-        .filter(Empresa.id == empresa_id, Empresa.tenant_id == usuario.tenant_id)
-        .first()
-    )
-    if not empresa:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada")
-    return empresa
-
-
 @router.post("/empresas/{empresa_id}/consultar", response_model=JobResponse, status_code=status.HTTP_202_ACCEPTED)
 def consultar_empresa(
     empresa_id: str,
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    empresa = _get_empresa_del_tenant(empresa_id, usuario, db)
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
 
     try:
         verificar_limite_ruc(empresa.ruc)
@@ -75,8 +65,8 @@ def consultar_todas_empresas(
     db: Session = Depends(get_db),
 ):
     empresas = (
-        db.query(Empresa)
-        .filter(Empresa.tenant_id == usuario.tenant_id, Empresa.activo.is_(True))
+        filtrar_empresas_visibles(db.query(Empresa), usuario)
+        .filter(Empresa.activo.is_(True))
         .all()
     )
 
@@ -174,7 +164,7 @@ def listar_jobs(
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    empresa = _get_empresa_del_tenant(empresa_id, usuario, db)
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
     return (
         db.query(ConsultaJob)
         .filter(ConsultaJob.empresa_id == empresa.id)
@@ -191,9 +181,8 @@ def obtener_job(
     db: Session = Depends(get_db),
 ):
     job = (
-        db.query(ConsultaJob)
-        .join(Empresa, Empresa.id == ConsultaJob.empresa_id)
-        .filter(ConsultaJob.id == job_id, Empresa.tenant_id == usuario.tenant_id)
+        filtrar_empresas_visibles(db.query(ConsultaJob).join(Empresa, Empresa.id == ConsultaJob.empresa_id), usuario)
+        .filter(ConsultaJob.id == job_id)
         .first()
     )
     if not job:
@@ -207,7 +196,7 @@ def listar_mensajes(
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    empresa = _get_empresa_del_tenant(empresa_id, usuario, db)
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
     mensajes = (
         db.query(MensajeBuzon)
         .filter(MensajeBuzon.empresa_id == empresa.id)
@@ -231,7 +220,7 @@ def actualizar_mensaje(
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    empresa = _get_empresa_del_tenant(empresa_id, usuario, db)
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
     mensaje = (
         db.query(MensajeBuzon)
         .filter(MensajeBuzon.id == mensaje_id, MensajeBuzon.empresa_id == empresa.id)
@@ -252,7 +241,7 @@ def obtener_documento(
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    empresa = _get_empresa_del_tenant(empresa_id, usuario, db)
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
     mensaje = (
         db.query(MensajeBuzon)
         .filter(MensajeBuzon.id == mensaje_id, MensajeBuzon.empresa_id == empresa.id)
@@ -275,7 +264,7 @@ def marcar_todos_leidos(
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    empresa = _get_empresa_del_tenant(empresa_id, usuario, db)
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
     actualizados = (
         db.query(MensajeBuzon)
         .filter(MensajeBuzon.empresa_id == empresa.id, MensajeBuzon.leido.is_(False))
@@ -302,15 +291,13 @@ def marcar_todos_leidos_global(
     -- porque un UPDATE masivo de SQLAlchemy con join no es portable entre
     motores de base de datos.
     """
-    ids_empresas_del_tenant = [
-        e.id for e in db.query(Empresa.id).filter(Empresa.tenant_id == usuario.tenant_id).all()
-    ]
-    if not ids_empresas_del_tenant:
+    ids_empresas_visibles = [e.id for e in filtrar_empresas_visibles(db.query(Empresa.id), usuario).all()]
+    if not ids_empresas_visibles:
         return MarcarLeidosResponse(actualizados=0)
 
     actualizados = (
         db.query(MensajeBuzon)
-        .filter(MensajeBuzon.empresa_id.in_(ids_empresas_del_tenant), MensajeBuzon.leido.is_(False))
+        .filter(MensajeBuzon.empresa_id.in_(ids_empresas_visibles), MensajeBuzon.leido.is_(False))
         .update({MensajeBuzon.leido: True}, synchronize_session=False)
     )
     db.commit()

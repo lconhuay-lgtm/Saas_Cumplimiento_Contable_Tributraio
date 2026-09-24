@@ -25,6 +25,7 @@ from app.schemas import (
     AvanceCumplimientoResponse,
 )
 from app import tareas as tareas_logic
+from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible
 
 router = APIRouter(tags=["tareas"])
 
@@ -34,17 +35,6 @@ ETIQUETAS_TIPO_AVANCE = {
     "sbs": "Reporte SBS",
     "otro": "Otro",
 }
-
-
-def _empresa_del_tenant(empresa_id: str, usuario: Usuario, db: Session) -> Empresa:
-    empresa = (
-        db.query(Empresa)
-        .filter(Empresa.id == empresa_id, Empresa.tenant_id == usuario.tenant_id)
-        .first()
-    )
-    if not empresa:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada")
-    return empresa
 
 
 def _a_respuesta_tarea(tarea: TareaObligacion, empresa: Empresa) -> TareaObligacionResponse:
@@ -78,7 +68,7 @@ def listar_obligaciones(
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    empresa = _empresa_del_tenant(empresa_id, usuario, db)
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
     return (
         db.query(EmpresaObligacion)
         .filter(EmpresaObligacion.empresa_id == empresa.id)
@@ -94,7 +84,7 @@ def crear_obligacion(
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    empresa = _empresa_del_tenant(empresa_id, usuario, db)
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
     obligacion = EmpresaObligacion(empresa_id=empresa.id, **data.model_dump())
     db.add(obligacion)
     try:
@@ -117,9 +107,10 @@ def actualizar_obligacion(
     db: Session = Depends(get_db),
 ):
     obligacion = (
-        db.query(EmpresaObligacion)
-        .join(Empresa, Empresa.id == EmpresaObligacion.empresa_id)
-        .filter(EmpresaObligacion.id == obligacion_id, Empresa.tenant_id == usuario.tenant_id)
+        filtrar_empresas_visibles(
+            db.query(EmpresaObligacion).join(Empresa, Empresa.id == EmpresaObligacion.empresa_id), usuario
+        )
+        .filter(EmpresaObligacion.id == obligacion_id)
         .first()
     )
     if not obligacion:
@@ -138,9 +129,10 @@ def eliminar_obligacion(
     db: Session = Depends(get_db),
 ):
     obligacion = (
-        db.query(EmpresaObligacion)
-        .join(Empresa, Empresa.id == EmpresaObligacion.empresa_id)
-        .filter(EmpresaObligacion.id == obligacion_id, Empresa.tenant_id == usuario.tenant_id)
+        filtrar_empresas_visibles(
+            db.query(EmpresaObligacion).join(Empresa, Empresa.id == EmpresaObligacion.empresa_id), usuario
+        )
+        .filter(EmpresaObligacion.id == obligacion_id)
         .first()
     )
     if not obligacion:
@@ -171,10 +163,8 @@ def listar_tareas_endpoint(
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    query = (
-        db.query(TareaObligacion, Empresa)
-        .join(Empresa, Empresa.id == TareaObligacion.empresa_id)
-        .filter(Empresa.tenant_id == usuario.tenant_id)
+    query = filtrar_empresas_visibles(
+        db.query(TareaObligacion, Empresa).join(Empresa, Empresa.id == TareaObligacion.empresa_id), usuario
     )
     if estado:
         query = query.filter(TareaObligacion.estado == estado)
@@ -206,7 +196,7 @@ def crear_tarea_manual(
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    empresa = _empresa_del_tenant(data.empresa_id, usuario, db)
+    empresa = obtener_empresa_visible(data.empresa_id, usuario, db)
 
     if data.mensaje_buzon_id:
         mensaje = (
@@ -251,9 +241,10 @@ def actualizar_tarea(
     db: Session = Depends(get_db),
 ):
     fila = (
-        db.query(TareaObligacion, Empresa)
-        .join(Empresa, Empresa.id == TareaObligacion.empresa_id)
-        .filter(TareaObligacion.id == tarea_id, Empresa.tenant_id == usuario.tenant_id)
+        filtrar_empresas_visibles(
+            db.query(TareaObligacion, Empresa).join(Empresa, Empresa.id == TareaObligacion.empresa_id), usuario
+        )
+        .filter(TareaObligacion.id == tarea_id)
         .first()
     )
     if not fila:
@@ -281,9 +272,10 @@ def eliminar_tarea(
     db: Session = Depends(get_db),
 ):
     fila = (
-        db.query(TareaObligacion)
-        .join(Empresa, Empresa.id == TareaObligacion.empresa_id)
-        .filter(TareaObligacion.id == tarea_id, Empresa.tenant_id == usuario.tenant_id)
+        filtrar_empresas_visibles(
+            db.query(TareaObligacion).join(Empresa, Empresa.id == TareaObligacion.empresa_id), usuario
+        )
+        .filter(TareaObligacion.id == tarea_id)
         .first()
     )
     if not fila:
@@ -339,9 +331,13 @@ def avance_cumplimiento(
     # Postgres sin trucos especificos de cada motor, y el volumen de tareas
     # por tenant no amerita esa complejidad.
     tareas_del_periodo = (
-        db.query(TareaObligacion.tipo, TareaObligacion.estado)
-        .join(Empresa, Empresa.id == TareaObligacion.empresa_id)
-        .filter(Empresa.tenant_id == usuario.tenant_id, TareaObligacion.periodo == periodo_objetivo)
+        filtrar_empresas_visibles(
+            db.query(TareaObligacion.tipo, TareaObligacion.estado).join(
+                Empresa, Empresa.id == TareaObligacion.empresa_id
+            ),
+            usuario,
+        )
+        .filter(TareaObligacion.periodo == periodo_objetivo)
         .all()
     )
 

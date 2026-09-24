@@ -19,19 +19,9 @@ from app.queue_conn import cola_consultas
 from app.jobs import ejecutar_generar_ficha_ruc
 from app.rate_limit import verificar_limite_ruc, LimiteExcedido
 from app.almacenamiento import leer_documento, AlmacenamientoError
+from app.acceso import obtener_empresa_visible
 
 router = APIRouter(tags=["ficha-ruc"])
-
-
-def _get_empresa_del_tenant(empresa_id: str, usuario: Usuario, db: Session) -> Empresa:
-    empresa = (
-        db.query(Empresa)
-        .filter(Empresa.id == empresa_id, Empresa.tenant_id == usuario.tenant_id)
-        .first()
-    )
-    if not empresa:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada")
-    return empresa
 
 
 @router.post("/empresas/{empresa_id}/ficha-ruc", response_model=FichaRucJobResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -40,7 +30,7 @@ def generar_ficha_ruc(
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    empresa = _get_empresa_del_tenant(empresa_id, usuario, db)
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
 
     try:
         verificar_limite_ruc(empresa.ruc)
@@ -64,7 +54,7 @@ def obtener_job_ficha_ruc(
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    empresa = _get_empresa_del_tenant(empresa_id, usuario, db)
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
     job = (
         db.query(FichaRucJob)
         .filter(FichaRucJob.id == job_id, FichaRucJob.empresa_id == empresa.id)
@@ -81,7 +71,7 @@ def obtener_pdf_ficha_ruc(
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    empresa = _get_empresa_del_tenant(empresa_id, usuario, db)
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
     if not empresa.ficha_ruc_pdf_ref:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

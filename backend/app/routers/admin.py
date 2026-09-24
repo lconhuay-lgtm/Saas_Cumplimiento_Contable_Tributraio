@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Usuario, MensajeBuzon, CanarioCheck, ConsultaJob, Empresa
-from app.deps import get_usuario_actual, get_staff_actual
+from app.deps import get_staff_actual, get_admin_actual
 from app.scheduler_job import (
     encolar_chequeo_nocturno,
     enviar_resumenes_diarios,
@@ -95,7 +95,7 @@ def disparar_chequeo_canario(
 @router.get("/salud", response_model=SaludResponse)
 def obtener_salud(
     horas_atras: int = 24 * 7,
-    usuario: Usuario = Depends(get_usuario_actual),
+    usuario: Usuario = Depends(get_admin_actual),
     db: Session = Depends(get_db),
 ):
     """
@@ -197,7 +197,7 @@ def obtener_salud(
 @router.get("/errores-recientes", response_model=list[ErrorRecienteItem])
 def obtener_errores_recientes(
     limite: int = 20,
-    usuario: Usuario = Depends(get_usuario_actual),
+    usuario: Usuario = Depends(get_admin_actual),
     db: Session = Depends(get_db),
 ):
     """
@@ -254,7 +254,7 @@ def obtener_errores_recientes(
 @router.get("/documentos-recientes", response_model=list[DocumentoRecienteItem])
 def obtener_documentos_recientes(
     limite: int = 10,
-    usuario: Usuario = Depends(get_usuario_actual),
+    usuario: Usuario = Depends(get_admin_actual),
     db: Session = Depends(get_db),
 ):
     """

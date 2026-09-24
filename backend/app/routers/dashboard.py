@@ -17,6 +17,7 @@ from app.schemas import (
 )
 from app.deps import get_usuario_actual
 from app.cronograma_sunat import proximos_vencimientos_por_tenant
+from app.acceso import filtrar_empresas_visibles
 
 # Modulo de cronograma SUNAT: cuantos dias adelante mostrar un vencimiento
 # como "proximo" en el Dashboard -- 15 dias da tiempo de sobra para
@@ -39,7 +40,7 @@ def resumen(
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    empresas = db.query(Empresa).filter(Empresa.tenant_id == usuario.tenant_id).all()
+    empresas = filtrar_empresas_visibles(db.query(Empresa), usuario).all()
     empresas_por_id = {e.id: e for e in empresas}
     empresas_activas = sum(1 for e in empresas if e.activo)
 
@@ -83,9 +84,10 @@ def resumen(
     )
 
     jobs_recientes = (
-        db.query(ConsultaJob)
-        .join(Empresa, Empresa.id == ConsultaJob.empresa_id)
-        .filter(Empresa.tenant_id == usuario.tenant_id, ConsultaJob.finalizado_en.isnot(None))
+        filtrar_empresas_visibles(
+            db.query(ConsultaJob).join(Empresa, Empresa.id == ConsultaJob.empresa_id), usuario
+        )
+        .filter(ConsultaJob.finalizado_en.isnot(None))
         .order_by(ConsultaJob.finalizado_en.desc())
         .limit(10)
         .all()
@@ -153,7 +155,7 @@ def resumen(
 
     proximos_vencimientos = [
         ProximoVencimientoItem(**v)
-        for v in proximos_vencimientos_por_tenant(db, usuario.tenant_id, DIAS_PROXIMO_VENCIMIENTO)
+        for v in proximos_vencimientos_por_tenant(db, usuario.tenant_id, DIAS_PROXIMO_VENCIMIENTO, usuario)
     ]
 
     return DashboardResumen(

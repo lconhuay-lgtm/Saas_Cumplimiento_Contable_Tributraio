@@ -27,6 +27,7 @@ from app.rate_limit import adquirir_slot_global, liberar_slot_global, verificar_
 from app.queue_conn import cola_consultas
 from app.jobs import ejecutar_consulta_buzon
 from app.deps import get_usuario_actual
+from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible, es_admin
 
 # Mismo espaciado que "Consultar todas" (ver routers/consultas.py) -- se
 # repite aca en vez de importarlo para no crear una dependencia cruzada
@@ -113,8 +114,7 @@ def listar_empresas(
     db: Session = Depends(get_db),
 ):
     empresas = (
-        db.query(Empresa)
-        .filter(Empresa.tenant_id == usuario.tenant_id)
+        filtrar_empresas_visibles(db.query(Empresa), usuario)
         .order_by(Empresa.creado_en.desc())
         .all()
     )
@@ -127,13 +127,7 @@ def obtener_empresa(
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    empresa = (
-        db.query(Empresa)
-        .filter(Empresa.id == empresa_id, Empresa.tenant_id == usuario.tenant_id)
-        .first()
-    )
-    if not empresa:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada")
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
     return _con_estadisticas([empresa], db)[0]
 
 
@@ -151,7 +145,15 @@ def crear_empresa(
     if existente:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ese RUC ya esta registrado en tu cuenta")
 
-    empresa = Empresa(tenant_id=usuario.tenant_id, ruc=data.ruc, razon_social=data.razon_social)
+    empresa = Empresa(
+        tenant_id=usuario.tenant_id,
+        ruc=data.ruc,
+        razon_social=data.razon_social,
+        # Un miembro (no admin) que crea una empresa se la auto-asigna --
+        # si no, quedaria "sin asignar" y el mismo que la acaba de crear no
+        # podria volver a verla (un miembro solo ve lo que tiene asignado).
+        asignado_a_usuario_id=None if es_admin(usuario) else usuario.id,
+    )
     db.add(empresa)
     db.flush()
 
@@ -276,7 +278,15 @@ async def importar_empresas(
                 detalle.append(EmpresaImportadaItem(ruc=ruc, razon_social=razon_social, resultado="ya_existia"))
                 continue
 
-            empresa = Empresa(tenant_id=usuario.tenant_id, ruc=ruc, razon_social=razon_social)
+            empresa = Empresa(
+                tenant_id=usuario.tenant_id,
+                ruc=ruc,
+                razon_social=razon_social,
+                # Mismo motivo que en crear_empresa(): un miembro que importa
+                # se auto-asigna cada fila, si no quedarian invisibles para
+                # el mismo apenas terminada la importacion.
+                asignado_a_usuario_id=None if es_admin(usuario) else usuario.id,
+            )
             db.add(empresa)
             db.flush()
 
@@ -329,13 +339,7 @@ def actualizar_empresa(
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    empresa = (
-        db.query(Empresa)
-        .filter(Empresa.id == empresa_id, Empresa.tenant_id == usuario.tenant_id)
-        .first()
-    )
-    if not empresa:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada")
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
     empresa.activo = data.activo
     if data.es_canario is not None:
         empresa.es_canario = data.es_canario
@@ -344,8 +348,15 @@ def actualizar_empresa(
     # Cartera: a diferencia de los campos de arriba, None es un valor VALIDO
     # aca ("desasignar"), asi que "no vino en el request" y "vino como null"
     # tienen que distinguirse con model_fields_set en vez del chequeo
-    # `is not None` que ya usan es_canario/es_buen_contribuyente.
+    # `is not None` que ya usan es_canario/es_buen_contribuyente. Reasignar
+    # es admin-only -- un miembro no debe poder darse a si mismo (u otro)
+    # acceso a una empresa tocando este campo.
     if "asignado_a_usuario_id" in data.model_fields_set:
+        if not es_admin(usuario):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Solo un admin puede reasignar la cartera de una empresa",
+            )
         nuevo_asignado_id = data.asignado_a_usuario_id
         if nuevo_asignado_id is not None:
             asignado = (
@@ -378,13 +389,7 @@ def actualizar_credenciales_empresa(
     la empresa) en vez de reusar la DEK vieja -- mas simple y sigue el
     mismo patron de "una DEK al azar por operacion de cifrado".
     """
-    empresa = (
-        db.query(Empresa)
-        .filter(Empresa.id == empresa_id, Empresa.tenant_id == usuario.tenant_id)
-        .first()
-    )
-    if not empresa:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada")
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
 
     credencial = db.query(CredencialSol).filter(CredencialSol.empresa_id == empresa.id).first()
     if not credencial:
@@ -405,13 +410,7 @@ def eliminar_empresa(
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    empresa = (
-        db.query(Empresa)
-        .filter(Empresa.id == empresa_id, Empresa.tenant_id == usuario.tenant_id)
-        .first()
-    )
-    if not empresa:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada")
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
     db.delete(empresa)
     db.commit()
 
@@ -452,13 +451,7 @@ def crear_token_para_ingreso_directo(
     navegacion comun del navegador no manda el header Authorization, por
     eso hace falta este paso intermedio.
     """
-    empresa = (
-        db.query(Empresa)
-        .filter(Empresa.id == empresa_id, Empresa.tenant_id == usuario.tenant_id)
-        .first()
-    )
-    if not empresa:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada")
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
 
     tiene_credencial = db.query(CredencialSol.id).filter(CredencialSol.empresa_id == empresa.id).first()
     if not tiene_credencial:

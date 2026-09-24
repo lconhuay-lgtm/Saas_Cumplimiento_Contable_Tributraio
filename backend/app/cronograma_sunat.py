@@ -305,34 +305,41 @@ def _con_utc(momento: datetime) -> datetime:
 _PATRONES_SIN_OBLIGACIONES = ("%BAJA%", "%SUSPENSION%")
 
 
-def _empresas_para_cronograma(db: Session, tenant_id: str) -> list[Empresa]:
+def _empresas_para_cronograma(db: Session, tenant_id: str, usuario=None) -> list[Empresa]:
     """
     Empresas del tenant que corresponde considerar para el cronograma:
     activas (Empresa.activo=True) y sin un estado_contribuyente de baja o
     suspension. No filtra por condicion_domicilio a proposito -- "No
     Habido"/"No Hallado" siguen siendo contribuyentes activos y deben
     seguir apareciendo.
+
+    `usuario` opcional (a pedido, control de acceso por rol): si se pasa y
+    no es admin, se acota ademas a lo que tiene asignado -- igual criterio
+    que filtrar_empresas_visibles en app/acceso.py, repetido aca en vez de
+    importarlo porque este modulo no depende de FastAPI/HTTPException para
+    nada mas. Se deja None para app/tareas.py (generar_tareas_mes), que
+    sigue operando sobre TODO el tenant sin importar quien lo dispare --
+    es generacion de datos idempotente, no una vista.
     """
     condiciones_excluidas = or_(*[
         Empresa.estado_contribuyente.ilike(patron) for patron in _PATRONES_SIN_OBLIGACIONES
     ])
-    return (
-        db.query(Empresa)
-        .filter(
-            Empresa.tenant_id == tenant_id,
-            Empresa.activo.is_(True),
-            # OJO con NULL: si estado_contribuyente todavia no se leyo (None
-            # hasta la primera consulta exitosa), NO hay que excluir a la
-            # empresa -- "NOT (NULL ILIKE ...)" da NULL en SQL (ni
-            # verdadero ni falso), asi que sin este or_() las empresas
-            # recien creadas desaparecerian del cronograma por error.
-            or_(
-                Empresa.estado_contribuyente.is_(None),
-                ~condiciones_excluidas,
-            ),
-        )
-        .all()
+    query = db.query(Empresa).filter(
+        Empresa.tenant_id == tenant_id,
+        Empresa.activo.is_(True),
+        # OJO con NULL: si estado_contribuyente todavia no se leyo (None
+        # hasta la primera consulta exitosa), NO hay que excluir a la
+        # empresa -- "NOT (NULL ILIKE ...)" da NULL en SQL (ni
+        # verdadero ni falso), asi que sin este or_() las empresas
+        # recien creadas desaparecerian del cronograma por error.
+        or_(
+            Empresa.estado_contribuyente.is_(None),
+            ~condiciones_excluidas,
+        ),
     )
+    if usuario is not None and usuario.rol != "admin":
+        query = query.filter(Empresa.asignado_a_usuario_id == usuario.id)
+    return query.all()
 
 
 # Alias publico -- el modulo de Tareas/Agenda (app/tareas.py) reusa este
@@ -342,15 +349,15 @@ def _empresas_para_cronograma(db: Session, tenant_id: str) -> list[Empresa]:
 empresas_para_cronograma = _empresas_para_cronograma
 
 
-def proximos_vencimientos_por_tenant(db: Session, tenant_id: str, dias_adelante: int = 15) -> list[dict]:
+def proximos_vencimientos_por_tenant(db: Session, tenant_id: str, dias_adelante: int = 15, usuario=None) -> list[dict]:
     """
     Para cada empresa activa del tenant (sin baja de oficio), busca su
     PROXIMO vencimiento (el primero con fecha >= hoy) segun el grupo que le
     corresponde -- pensado para el aviso del Dashboard. Solo devuelve los
     que caen dentro de `dias_adelante` dias, para no saturar el aviso con
-    vencimientos lejanos.
+    vencimientos lejanos. `usuario` opcional -- ver _empresas_para_cronograma.
     """
-    empresas = _empresas_para_cronograma(db, tenant_id)
+    empresas = _empresas_para_cronograma(db, tenant_id, usuario)
     if not empresas:
         return []
 
@@ -388,11 +395,12 @@ def proximos_vencimientos_por_tenant(db: Session, tenant_id: str, dias_adelante:
     return resultado
 
 
-def agenda_mes_por_tenant(db: Session, tenant_id: str, anio: int, mes: int) -> list[dict]:
+def agenda_mes_por_tenant(db: Session, tenant_id: str, anio: int, mes: int, usuario=None) -> list[dict]:
     """
     Todas las empresas activas del tenant (sin baja de oficio) cuyo
     vencimiento (segun su grupo) cae en el mes/anio pedido -- para la
-    vista de calendario del modulo Cronograma.
+    vista de calendario del modulo Cronograma. `usuario` opcional -- ver
+    _empresas_para_cronograma.
     """
     inicio = datetime(anio, mes, 1, tzinfo=timezone.utc)
     if mes == 12:
@@ -400,7 +408,7 @@ def agenda_mes_por_tenant(db: Session, tenant_id: str, anio: int, mes: int) -> l
     else:
         fin = datetime(anio, mes + 1, 1, tzinfo=timezone.utc)
 
-    empresas = _empresas_para_cronograma(db, tenant_id)
+    empresas = _empresas_para_cronograma(db, tenant_id, usuario)
     if not empresas:
         return []
 

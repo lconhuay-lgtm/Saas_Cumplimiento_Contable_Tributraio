@@ -57,7 +57,7 @@ def agenda_mes(
     """Vencimientos del mes/anio pedido, para las empresas activas del tenant -- vista de calendario."""
     if not (1 <= mes <= 12):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mes debe estar entre 1 y 12")
-    vencimientos = cronograma_sunat.agenda_mes_por_tenant(db, usuario.tenant_id, anio, mes)
+    vencimientos = cronograma_sunat.agenda_mes_por_tenant(db, usuario.tenant_id, anio, mes, usuario)
     return AgendaMesResponse(
         anio=anio,
         mes=mes,
@@ -72,5 +72,5 @@ def proximos_vencimientos(
     db: Session = Depends(get_db),
 ):
     """El proximo vencimiento de cada empresa activa del tenant, si cae dentro de `dias_adelante` dias -- usado por el aviso del Dashboard."""
-    resultado = cronograma_sunat.proximos_vencimientos_por_tenant(db, usuario.tenant_id, dias_adelante)
+    resultado = cronograma_sunat.proximos_vencimientos_por_tenant(db, usuario.tenant_id, dias_adelante, usuario)
     return [ProximoVencimientoItem(**v) for v in resultado]

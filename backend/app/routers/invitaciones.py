@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Usuario, Tenant, InvitacionUsuario
-from app.deps import get_usuario_actual
+from app.deps import get_admin_actual
 from app.security import hash_password, crear_token
 from app.email_utils import enviar_invitacion_equipo
 from app.schemas import (
@@ -60,7 +60,7 @@ def _a_respuesta(inv: InvitacionUsuario, db: Session) -> InvitacionResponse:
 
 @router.get("", response_model=list[InvitacionResponse])
 def listar_invitaciones(
-    usuario: Usuario = Depends(get_usuario_actual),
+    usuario: Usuario = Depends(get_admin_actual),
     db: Session = Depends(get_db),
 ):
     invitaciones = (
@@ -75,7 +75,7 @@ def listar_invitaciones(
 @router.post("", response_model=InvitacionResponse, status_code=status.HTTP_201_CREATED)
 def crear_invitacion(
     data: InvitacionCreate,
-    usuario: Usuario = Depends(get_usuario_actual),
+    usuario: Usuario = Depends(get_admin_actual),
     db: Session = Depends(get_db),
 ):
     email_normalizado = data.email.strip().lower()
@@ -130,7 +130,7 @@ def crear_invitacion(
 @router.delete("/{invitacion_id}", status_code=status.HTTP_204_NO_CONTENT)
 def cancelar_invitacion(
     invitacion_id: str,
-    usuario: Usuario = Depends(get_usuario_actual),
+    usuario: Usuario = Depends(get_admin_actual),
     db: Session = Depends(get_db),
 ):
     invitacion = (
@@ -191,10 +191,10 @@ def aceptar_invitacion(token: str, data: InvitacionAceptarRequest, db: Session =
     if ya_es_usuario:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ese email ya tiene una cuenta")
 
-    # rol="miembro" (no "admin", a diferencia de /auth/registro): hoy este
-    # campo todavia no restringe nada en el backend (ver Fase R2 -- la
-    # separacion de permisos por rol DENTRO de un tenant queda pendiente),
-    # pero conviene que el dato ya nazca correcto para cuando se implemente.
+    # rol="miembro" (no "admin", a diferencia de /auth/registro): ve solo
+    # las empresas que el admin le asigne, y no puede reasignar carteras ni
+    # entrar a Salud del sistema / Mi equipo (ver app/acceso.py y
+    # app/deps.py:get_admin_actual).
     nuevo_usuario = Usuario(
         tenant_id=invitacion.tenant_id,
         email=invitacion.email,

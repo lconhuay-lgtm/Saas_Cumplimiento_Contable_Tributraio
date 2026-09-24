@@ -10,8 +10,8 @@ const ENLACES = [
   { href: "/empresas", label: "Empresas", Icon: Building2 },
   { href: "/tareas", label: "Tareas", Icon: ListChecks },
   { href: "/cronograma", label: "Cronograma", Icon: CalendarDays },
-  { href: "/salud", label: "Salud del sistema", Icon: HeartPulse },
-  { href: "/equipo", label: "Mi equipo", Icon: Users },
+  { href: "/salud", label: "Salud del sistema", Icon: HeartPulse, soloAdmin: true },
+  { href: "/equipo", label: "Mi equipo", Icon: Users, soloAdmin: true },
 ];
 
 export default function Sidebar() {
@@ -44,7 +44,7 @@ export default function Sidebar() {
       </div>
 
       <nav className="flex-1 space-y-1 px-3">
-        {ENLACES.map(({ href, label, Icon }) => {
+        {ENLACES.filter((enlace) => !enlace.soloAdmin || usuario?.rol === "admin").map(({ href, label, Icon }) => {
           const activo = esActiva(href);
           return (
             <Link

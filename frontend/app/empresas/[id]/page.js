@@ -28,8 +28,10 @@ export default function DetalleEmpresaPage() {
   const [pdfUrl, setPdfUrl] = useState(null);
   const [cargandoPdf, setCargandoPdf] = useState(false);
   const [errorPdf, setErrorPdf] = useState("");
-  // Cartera: usuarios del tenant, para el selector "Asignado a".
+  // Cartera: usuarios del tenant, para el selector "Asignado a" (editable
+  // solo por un admin -- un miembro solo la ve como dato, ver acceso.py).
   const [usuarios, setUsuarios] = useState([]);
+  const [usuarioActual, setUsuarioActual] = useState(null);
   // Notificacion -> tarea: mensaje_id -> tarea, para saber cuales ya tienen
   // una creada (boton "Crear tarea" se vuelve "Ver tarea").
   const [tareasPorMensaje, setTareasPorMensaje] = useState({});
@@ -42,6 +44,7 @@ export default function DetalleEmpresaPage() {
       return;
     }
     cargar();
+    api.me().then(setUsuarioActual).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -219,10 +222,10 @@ export default function DetalleEmpresaPage() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            {empresa && (
+            {empresa && usuarioActual?.rol === "admin" && (
               <div
                 className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                title="Cartera: que usuario del estudio sigue esta empresa (solo informativo, no restringe quien puede verla)"
+                title="Cartera: que usuario del estudio tiene asignada esta empresa (solo el admin puede reasignarla)"
               >
                 <UserCog size={15} strokeWidth={1.5} className="shrink-0 text-slate-400" />
                 <select
@@ -237,6 +240,15 @@ export default function DetalleEmpresaPage() {
                     </option>
                   ))}
                 </select>
+              </div>
+            )}
+            {empresa && usuarioActual && usuarioActual.rol !== "admin" && (
+              <div
+                className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-500"
+                title="Cartera: solo el admin puede reasignarla"
+              >
+                <UserCog size={15} strokeWidth={1.5} className="shrink-0 text-slate-400" />
+                {usuarios.find((u) => u.id === empresa.asignado_a_usuario_id)?.email || "Sin asignar"}
               </div>
             )}
             {empresa && (
