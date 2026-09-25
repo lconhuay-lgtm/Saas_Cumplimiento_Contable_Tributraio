@@ -75,7 +75,9 @@ def decodificar_token(token: str) -> dict | None:
         return None
 
 
-def crear_token_ingreso_directo(usuario_id: str, tenant_id: str, empresa_id: str, minutos: int = 2) -> str:
+def crear_token_ingreso_directo(
+    usuario_id: str, tenant_id: str, empresa_id: str, minutos: int = 2, scope: str = "ingreso_directo"
+) -> str:
     """
     Token de un solo proposito y vida MUY corta -- para el flujo de
     "ingreso directo a SUNAT" (ver routers/empresas.py). Hace falta
@@ -85,14 +87,17 @@ def crear_token_ingreso_directo(usuario_id: str, tenant_id: str, empresa_id: str
     su lugar. Vida corta (2 minutos por defecto, alcanza de sobra para
     que se abra la pestaña) y un "scope" propio para que, si alguien
     llegara a verlo en un log o en el historial del navegador, no sirva
-    para nada mas que ese unico uso puntual.
+    para nada mas que ese unico uso puntual. `scope` parametrizable
+    porque hay mas de un destino de ingreso directo (Buzon/Menu SOL
+    clasico vs. Mis Declaraciones y Pagos) -- cada uno con su propio
+    scope, para que un token de uno no sirva para entrar al otro.
     """
     expira = datetime.now(timezone.utc) + timedelta(minutes=minutos)
     payload = {
         "sub": usuario_id,
         "tenant_id": tenant_id,
         "empresa_id": empresa_id,
-        "scope": "ingreso_directo",
+        "scope": scope,
         "exp": expira,
     }
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)

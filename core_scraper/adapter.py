@@ -246,6 +246,79 @@ def preparar_ingreso_directo(ruc: str = "", headless: bool = False) -> dict:
         navegador.close_browser()
 
 
+def preparar_ingreso_directo_declaraciones(ruc: str = "", headless: bool = False) -> dict:
+    """
+    Igual que preparar_ingreso_directo (se detiene ANTES de escribir
+    ninguna credencial, mismo motivo de seguridad), pero para un destino
+    post-login distinto: "Mis Declaraciones y Pagos" en vez del Menu SOL
+    clasico (Buzon).
+
+    Es la MISMA pantalla de login SUNAT (oauth2/loginMenuSol) -- lo que
+    cambia es el parametro `originalUrl`, que SUNAT arma segun por donde
+    se entro. Confirmado con un diagnostico real (24/09): entrando por
+    https://www.sunat.gob.pe/sol.html y disparando el mismo JS que usa el
+    boton "Ingresar" de la tarjeta "Mis Declaraciones y Pagos"
+    (declaraSimplificadaNueva(), definida en esa pagina), el originalUrl
+    resultante apunta a cl-ti-itmenu2/AutenticaMenuInternetPlataforma.htm
+    (la "Plataforma" nueva de declaraciones) en vez de
+    cl-ti-itmenu/AutenticaMenuInternet.htm (el Menu SOL clasico que usa
+    preparar_ingreso_directo). El resto del flujo (formulario oculto que
+    se autoenvia en el navegador del usuario) es identico.
+
+    Returns:
+        dict: mismo formato que preparar_ingreso_directo.
+    """
+    vacio = {"ok": False, "accion_url": None, "state": None, "original_url": None, "lang": None, "error": None}
+
+    navegador = SunatWebNavigator(empresa=None, headless=headless)
+    try:
+        if not navegador.initialize_browser():
+            return {**vacio, "error": "No se pudo iniciar el navegador"}
+
+        driver = navegador.driver
+        driver.get("https://www.sunat.gob.pe/sol.html")
+        ventana_original = driver.current_window_handle
+        WebDriverWait(driver, 15).until(
+            lambda d: d.execute_script("return typeof declaraSimplificadaNueva === 'function'")
+        )
+        driver.execute_script("declaraSimplificadaNueva()")
+
+        ventanas_nuevas = []
+        for _ in range(15):
+            ventanas_nuevas = [w for w in driver.window_handles if w != ventana_original]
+            if ventanas_nuevas:
+                break
+            time.sleep(1)
+        if not ventanas_nuevas:
+            return {**vacio, "error": "No se pudo llegar a la pantalla de login de 'Mis Declaraciones y Pagos'"}
+        driver.switch_to.window(ventanas_nuevas[-1])
+
+        WebDriverWait(driver, 15).until(lambda d: "loginMenuSol" in d.current_url or "j_security_check" in d.current_url)
+        url_login = driver.current_url
+
+        partes = urlparse(url_login)
+        query = parse_qs(partes.query)
+        state = query.get("state", [None])[0]
+        original_url = query.get("originalUrl", [None])[0]
+        lang = query.get("lang", ["es-PE"])[0]
+        accion_url = urljoin(url_login, "j_security_check")
+
+        return {
+            "ok": True,
+            "accion_url": accion_url,
+            "state": state,
+            "original_url": original_url,
+            "lang": lang,
+            "error": None,
+        }
+
+    except Exception as e:
+        logger.error(f"Error preparando el ingreso directo a Declaraciones y Pagos para {ruc}: {e}")
+        return {**vacio, "error": str(e)}
+    finally:
+        navegador.close_browser()
+
+
 def _escanear_mensajes(navegador, limite):
     """
     Escanea el listado visible en el Buzon Electronico y devuelve, por cada
@@ -838,13 +911,16 @@ def generar_reporte_tributario_terceros(
             driver.execute_script("arguments[0].click();", boton_enviar)
         time.sleep(4)
 
-        # SUNAT no siempre deja un mensaje de confirmacion facil de
-        # reconocer por texto -- se loguea lo que quedo en pantalla para
-        # poder diagnosticar a mano si algo falla mas adelante (p.ej. el
-        # captcha invisible de la pantalla bloqueando el envio), pero no
-        # se bloquea la respuesta por eso: el clic en "Enviar" ya se hizo.
-        logger.info(f"Reporte Tributario para Terceros solicitado para {ruc} -> {correo_destino}")
-        logger.info(f"Texto en pantalla tras el envio: {driver.find_element(By.TAG_NAME, 'body').text[:300]!r}")
+        # SUNAT confirma con un mensaje reconocible (confirmado con una
+        # captura real, 24/09): "El reporte solicitado se esta
+        # procesando. Terminada dicha accion el mismo estara en la
+        # bandeja de correo ingresada." -- se busca ese texto para
+        # devolver un "ok" con confianza real, no solo "no revento".
+        texto_pantalla = driver.find_element(By.TAG_NAME, "body").text
+        confirmado = "se está procesando" in texto_pantalla or "se esta procesando" in texto_pantalla
+        logger.info(f"Reporte Tributario para Terceros solicitado para {ruc} -> {correo_destino} (confirmado={confirmado})")
+        if not confirmado:
+            logger.warning(f"No se encontro el mensaje de confirmacion esperado. Texto en pantalla: {texto_pantalla[:400]!r}")
         return {"ok": True, "error": None}
 
     except Exception as e:

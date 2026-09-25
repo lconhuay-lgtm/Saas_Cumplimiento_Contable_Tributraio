@@ -156,6 +156,10 @@ export const api = {
   obtenerTokenIngresoDirecto: (empresaId) =>
     apiFetch(`/empresas/${empresaId}/ingreso-directo/token`, { method: "POST" }),
 
+  /** Igual que obtenerTokenIngresoDirecto, pero para "Ir a Declaraciones y Pagos" (destino distinto, mismo mecanismo). */
+  obtenerTokenIngresoDirectoDeclaraciones: (empresaId) =>
+    apiFetch(`/empresas/${empresaId}/ingreso-directo-declaraciones/token`, { method: "POST" }),
+
   /**
    * Dispara en segundo plano un "pre-calentado" del ingreso directo (ver
    * backend/app/ingreso_directo_cache.py) -- se llama una vez al abrir la

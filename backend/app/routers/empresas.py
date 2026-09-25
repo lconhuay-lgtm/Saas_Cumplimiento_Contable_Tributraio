@@ -461,6 +461,28 @@ def crear_token_para_ingreso_directo(
     return {"token": token}
 
 
+@router.post("/{empresa_id}/ingreso-directo-declaraciones/token")
+def crear_token_para_ingreso_directo_declaraciones(
+    empresa_id: str,
+    usuario: Usuario = Depends(get_usuario_actual),
+    db: Session = Depends(get_db),
+):
+    """
+    Igual que crear_token_para_ingreso_directo, pero para el boton "Ir a
+    Declaraciones y Pagos" -- scope propio (ingreso_directo_declaraciones)
+    para que este token no sirva para entrar al Menu SOL clasico ni
+    viceversa. Ver GET /{empresa_id}/ingreso-directo-declaraciones.
+    """
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
+
+    tiene_credencial = db.query(CredencialSol.id).filter(CredencialSol.empresa_id == empresa.id).first()
+    if not tiene_credencial:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Esta empresa no tiene credenciales SOL guardadas")
+
+    token = crear_token_ingreso_directo(usuario.id, usuario.tenant_id, empresa.id, scope="ingreso_directo_declaraciones")
+    return {"token": token}
+
+
 @router.get("/{empresa_id}/ingreso-directo", response_class=HTMLResponse)
 def ingreso_directo(empresa_id: str, token: str, db: Session = Depends(get_db)):
     """
@@ -577,6 +599,93 @@ def ingreso_directo(empresa_id: str, token: str, db: Session = Depends(get_db)):
                 ),
                 status_code=502,
             )
+
+    html_respuesta = _pagina_autoenvio_sunat(
+        accion_url=resultado["accion_url"],
+        ruc=empresa.ruc,
+        usuario_sol=credencial.usuario_sol,
+        clave_sol=clave_en_claro,
+        state=resultado.get("state"),
+        original_url=resultado.get("original_url"),
+        lang=resultado.get("lang") or "es-PE",
+    )
+    return HTMLResponse(html_respuesta)
+
+
+@router.get("/{empresa_id}/ingreso-directo-declaraciones", response_class=HTMLResponse)
+def ingreso_directo_declaraciones(empresa_id: str, token: str, db: Session = Depends(get_db)):
+    """
+    Igual mecanismo que GET /{empresa_id}/ingreso-directo (ver el
+    docstring de esa funcion para el detalle completo de por que es
+    seguro -- la clave SOL nunca pasa por este servidor hacia SUNAT, solo
+    viaja una vez hacia el navegador del usuario), pero aterriza en "Mis
+    Declaraciones y Pagos" en vez del Menu SOL clasico -- usa
+    preparar_ingreso_directo_declaraciones() en vez de
+    preparar_ingreso_directo(). Sin el cache "pre-calentado" del otro
+    endpoint a proposito: es un boton bastante menos usado, no amerita la
+    complejidad extra de generalizar ese cache para dos destinos.
+    """
+    payload = decodificar_token(token)
+    if not payload or payload.get("scope") != "ingreso_directo_declaraciones" or payload.get("empresa_id") != empresa_id:
+        return HTMLResponse(
+            _pagina_error_ingreso_directo(
+                "Este enlace no es valido o ya vencio (dura solo 2 minutos). "
+                "Volve al tablero e intenta de nuevo."
+            ),
+            status_code=400,
+        )
+
+    empresa = (
+        db.query(Empresa)
+        .filter(Empresa.id == empresa_id, Empresa.tenant_id == payload.get("tenant_id"))
+        .first()
+    )
+    if not empresa:
+        return HTMLResponse(_pagina_error_ingreso_directo("Empresa no encontrada."), status_code=404)
+
+    credencial = db.query(CredencialSol).filter(CredencialSol.empresa_id == empresa.id).first()
+    if not credencial:
+        return HTMLResponse(
+            _pagina_error_ingreso_directo("Esta empresa no tiene credenciales SOL guardadas."),
+            status_code=400,
+        )
+
+    clave_en_claro = descifrar_clave_sol(credencial.clave_cifrada, credencial.dek_cifrada)
+
+    display = None
+    if not os.environ.get("DISPLAY"):
+        from pyvirtualdisplay import Display
+        display = Display(visible=False, size=(1600, 1000))
+        display.start()
+
+    try:
+        adquirir_slot_global(espera_maxima_seg=45)
+    except LimiteExcedido as e:
+        if display is not None:
+            display.stop()
+        return HTMLResponse(
+            _pagina_error_ingreso_directo(
+                f"{e} Entra a SUNAT de la forma normal mientras tanto."
+            ),
+            status_code=503,
+        )
+    try:
+        from adapter import preparar_ingreso_directo_declaraciones
+        resultado = preparar_ingreso_directo_declaraciones(ruc=empresa.ruc)
+    finally:
+        liberar_slot_global()
+        if display is not None:
+            display.stop()
+
+    if not resultado["ok"]:
+        logger.error(f"Ingreso directo a Declaraciones y Pagos fallo para {empresa.ruc}: {resultado['error']}")
+        return HTMLResponse(
+            _pagina_error_ingreso_directo(
+                f"No se pudo preparar el ingreso a Declaraciones y Pagos: {resultado['error']}. "
+                "Intenta de nuevo, o entra a SUNAT de la forma normal."
+            ),
+            status_code=502,
+        )
 
     html_respuesta = _pagina_autoenvio_sunat(
         accion_url=resultado["accion_url"],

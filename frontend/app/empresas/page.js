@@ -70,6 +70,21 @@ function infoEtapaFichaRuc(etapa) {
   return ETAPAS_FICHA_RUC[etapa || "null"] || ETAPAS_FICHA_RUC.null;
 }
 
+// Mismo patron que ETAPAS_FICHA_RUC -- ver
+// core_scraper/adapter.py::generar_reporte_tributario_terceros.
+const ETAPAS_REPORTE_TRIBUTARIO = {
+  null: { porcentaje: 8, etiqueta: "Iniciando..." },
+  iniciando_sesion: { porcentaje: 20, etiqueta: "Abriendo SUNAT..." },
+  autenticando: { porcentaje: 35, etiqueta: "Iniciando sesion..." },
+  abriendo_reporte: { porcentaje: 55, etiqueta: "Abriendo el Reporte Tributario..." },
+  aceptando_aviso: { porcentaje: 70, etiqueta: "Aceptando el aviso legal..." },
+  enviando_correo: { porcentaje: 90, etiqueta: "Enviando la solicitud..." },
+};
+
+function infoEtapaReporteTributario(etapa) {
+  return ETAPAS_REPORTE_TRIBUTARIO[etapa || "null"] || ETAPAS_REPORTE_TRIBUTARIO.null;
+}
+
 // Mismo patron que ETAPAS_FICHA_RUC, para la consulta manual de una sola
 // empresa (boton "Consultar" de cada tarjeta) -- ver
 // core_scraper/adapter.py::consultar_buzon y app/jobs.py.
@@ -140,6 +155,7 @@ function EmpresasPageContenido() {
   const [solicitandoReporte, setSolicitandoReporte] = useState({}); // { [empresaId]: boolean }
   const [progresoReporte, setProgresoReporte] = useState({}); // { [empresaId]: {estado, etapa} }
   const [entrandoDirecto, setEntrandoDirecto] = useState({}); // { [empresaId]: boolean }
+  const [entrandoDeclaraciones, setEntrandoDeclaraciones] = useState({}); // { [empresaId]: boolean }
   const [marcandoTodoLeido, setMarcandoTodoLeido] = useState(false);
   const enCursoAnteriorRef = useRef(false);
 
@@ -208,13 +224,18 @@ function EmpresasPageContenido() {
   // el boton "Consultar" de la tarjeta muestre una barra de progreso real
   // en vez de un spinner sin perspectiva de tiempo.
   async function esperarJob(empresaId, jobId) {
-    for (let i = 0; i < 90; i++) {
+    // 200 intentos x 3s = 10 min, igual al job_timeout del lado del
+    // servidor -- 90 x 2s (3 min) se quedaba corto cuando el job tardaba
+    // en arrancar por cola (el worker ocupado con otras consultas), asi
+    // que el frontend avisaba "fallo" aunque el backend terminara bien
+    // poco despues (confirmado en produccion, 24/09).
+    for (let i = 0; i < 200; i++) {
       const job = await api.obtenerJob(jobId);
       setProgresoConsulta((prev) => ({ ...prev, [empresaId]: { estado: job.estado, etapa: job.etapa } }));
       if (job.estado === "completado" || job.estado === "error") {
         return job;
       }
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 3000));
     }
     throw new Error("La consulta esta tardando mas de lo esperado. Revisa el historial mas tarde.");
   }
@@ -304,13 +325,14 @@ function EmpresasPageContenido() {
   // progreso real (con etiqueta de la etapa actual) en vez de un spinner
   // opaco sin perspectiva de cuanto falta.
   async function esperarJobFichaRuc(empresaId, jobId) {
-    for (let i = 0; i < 90; i++) {
+    // Ver comentario de esperarJob -- mismo fix, 200 x 3s = 10 min.
+    for (let i = 0; i < 200; i++) {
       const job = await api.obtenerJobFichaRuc(empresaId, jobId);
       setProgresoFicha((prev) => ({ ...prev, [empresaId]: { estado: job.estado, etapa: job.etapa } }));
       if (job.estado === "completado" || job.estado === "error") {
         return job;
       }
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 3000));
     }
     throw new Error("La generacion de la Ficha RUC esta tardando mas de lo esperado. Intenta de nuevo en un momento.");
   }
@@ -380,7 +402,11 @@ function EmpresasPageContenido() {
     setProgresoReporte((prev) => ({ ...prev, [empresa.id]: { estado: "pendiente", etapa: null } }));
     try {
       const job = await api.generarReporteTributario(empresa.id, correo);
-      for (let i = 0; i < 90; i++) {
+      // Ver comentario de esperarJob -- mismo fix, 200 x 3s = 10 min (el
+      // job puede tardar varios minutos en arrancar si el worker esta
+      // ocupado con otras consultas, no solo en lo que tarda una vez que
+      // arranca).
+      for (let i = 0; i < 200; i++) {
         const jobActual = await api.obtenerJobReporteTributario(empresa.id, job.id);
         setProgresoReporte((prev) => ({ ...prev, [empresa.id]: { estado: jobActual.estado, etapa: jobActual.etapa } }));
         if (jobActual.estado === "completado") {
@@ -391,9 +417,9 @@ function EmpresasPageContenido() {
           alert(`No se pudo solicitar el Reporte Tributario: ${jobActual.error || "error desconocido"}`);
           return;
         }
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, 3000));
       }
-      alert("La solicitud del Reporte Tributario esta tardando mas de lo esperado. Intenta de nuevo en un momento.");
+      alert("La solicitud del Reporte Tributario esta tardando mas de lo esperado. Revisa mas tarde si te llego el correo -- puede haber terminado igual en segundo plano.");
     } catch (err) {
       alert(err.message);
     } finally {
@@ -440,6 +466,26 @@ function EmpresasPageContenido() {
       alert(err.message);
     } finally {
       setEntrandoDirecto((prev) => ({ ...prev, [empresaId]: false }));
+    }
+  }
+
+  // Misma estructura y mismo mecanismo que entrarDirectoASunat -- unico
+  // cambio: el destino post-login es "Mis Declaraciones y Pagos" en vez
+  // del Menu SOL clasico (ver GET /ingreso-directo-declaraciones y
+  // core_scraper/adapter.py::preparar_ingreso_directo_declaraciones).
+  async function entrarDirectoADeclaraciones(empresaId) {
+    const pestana = window.open("", "_blank");
+    setEntrandoDeclaraciones((prev) => ({ ...prev, [empresaId]: true }));
+    try {
+      const { token } = await api.obtenerTokenIngresoDirectoDeclaraciones(empresaId);
+      if (pestana) {
+        pestana.location.href = `${API_URL}/empresas/${empresaId}/ingreso-directo-declaraciones?token=${encodeURIComponent(token)}`;
+      }
+    } catch (err) {
+      if (pestana) pestana.close();
+      alert(err.message);
+    } finally {
+      setEntrandoDeclaraciones((prev) => ({ ...prev, [empresaId]: false }));
     }
   }
 
@@ -642,9 +688,12 @@ function EmpresasPageContenido() {
                     onVerFichaRuc={() => pedirTipoFichaRuc(e, false)}
                     onRegenerarFichaRuc={() => pedirTipoFichaRuc(e, true)}
                     solicitandoReporte={!!solicitandoReporte[e.id]}
+                    progresoReporte={progresoReporte[e.id]}
                     onSolicitarReporteTributario={() => pedirReporteTributario(e)}
                     entrandoDirecto={!!entrandoDirecto[e.id]}
                     onEntrarDirecto={() => entrarDirectoASunat(e.id)}
+                    entrandoDeclaraciones={!!entrandoDeclaraciones[e.id]}
+                    onEntrarDeclaraciones={() => entrarDirectoADeclaraciones(e.id)}
                   />
                 ))}
               </div>
@@ -763,9 +812,12 @@ function TarjetaEmpresa({
   onVerFichaRuc,
   onRegenerarFichaRuc,
   solicitandoReporte,
+  progresoReporte,
   onSolicitarReporteTributario,
   entrandoDirecto,
   onEntrarDirecto,
+  entrandoDeclaraciones,
+  onEntrarDeclaraciones,
 }) {
   return (
     <div className="surface-card animate-fade-in-up p-6 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-soft-lg">
@@ -882,6 +934,20 @@ function TarjetaEmpresa({
         </a>
 
         <button
+          onClick={onEntrarDeclaraciones}
+          disabled={entrandoDeclaraciones}
+          title="Entra directo a Mis Declaraciones y Pagos de SUNAT, ya logueado, sin escribir nada."
+          className="inline-flex items-center gap-1.5 rounded-lg bg-sky-50 px-2.5 py-1.5 text-xs font-bold text-sky-700 transition-all duration-300 ease-out hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+        >
+          {entrandoDeclaraciones ? (
+            <Loader2 size={13} strokeWidth={2} className="animate-spin" />
+          ) : (
+            <LogIn size={13} strokeWidth={2} />
+          )}
+          {entrandoDeclaraciones ? "Entrando..." : "Ir a Declaraciones y Pagos"}
+        </button>
+
+        <button
           onClick={onVerFichaRuc}
           disabled={generandoFicha}
           title={
@@ -923,7 +989,9 @@ function TarjetaEmpresa({
           ) : (
             <Mail size={13} strokeWidth={2} />
           )}
-          {solicitandoReporte ? "Enviando..." : "Reporte Tributario"}
+          {solicitandoReporte
+            ? `${infoEtapaReporteTributario(progresoReporte?.etapa).porcentaje}%`
+            : "Reporte Tributario"}
         </button>
       </div>
 
