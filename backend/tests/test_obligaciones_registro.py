@@ -87,7 +87,7 @@ def test_igv_renta_genera_tarea_automatica_sin_configuracion_manual(client, db_s
     assert resp.status_code == 200, resp.text
     assert resp.json()["tareas_creadas"] == 1
 
-    tareas = client.get(f"/tareas?empresa_id={empresa_id}", headers=headers).json()
+    tareas = client.get(f"/tareas?empresa_id={empresa_id}&periodo=2026-03", headers=headers).json()
     assert len(tareas) == 1
     assert tareas[0]["tipo"] == "igv_renta"
     assert tareas[0]["fecha_vencimiento"].startswith("2026-04-14")
@@ -122,7 +122,12 @@ def test_dia_fijo_anual_solo_genera_tarea_en_su_mes(client):
     resp_febrero = client.post("/tareas/generar?anio=2026&mes=2", headers=headers)
     assert resp_febrero.json()["tareas_creadas"] == 1
 
-    tareas = client.get(f"/tareas?empresa_id={empresa_id}", headers=headers).json()
+    # Filtrado por periodo (no por toda la empresa): la obligacion ya se
+    # autogenera sola para el mes actual al crearse (ver
+    # test_obligaciones_recurrencia.py), asi que si este test corriera
+    # justo en un febrero real, la empresa tendria ademas la tarea de ese
+    # periodo real, distinto de "2026-02".
+    tareas = client.get(f"/tareas?empresa_id={empresa_id}&periodo=2026-02", headers=headers).json()
     assert len(tareas) == 1
     assert tareas[0]["fecha_vencimiento"].startswith("2026-02-15")
 

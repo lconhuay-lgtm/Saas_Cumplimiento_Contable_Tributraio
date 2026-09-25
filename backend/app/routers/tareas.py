@@ -4,6 +4,7 @@ empresa (Planilla/AFP/SBS/otro -- no todas tienen todas) + gestion de las
 tareas concretas generadas a partir de esas reglas, mas tareas sueltas
 creadas a mano. Ver app/tareas.py para la logica de generacion.
 """
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -26,6 +27,8 @@ from app.schemas import (
 )
 from app import tareas as tareas_logic
 from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible
+
+logger = logging.getLogger("app.routers.tareas")
 
 router = APIRouter(tags=["tareas"])
 
@@ -65,6 +68,25 @@ def _a_respuesta_tarea(tarea: TareaObligacion, empresa: Empresa) -> TareaObligac
 # ---- Configuracion de obligaciones por empresa ----
 
 
+def _generar_mes_actual_silencioso(db: Session, tenant_id: str) -> None:
+    """
+    A pedido: crear o reactivar una obligacion generaba la fila en
+    EmpresaObligacion pero la tarea del mes solo aparecia si alguien se
+    acordaba de apretar "Generar tareas del mes" -- confuso, porque parecia
+    que la obligacion "no hacia nada" (no aparecia en Tareas ni en el
+    Calendario) hasta ese click manual. Ahora se dispara sola, para el mes
+    actual, justo despues de crear/activar una obligacion. Idempotente
+    (ver tareas_logic.generar_tareas_mes) y nunca debe tumbar la operacion
+    que la disparo -- si falla, se loguea y el usuario igual puede generarla
+    a mano despues con el boton de siempre.
+    """
+    try:
+        hoy = datetime.now(timezone.utc)
+        tareas_logic.generar_tareas_mes(db, tenant_id, hoy.year, hoy.month)
+    except Exception:
+        logger.exception("No se pudieron generar las tareas del mes actual tras crear/activar una obligacion")
+
+
 @router.get("/empresas/{empresa_id}/obligaciones", response_model=list[EmpresaObligacionResponse])
 def listar_obligaciones(
     empresa_id: str,
@@ -99,6 +121,7 @@ def crear_obligacion(
             detail="Ya existe una obligacion con ese tipo y nombre para esta empresa",
         )
     db.refresh(obligacion)
+    _generar_mes_actual_silencioso(db, usuario.tenant_id)
     return obligacion
 
 
@@ -122,6 +145,7 @@ def actualizar_obligacion(
         setattr(obligacion, campo, valor)
     db.commit()
     db.refresh(obligacion)
+    _generar_mes_actual_silencioso(db, usuario.tenant_id)
     return obligacion
 
 

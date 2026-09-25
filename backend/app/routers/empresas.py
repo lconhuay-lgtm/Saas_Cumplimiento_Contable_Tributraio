@@ -28,6 +28,7 @@ from app.queue_conn import cola_consultas
 from app.jobs import ejecutar_consulta_buzon
 from app.deps import get_usuario_actual
 from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible, es_admin
+from app import tareas as tareas_logic
 
 # Mismo espaciado que "Consultar todas" (ver routers/consultas.py) -- se
 # repite aca en vez de importarlo para no crear una dependencia cruzada
@@ -252,6 +253,18 @@ def _crear_obligaciones_por_defecto(
     except Exception as e:
         db.rollback()
         logger.warning(f"No se pudieron crear las obligaciones por defecto de {empresa.ruc}: {e}")
+        return
+
+    # A pedido: que la tarea del mes actual aparezca de una en Tareas/
+    # Calendario sin que el usuario tenga que acordarse de apretar
+    # "Generar tareas del mes" aparte -- ver mismo patron/motivo en
+    # routers.tareas._generar_mes_actual_silencioso. Nunca debe tumbar el
+    # alta de la empresa si esto falla.
+    try:
+        hoy = datetime.now(timezone.utc)
+        tareas_logic.generar_tareas_mes(db, empresa.tenant_id, hoy.year, hoy.month)
+    except Exception:
+        logger.warning(f"No se pudieron generar las tareas del mes actual para {empresa.ruc} recien creada", exc_info=True)
 
 
 def _encolar_consulta_automatica(empresa: Empresa, usuario: Usuario, db: Session) -> None:

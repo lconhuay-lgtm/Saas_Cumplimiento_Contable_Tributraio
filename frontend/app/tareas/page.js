@@ -398,10 +398,9 @@ function ModalNuevaTarea({ empresas, onClose, onCreada }) {
             <div>
               <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Tipo</label>
               <select value={tipo} onChange={(e) => setTipo(e.target.value)} className="campo-input">
-                <option value="otro">Otro</option>
-                <option value="planilla">Planilla</option>
-                <option value="afp">AFP</option>
-                <option value="sbs">Reporte SBS</option>
+                {Object.entries(ETIQUETAS_TIPO).map(([valor, etiqueta]) => (
+                  <option key={valor} value={valor}>{etiqueta}</option>
+                ))}
               </select>
             </div>
             <div>

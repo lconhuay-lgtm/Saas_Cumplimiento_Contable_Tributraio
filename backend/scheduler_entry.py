@@ -26,6 +26,7 @@ como es_canario=True (ver app.scheduler_job.ejecutar_chequeo_canario).
 import os
 import sys
 import logging
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -43,6 +44,8 @@ from app.scheduler_job import encolar_chequeo_nocturno, enviar_resumenes_diarios
 from app.database import SessionLocal
 from app.cronograma_sunat import asegurar_cronograma_vigente
 from app.almacenamiento import limpiar_datos_antiguos
+from app.tareas import generar_tareas_mes
+from app.models import Tenant
 
 CHEQUEO1_HORA_UTC = int(os.environ.get("CHEQUEO1_HORA_UTC", "16"))
 CHEQUEO1_MINUTO_UTC = int(os.environ.get("CHEQUEO1_MINUTO_UTC", "0"))
@@ -118,6 +121,34 @@ def job_cronograma():
         db.close()
 
 
+def job_generar_tareas_mes():
+    """
+    Modulo de Tareas/Agenda: red de respaldo diaria para generar_tareas_mes()
+    (ver app/tareas.py). Crear o activar una obligacion ya la dispara sola
+    para el mes actual (ver routers.tareas._generar_mes_actual_silencioso y
+    routers.empresas._crear_obligaciones_por_defecto), pero esto cubre lo
+    que ese disparo puntual no cubre: el cambio de mes (el 1 de cada mes,
+    las obligaciones que ya existian necesitan su tarea del periodo nuevo)
+    y cualquier caso raro donde el disparo puntual haya fallado. Corre para
+    TODOS los tenants activos, una vez al dia -- idempotente, asi que en la
+    inmensa mayoria de los dias no crea nada nuevo (ya esta al dia).
+    """
+    logger.info("Generando tareas del mes para todos los tenants...")
+    db = SessionLocal()
+    try:
+        hoy = datetime.now(timezone.utc)
+        tenants = db.query(Tenant).filter(Tenant.activo.is_(True)).all()
+        total_creadas = 0
+        for tenant in tenants:
+            resultado = generar_tareas_mes(db, tenant.id, hoy.year, hoy.month)
+            total_creadas += resultado["tareas_creadas"]
+        logger.info(f"Tareas del mes: {total_creadas} nueva(s) en {len(tenants)} tenant(s).")
+    except Exception:
+        logger.exception("Fallo la generacion automatica de tareas del mes")
+    finally:
+        db.close()
+
+
 if __name__ == "__main__":
     scheduler = BlockingScheduler(timezone="UTC")
     scheduler.add_job(
@@ -155,6 +186,11 @@ if __name__ == "__main__":
         CronTrigger(hour=4, minute=30),
         id="limpieza_diagnosticos",
     )
+    scheduler.add_job(
+        job_generar_tareas_mes,
+        CronTrigger(hour=5, minute=15),
+        id="generar_tareas_mes",
+    )
     logger.info(
         "Scheduler arrancado. Chequeos diarios a las "
         f"{CHEQUEO1_HORA_UTC:02d}:{CHEQUEO1_MINUTO_UTC:02d} UTC (11:00 Peru) y "
@@ -163,8 +199,9 @@ if __name__ == "__main__":
         f"Chequeo canario cada {CANARIO_INTERVALO_MIN} minutos. "
         "Verificacion del cronograma SUNAT a las 05:00 UTC. "
         "Limpieza de datos de diagnostico a las 04:30 UTC. "
+        "Generacion de tareas del mes (todos los tenants) a las 05:15 UTC. "
         "(para probar sin esperar, usa los endpoints /admin/chequeo-nocturno, "
         "/admin/enviar-resumenes, /admin/canario/ejecutar, /admin/limpieza-diagnosticos "
-        "y POST /cronograma/sincronizar)"
+        "y POST /cronograma/sincronizar; para tareas, POST /tareas/generar)"
     )
     scheduler.start()

@@ -61,11 +61,17 @@ def test_cts_genera_tareas_solo_en_mayo_y_noviembre(client):
     resp_noviembre = client.post("/tareas/generar?anio=2026&mes=11", headers=headers)
     assert resp_noviembre.json()["tareas_creadas"] == 1
 
-    tareas = client.get(f"/tareas?empresa_id={empresa_id}", headers=headers).json()
-    assert len(tareas) == 2
-    fechas = sorted(t["fecha_vencimiento"][:10] for t in tareas)
-    assert fechas == ["2026-05-15", "2026-11-15"]
-    assert all(t["tipo"] == "cts" for t in tareas)
+    # Filtrado por esos dos periodos puntuales (no por toda la empresa) para
+    # no depender de que mes es "hoy" quel corre el test -- la obligacion ya
+    # se autogenera sola para el mes actual al crearse (ver mas abajo), asi
+    # que si el test corriera justo en mayo o noviembre reales, la empresa
+    # tendria una tarea de mas fuera de estos dos periodos.
+    tareas_mayo = client.get(f"/tareas?empresa_id={empresa_id}&periodo=2026-05", headers=headers).json()
+    tareas_noviembre = client.get(f"/tareas?empresa_id={empresa_id}&periodo=2026-11", headers=headers).json()
+    assert len(tareas_mayo) == 1 and len(tareas_noviembre) == 1
+    assert tareas_mayo[0]["fecha_vencimiento"].startswith("2026-05-15")
+    assert tareas_noviembre[0]["fecha_vencimiento"].startswith("2026-11-15")
+    assert tareas_mayo[0]["tipo"] == "cts" and tareas_noviembre[0]["tipo"] == "cts"
 
 
 def test_itan_crea_recordatorio_anual_en_abril_por_defecto(client):
@@ -93,7 +99,7 @@ def test_itan_crea_recordatorio_anual_en_abril_por_defecto(client):
     resp_abril = client.post("/tareas/generar?anio=2026&mes=4", headers=headers)
     assert resp_abril.json()["tareas_creadas"] == 1
 
-    tareas = client.get(f"/tareas?empresa_id={empresa_id}", headers=headers).json()
+    tareas = client.get(f"/tareas?empresa_id={empresa_id}&periodo=2026-04", headers=headers).json()
     assert len(tareas) == 1
     assert tareas[0]["fecha_vencimiento"].startswith("2026-04-30")
 
@@ -135,9 +141,96 @@ def test_meses_activos_filtra_cronograma_sunat_para_itan_en_cuotas(client, db_se
     resp_abril = client.post("/tareas/generar?anio=2026&mes=4", headers=headers)
     assert resp_abril.json()["tareas_creadas"] == 1
 
-    tareas = client.get(f"/tareas?empresa_id={empresa_id}", headers=headers).json()
+    tareas = client.get(f"/tareas?empresa_id={empresa_id}&periodo=2026-04", headers=headers).json()
     assert len(tareas) == 1
     assert tareas[0]["tipo"] == "itan"
+
+
+def test_crear_obligacion_genera_tarea_del_mes_actual_sin_boton_manual(client):
+    """Bug reportado: crear una obligacion dejaba la tarea del mes actual
+    invisible en Tareas/Calendario hasta que alguien se acordara de apretar
+    "Generar tareas del mes" aparte -- ahora se dispara sola al crearla."""
+    headers = _registrar(client)
+    empresa_id = client.post(
+        "/empresas",
+        json={
+            "ruc": "20777777778", "razon_social": "Empresa Auto", "usuario_sol": "x", "clave_sol": "x",
+            "obligacion_igv_renta": False,
+        },
+        headers=headers,
+    ).json()["id"]
+
+    resp = client.post(
+        f"/empresas/{empresa_id}/obligaciones",
+        json={"tipo": "otro", "nombre": "Recordatorio mensual", "regla_vencimiento": "dia_fijo_mes", "dia_fijo": 10},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+
+    hoy = datetime.now(timezone.utc)
+    periodo_actual = f"{hoy.year:04d}-{hoy.month:02d}"
+    # Sin llamar a /tareas/generar -- la tarea del mes actual ya debe existir.
+    tareas = client.get(f"/tareas?empresa_id={empresa_id}&periodo={periodo_actual}", headers=headers).json()
+    assert len(tareas) == 1
+    assert tareas[0]["tipo"] == "otro"
+
+
+def test_crear_empresa_con_obligacion_por_defecto_genera_tarea_sin_boton_manual(client, db_session):
+    """Mismo bug, pero por el camino de _crear_obligaciones_por_defecto
+    (alta manual de empresa) -- IGV-Renta debe generar su tarea del mes
+    actual de una, sin que el usuario tenga que ir a Tareas a generarla."""
+    headers = _registrar(client)
+    hoy = datetime.now(timezone.utc)
+    periodo_actual = f"{hoy.year:04d}-{hoy.month:02d}"
+
+    # RUC termina en 5 -> grupo "4_5" (ver cronograma_sunat.grupo_para_empresa)
+    db_session.add(CronogramaVencimiento(
+        periodo_tributario=periodo_actual, grupo="4_5",
+        fecha_vencimiento=hoy,
+    ))
+    db_session.commit()
+
+    empresa_id = client.post(
+        "/empresas",
+        json={"ruc": "20999999995", "razon_social": "Empresa Auto3", "usuario_sol": "x", "clave_sol": "x"},
+        headers=headers,
+    ).json()["id"]
+
+    tareas = client.get(f"/tareas?empresa_id={empresa_id}&periodo={periodo_actual}", headers=headers).json()
+    assert len(tareas) == 1
+    assert tareas[0]["tipo"] == "igv_renta"
+
+
+def test_activar_obligacion_genera_tarea_del_mes_actual_sin_boton_manual(client):
+    headers = _registrar(client)
+    empresa_id = client.post(
+        "/empresas",
+        json={
+            "ruc": "20101010101", "razon_social": "Empresa Auto4", "usuario_sol": "x", "clave_sol": "x",
+            "obligacion_igv_renta": False,
+        },
+        headers=headers,
+    ).json()["id"]
+
+    obligacion_id = client.post(
+        f"/empresas/{empresa_id}/obligaciones",
+        json={
+            "tipo": "otro", "nombre": "Recordatorio inactivo", "regla_vencimiento": "dia_fijo_mes",
+            "dia_fijo": 20, "activa": False,
+        },
+        headers=headers,
+    ).json()["id"]
+
+    hoy = datetime.now(timezone.utc)
+    periodo_actual = f"{hoy.year:04d}-{hoy.month:02d}"
+    tareas_antes = client.get(f"/tareas?empresa_id={empresa_id}&periodo={periodo_actual}", headers=headers).json()
+    assert tareas_antes == []
+
+    resp = client.patch(f"/obligaciones/{obligacion_id}", json={"activa": True}, headers=headers)
+    assert resp.status_code == 200, resp.text
+
+    tareas_despues = client.get(f"/tareas?empresa_id={empresa_id}&periodo={periodo_actual}", headers=headers).json()
+    assert len(tareas_despues) == 1
 
 
 def test_importar_excel_con_columnas_cts_itan(client):
