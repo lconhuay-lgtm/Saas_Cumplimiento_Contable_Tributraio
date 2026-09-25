@@ -40,6 +40,25 @@ const COLOR_GRUPO = {
 // oficial del cronograma SUNAT de un vistazo.
 const COLOR_TAREA = "bg-amber-100 text-amber-700";
 
+// Cronograma SIRE (Atraso de Registros Electronicos, Fase 4) -- mismo
+// agrupamiento por RUC que el cronograma mensual, pero es una obligacion
+// DISTINTA (fecha distinta) -- color propio (fuera de la paleta de
+// COLOR_GRUPO) para que no se confunda con el cronograma mensual del
+// mismo grupo de RUC.
+const COLOR_SIRE = "bg-cyan-100 text-cyan-700";
+
+function colorDeItem(v) {
+  if (v.tipoItem === "tarea") return COLOR_TAREA;
+  if (v.esSire) return COLOR_SIRE;
+  return COLOR_GRUPO[v.grupo] || "bg-slate-100 text-slate-600";
+}
+
+function etiquetaDeItem(v) {
+  if (v.tipoItem === "tarea") return "Tarea";
+  const nombreGrupo = NOMBRES_GRUPO[v.grupo] || v.grupo;
+  return v.esSire ? `SIRE -- ${nombreGrupo}` : nombreGrupo;
+}
+
 // Cuantos chips de empresa mostrar dentro de la celda del dia antes de
 // resumir el resto en "+N mas" -- mas de esto y la grilla se vuelve
 // ilegible en pantallas chicas.
@@ -83,8 +102,12 @@ export default function CronogramaPage() {
       const inicioMes = new Date(Date.UTC(anio, mes - 1, 1)).toISOString();
       const finMes = new Date(Date.UTC(mes === 12 ? anio + 1 : anio, mes === 12 ? 0 : mes, 1)).toISOString();
 
-      const [dataCronograma, dataTareas] = await Promise.all([
+      const [dataCronograma, dataSire, dataTareas] = await Promise.all([
         api.obtenerAgendaMes(anio, mes),
+        // Cronograma SIRE (Fase 4, Atraso de Registros Electronicos) --
+        // si todavia no se sincronizo ningun anio, sigue mostrando el
+        // resto del calendario igual (no es critico).
+        api.obtenerAgendaMes(anio, mes, "sire").catch(() => ({ vencimientos: [] })),
         // Tareas sueltas con fecha propia (p.ej. creadas desde una
         // notificacion del buzon) -- nutren el calendario ademas del
         // cronograma oficial. Si falla, el calendario sigue mostrando el
@@ -92,7 +115,7 @@ export default function CronogramaPage() {
         api.listarTareas({ fechaDesde: inicioMes, fechaHasta: finMes }).catch(() => []),
       ]);
 
-      const itemsCronogramaCrudos = dataCronograma.vencimientos.map((v) => ({
+      const itemsMensualCrudos = dataCronograma.vencimientos.map((v) => ({
         tipoItem: "cronograma",
         key: `c-${v.empresa_id}-${v.periodo_tributario}`,
         fecha_vencimiento: v.fecha_vencimiento,
@@ -102,6 +125,18 @@ export default function CronogramaPage() {
         periodo_tributario: v.periodo_tributario,
         grupo: v.grupo,
       }));
+      const itemsSireCrudos = dataSire.vencimientos.map((v) => ({
+        tipoItem: "cronograma",
+        esSire: true,
+        key: `cs-${v.empresa_id}-${v.periodo_tributario}`,
+        fecha_vencimiento: v.fecha_vencimiento,
+        empresa_id: v.empresa_id,
+        empresa_ruc: v.empresa_ruc,
+        empresa_razon_social: v.empresa_razon_social,
+        periodo_tributario: v.periodo_tributario,
+        grupo: v.grupo,
+      }));
+      const itemsCronogramaCrudos = [...itemsMensualCrudos, ...itemsSireCrudos];
       const itemsTareas = dataTareas
         .filter((t) => t.fecha_vencimiento)
         .map((t) => ({
@@ -140,10 +175,19 @@ export default function CronogramaPage() {
   async function sincronizar() {
     setSincronizando(true);
     try {
-      const resultado = await api.sincronizarCronograma(anio);
-      alert(
-        `Cronograma ${resultado.anio} sincronizado: ${resultado.periodos_procesados} periodo(s), ${resultado.filas_guardadas} fila(s).`
-      );
+      // Un solo boton para los dos cronogramas -- para el usuario es "el
+      // cronograma de SUNAT", no le interesa que sean dos tablas por
+      // dentro. Si el SIRE falla (p.ej. SUNAT todavia no publico el
+      // ejercicio) no debe tumbar la sincronizacion del mensual.
+      const [resultado, resultadoSire] = await Promise.all([
+        api.sincronizarCronograma(anio),
+        api.sincronizarCronogramaSire(anio).catch((err) => ({ error: err.message })),
+      ]);
+      let mensaje = `Cronograma mensual ${resultado.anio}: ${resultado.periodos_procesados} periodo(s), ${resultado.filas_guardadas} fila(s).`;
+      mensaje += resultadoSire.error
+        ? `\nCronograma SIRE: no se pudo sincronizar (${resultadoSire.error}).`
+        : `\nCronograma SIRE ${resultadoSire.anio}: ${resultadoSire.periodos_procesados} periodo(s), ${resultadoSire.filas_guardadas} fila(s).`;
+      alert(mensaje);
       await cargar();
     } catch (err) {
       alert(err.message);
@@ -206,7 +250,7 @@ export default function CronogramaPage() {
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight text-ink">Cronograma</h1>
             <p className="mt-1 text-sm text-slate-600">
-              Vencimientos de declaracion mensual (IGV-Renta/PLAME) segun el cronograma oficial de SUNAT
+              Vencimientos de declaracion mensual (IGV-Renta/PLAME) y de atraso de Registros Electronicos (SIRE, en cyan) segun el cronograma oficial de SUNAT
             </p>
           </div>
           <button
@@ -309,9 +353,7 @@ export default function CronogramaPage() {
                             <span
                               key={v.key}
                               title={v.tipoItem === "tarea" ? v.titulo : v.empresa_razon_social}
-                              className={`truncate rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                                v.tipoItem === "tarea" ? COLOR_TAREA : COLOR_GRUPO[v.grupo] || "bg-slate-100 text-slate-600"
-                              }`}
+                              className={`truncate rounded px-1.5 py-0.5 text-[10px] font-semibold ${colorDeItem(v)}`}
                             >
                               {v.empresa_razon_social}
                             </span>
@@ -371,12 +413,8 @@ export default function CronogramaPage() {
                       </div>
                     </div>
                   </div>
-                  <span
-                    className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                      v.tipoItem === "tarea" ? COLOR_TAREA : COLOR_GRUPO[v.grupo] || "bg-slate-100 text-slate-600"
-                    }`}
-                  >
-                    {v.tipoItem === "tarea" ? "Tarea" : NOMBRES_GRUPO[v.grupo] || v.grupo}
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${colorDeItem(v)}`}>
+                    {etiquetaDeItem(v)}
                   </span>
                 </Link>
               ))}

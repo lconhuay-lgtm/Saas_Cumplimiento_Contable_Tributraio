@@ -54,6 +54,7 @@ def _sincronizar_cronograma_al_arrancar():
     # el log -- nunca debe impedir que el backend arranque.
     from app.database import SessionLocal
     from app.cronograma_sunat import asegurar_cronograma_vigente
+    from app.cronograma_sire import asegurar_cronograma_sire_vigente
 
     db = SessionLocal()
     try:
@@ -62,6 +63,12 @@ def _sincronizar_cronograma_al_arrancar():
             logging.getLogger("app.main").info(f"Cronograma SUNAT sincronizado al arrancar: {resultado}")
     except Exception:
         logging.getLogger("app.main").exception("No se pudo asegurar el cronograma SUNAT al arrancar (no es critico)")
+    try:
+        resultado_sire = asegurar_cronograma_sire_vigente(db)
+        if resultado_sire["anios_sincronizados"]:
+            logging.getLogger("app.main").info(f"Cronograma SIRE sincronizado al arrancar: {resultado_sire}")
+    except Exception:
+        logging.getLogger("app.main").exception("No se pudo asegurar el cronograma SIRE al arrancar (no es critico)")
     finally:
         db.close()
 

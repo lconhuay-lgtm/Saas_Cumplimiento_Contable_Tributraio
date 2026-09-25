@@ -50,6 +50,11 @@ class EmpresaCreate(BaseModel):
     # empresas las tienen, asi que ambas vienen sin marcar por defecto.
     obligacion_cts: bool = False
     obligacion_itan: bool = False
+    # Fase 4: cronograma de Atraso de Registros Electronicos (SIRE, ver
+    # app.cronograma_sire) -- no todas las empresas estan obligadas
+    # todavia (SUNAT lo viene incorporando por tandas), asi que viene sin
+    # marcar por defecto igual que PLAME/SBS/CTS/ITAN.
+    obligacion_sire: bool = False
 
 
 class UltimoMensajeResumen(BaseModel):
@@ -356,11 +361,15 @@ _PATRON_MESES_ACTIVOS = r"^(1[0-2]|[1-9])(,(1[0-2]|[1-9]))*$"
 _PATRON_PRIORIDAD = r"^(baja|media|alta|urgente)$"
 
 
+_PATRON_TIPO_OBLIGACION = r"^(igv_renta|planilla|afp|sbs|cts|itan|sire|otro)$"
+_PATRON_REGLA_VENCIMIENTO = r"^(cronograma_sunat|cronograma_sire|dia_fijo_mes|dia_fijo_anual|manual)$"
+
+
 class EmpresaObligacionCreate(BaseModel):
-    tipo: str = Field(..., pattern=r"^(igv_renta|planilla|afp|sbs|cts|itan|otro)$")
+    tipo: str = Field(..., pattern=_PATRON_TIPO_OBLIGACION)
     nombre: str = Field(..., min_length=1, max_length=200)
     activa: bool = True
-    regla_vencimiento: str = Field("manual", pattern=r"^(cronograma_sunat|dia_fijo_mes|dia_fijo_anual|manual)$")
+    regla_vencimiento: str = Field("manual", pattern=_PATRON_REGLA_VENCIMIENTO)
     dia_fijo: int | None = Field(None, ge=1, le=31)
     mes_fijo: int | None = Field(None, ge=1, le=12)
     meses_activos: str | None = Field(None, pattern=_PATRON_MESES_ACTIVOS)
@@ -370,7 +379,7 @@ class EmpresaObligacionCreate(BaseModel):
 class EmpresaObligacionUpdate(BaseModel):
     nombre: str | None = Field(None, min_length=1, max_length=200)
     activa: bool | None = None
-    regla_vencimiento: str | None = Field(None, pattern=r"^(cronograma_sunat|dia_fijo_mes|dia_fijo_anual|manual)$")
+    regla_vencimiento: str | None = Field(None, pattern=_PATRON_REGLA_VENCIMIENTO)
     dia_fijo: int | None = Field(None, ge=1, le=31)
     mes_fijo: int | None = Field(None, ge=1, le=12)
     meses_activos: str | None = Field(None, pattern=_PATRON_MESES_ACTIVOS)

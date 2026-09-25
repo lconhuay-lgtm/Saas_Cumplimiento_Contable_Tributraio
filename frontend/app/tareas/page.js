@@ -24,6 +24,7 @@ const ETIQUETAS_TIPO = {
   sbs: "Reporte SBS",
   cts: "CTS",
   itan: "ITAN",
+  sire: "SIRE",
   otro: "Otro",
 };
 
@@ -34,6 +35,7 @@ const COLOR_TIPO = {
   sbs: "bg-amber-50 text-amber-700",
   cts: "bg-sky-50 text-sky-700",
   itan: "bg-rose-50 text-rose-700",
+  sire: "bg-cyan-50 text-cyan-700",
   otro: "bg-slate-100 text-slate-600",
 };
 

@@ -49,6 +49,7 @@ ETIQUETAS_TIPO_AVANCE = {
     "sbs": "Reporte SBS",
     "cts": "CTS",
     "itan": "ITAN",
+    "sire": "SIRE",
     "otro": "Otro",
 }
 

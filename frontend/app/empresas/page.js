@@ -1237,6 +1237,7 @@ function FormularioEmpresa({ onCreada }) {
   const [obligacionSbs, setObligacionSbs] = useState(false);
   const [obligacionCts, setObligacionCts] = useState(false);
   const [obligacionItan, setObligacionItan] = useState(false);
+  const [obligacionSire, setObligacionSire] = useState(false);
   const [error, setError] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [verificando, setVerificando] = useState(false);
@@ -1262,6 +1263,7 @@ function FormularioEmpresa({ onCreada }) {
         obligacion_sbs: obligacionSbs,
         obligacion_cts: obligacionCts,
         obligacion_itan: obligacionItan,
+        obligacion_sire: obligacionSire,
       });
       setGuardando(false);
       await verificarCredencialesRecienCreadas(empresaCreada);
@@ -1456,6 +1458,15 @@ function FormularioEmpresa({ onCreada }) {
             />
             ITAN (recordatorio anual, Abril)
           </label>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={obligacionSire}
+              onChange={(e) => setObligacionSire(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300"
+            />
+            SIRE (Registro de Compras/Ventas Electronico)
+          </label>
         </div>
         <p className="mt-1.5 text-xs text-slate-400">
           Las que marques generan tareas automaticamente cada mes (o en los meses que corresponda) en el modulo
@@ -1510,7 +1521,7 @@ function FormularioImportar({ onImportado }) {
         archivo sin duplicar nada.
       </p>
       <p className="mt-2 text-xs text-slate-400">
-        Opcional: agrega columnas "IGV-Renta", "PLAME", "SBS", "CTS" y/o "ITAN" con Si/No para elegir sus
+        Opcional: agrega columnas "IGV-Renta", "PLAME", "SBS", "CTS", "ITAN" y/o "SIRE" con Si/No para elegir sus
         obligaciones desde el Excel -- si no las incluyes, cada empresa se crea con IGV-Renta activado (el resto
         sin marcar), igual que en el formulario manual.
       </p>

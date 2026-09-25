@@ -43,6 +43,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.scheduler_job import encolar_chequeo_nocturno, enviar_resumenes_diarios, ejecutar_chequeo_canario
 from app.database import SessionLocal
 from app.cronograma_sunat import asegurar_cronograma_vigente
+from app.cronograma_sire import asegurar_cronograma_sire_vigente
 from app.almacenamiento import limpiar_datos_antiguos
 from app.tareas import generar_tareas_mes
 from app.models import Tenant
@@ -117,6 +118,11 @@ def job_cronograma():
         logger.info(f"Cronograma SUNAT: {resultado}")
     except Exception:
         logger.exception("Fallo la verificacion del cronograma SUNAT")
+    try:
+        resultado_sire = asegurar_cronograma_sire_vigente(db)
+        logger.info(f"Cronograma SIRE: {resultado_sire}")
+    except Exception:
+        logger.exception("Fallo la verificacion del cronograma SIRE")
     finally:
         db.close()
 

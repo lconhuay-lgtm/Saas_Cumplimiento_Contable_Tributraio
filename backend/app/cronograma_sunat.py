@@ -41,7 +41,7 @@ URL_CRONOGRAMA_TEMPLATE = "https://www.sunat.gob.pe/orientacion/cronogramas/{ani
 # cualquier detalle de maquetado HTML de la pagina.
 GRUPOS_COLUMNAS = ["0", "1", "2_3", "4_5", "6_7", "8_9", "buenos_contribuyentes"]
 
-_MESES_ES = {
+MESES_ES = {
     "ene": 1, "feb": 2, "mar": 3, "abr": 4, "may": 5, "jun": 6,
     "jul": 7, "ago": 8, "set": 9, "sep": 9, "oct": 10, "nov": 11, "dic": 12,
 }
@@ -53,7 +53,7 @@ _RE_CELDA_FECHA = re.compile(r"(\d{1,2})\s*[.\-]?\s*([A-Za-zÁÉÍÓÚÑáéíó
 # "Ene-2026" -> grupo 1 = mes, grupo 2 = anio.
 _RE_PERIODO = re.compile(r"([A-Za-zÁÉÍÓÚÑáéíóúñ]{3,})[.\-]?\s*[-\s]\s*(\d{4})", re.UNICODE)
 
-_MESES_PATRON = "Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Set|Sep|Oct|Nov|Dic"
+MESES_PATRON = "Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Set|Sep|Oct|Nov|Dic"
 
 # Token combinado para el escaneo secuencial del texto plano de la pagina
 # (ver parsear_cronograma_html) -- "fecha" va primero en la alternancia a
@@ -62,8 +62,8 @@ _MESES_PATRON = "Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Set|Sep|Oct|Nov|Dic"
 # poner "fecha" primero evita que "Ene 2027" (parte de una celda con anio
 # explicito) se confunda con un periodo nuevo.
 _RE_TOKEN = re.compile(
-    rf"(?P<fecha>\d{{1,2}}\s*[.\-]?\s*(?:{_MESES_PATRON})\.?\s*(?:\d{{4}})?)"
-    rf"|(?P<periodo>(?:{_MESES_PATRON})[.\-]?\s*-?\s*\d{{4}})",
+    rf"(?P<fecha>\d{{1,2}}\s*[.\-]?\s*(?:{MESES_PATRON})\.?\s*(?:\d{{4}})?)"
+    rf"|(?P<periodo>(?:{MESES_PATRON})[.\-]?\s*-?\s*\d{{4}})",
     re.UNICODE,
 )
 
@@ -81,7 +81,7 @@ def _parsear_fecha_celda(texto: str, anio_periodo: int) -> date | None:
     if not m:
         return None
     dia_str, mes_str, anio_str = m.groups()
-    mes_num = _MESES_ES.get(mes_str.strip().lower()[:3])
+    mes_num = MESES_ES.get(mes_str.strip().lower()[:3])
     if not mes_num:
         return None
     anio = int(anio_str) if anio_str else anio_periodo
@@ -91,14 +91,14 @@ def _parsear_fecha_celda(texto: str, anio_periodo: int) -> date | None:
         return None
 
 
-def _parsear_periodo(texto: str) -> tuple[str, int] | None:
+def parsear_periodo(texto: str) -> tuple[str, int] | None:
     """'Ene-2026' -> ('2026-01', 2026). None si el texto no calza (p.ej. es un encabezado)."""
     texto = " ".join(texto.split())
     m = _RE_PERIODO.search(texto)
     if not m:
         return None
     mes_str, anio_str = m.groups()
-    mes_num = _MESES_ES.get(mes_str.strip().lower()[:3])
+    mes_num = MESES_ES.get(mes_str.strip().lower()[:3])
     if not mes_num:
         return None
     anio = int(anio_str)
@@ -164,7 +164,7 @@ def parsear_cronograma_html(html: str, anio_esperado: int) -> list[dict]:
                     f"Cronograma {anio_esperado}: el periodo {periodo_actual} solo trajo "
                     f"{fechas_del_periodo_actual}/{len(GRUPOS_COLUMNAS)} fechas antes del siguiente periodo."
                 )
-            periodo_info = _parsear_periodo(m.group("periodo"))
+            periodo_info = parsear_periodo(m.group("periodo"))
             if not periodo_info:
                 continue
             periodo_actual, anio_periodo_actual = periodo_info
@@ -194,7 +194,10 @@ def parsear_cronograma_html(html: str, anio_esperado: int) -> list[dict]:
 
 
 def sincronizar_cronograma(db: Session, anio: int) -> dict:
-    """Descarga, parsea y guarda (upsert) el cronograma de un ejercicio."""
+    """Descarga, parsea y guarda (upsert) el cronograma de Obligaciones
+    Mensuales (tipo="mensual") de un ejercicio -- ver cronograma_sire.py
+    para el cronograma de Atraso de Registros Electronicos, que comparte
+    esta misma tabla pero con tipo="sire"."""
     html = descargar_html_cronograma(anio)
     filas = parsear_cronograma_html(html, anio)
 
@@ -205,6 +208,7 @@ def sincronizar_cronograma(db: Session, anio: int) -> dict:
             .filter(
                 CronogramaVencimiento.periodo_tributario == fila["periodo_tributario"],
                 CronogramaVencimiento.grupo == fila["grupo"],
+                CronogramaVencimiento.tipo == "mensual",
             )
             .first()
         )
@@ -215,6 +219,7 @@ def sincronizar_cronograma(db: Session, anio: int) -> dict:
             db.add(CronogramaVencimiento(
                 periodo_tributario=fila["periodo_tributario"],
                 grupo=fila["grupo"],
+                tipo="mensual",
                 fecha_vencimiento=fecha_dt,
             ))
         guardadas += 1
@@ -268,7 +273,10 @@ def asegurar_cronograma_vigente(db: Session) -> dict:
     for anio in anios_a_revisar:
         periodos_existentes = (
             db.query(CronogramaVencimiento.periodo_tributario)
-            .filter(CronogramaVencimiento.periodo_tributario.like(f"{anio}-%"))
+            .filter(
+                CronogramaVencimiento.periodo_tributario.like(f"{anio}-%"),
+                CronogramaVencimiento.tipo == "mensual",
+            )
             .distinct()
             .count()
         )
@@ -349,13 +357,17 @@ def _empresas_para_cronograma(db: Session, tenant_id: str, usuario=None) -> list
 empresas_para_cronograma = _empresas_para_cronograma
 
 
-def proximos_vencimientos_por_tenant(db: Session, tenant_id: str, dias_adelante: int = 15, usuario=None) -> list[dict]:
+def proximos_vencimientos_por_tenant(
+    db: Session, tenant_id: str, dias_adelante: int = 15, usuario=None, tipo: str = "mensual"
+) -> list[dict]:
     """
     Para cada empresa activa del tenant (sin baja de oficio), busca su
     PROXIMO vencimiento (el primero con fecha >= hoy) segun el grupo que le
     corresponde -- pensado para el aviso del Dashboard. Solo devuelve los
     que caen dentro de `dias_adelante` dias, para no saturar el aviso con
     vencimientos lejanos. `usuario` opcional -- ver _empresas_para_cronograma.
+    `tipo` -- "mensual" (default) o "sire" (ver cronograma_sire.py), mismo
+    parametro que agenda_mes_por_tenant.
     """
     empresas = _empresas_para_cronograma(db, tenant_id, usuario)
     if not empresas:
@@ -371,6 +383,7 @@ def proximos_vencimientos_por_tenant(db: Session, tenant_id: str, dias_adelante:
             db.query(CronogramaVencimiento)
             .filter(
                 CronogramaVencimiento.grupo == grupo,
+                CronogramaVencimiento.tipo == tipo,
                 CronogramaVencimiento.fecha_vencimiento >= hoy,
             )
             .order_by(CronogramaVencimiento.fecha_vencimiento.asc())
@@ -395,12 +408,17 @@ def proximos_vencimientos_por_tenant(db: Session, tenant_id: str, dias_adelante:
     return resultado
 
 
-def agenda_mes_por_tenant(db: Session, tenant_id: str, anio: int, mes: int, usuario=None) -> list[dict]:
+def agenda_mes_por_tenant(
+    db: Session, tenant_id: str, anio: int, mes: int, usuario=None, tipo: str = "mensual"
+) -> list[dict]:
     """
     Todas las empresas activas del tenant (sin baja de oficio) cuyo
     vencimiento (segun su grupo) cae en el mes/anio pedido -- para la
     vista de calendario del modulo Cronograma. `usuario` opcional -- ver
-    _empresas_para_cronograma.
+    _empresas_para_cronograma. `tipo` -- "mensual" (default, Obligaciones
+    Mensuales) o "sire" (Atraso de Registros Electronicos, ver
+    cronograma_sire.py) -- misma tabla CronogramaVencimiento, filas
+    separadas por tipo.
     """
     inicio = datetime(anio, mes, 1, tzinfo=timezone.utc)
     if mes == 12:
@@ -417,6 +435,7 @@ def agenda_mes_por_tenant(db: Session, tenant_id: str, anio: int, mes: int, usua
         db.query(CronogramaVencimiento)
         .filter(
             CronogramaVencimiento.grupo.in_(grupos_usados),
+            CronogramaVencimiento.tipo == tipo,
             CronogramaVencimiento.fecha_vencimiento >= inicio,
             CronogramaVencimiento.fecha_vencimiento < fin,
         )

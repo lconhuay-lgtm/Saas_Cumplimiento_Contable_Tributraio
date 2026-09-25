@@ -24,6 +24,7 @@ ETIQUETAS_TIPO = {
     "sbs": "Reporte SBS",
     "cts": "CTS",
     "itan": "ITAN",
+    "sire": "SIRE",
     "otro": "Otro",
 }
 
@@ -49,7 +50,27 @@ def _fecha_cronograma_sunat(db: Session, empresa: Empresa, anio: int, mes: int) 
     grupo = grupo_para_empresa(empresa.ruc, empresa.es_buen_contribuyente)
     fila = (
         db.query(CronogramaVencimiento)
-        .filter(CronogramaVencimiento.periodo_tributario == periodo, CronogramaVencimiento.grupo == grupo)
+        .filter(
+            CronogramaVencimiento.periodo_tributario == periodo,
+            CronogramaVencimiento.grupo == grupo,
+            CronogramaVencimiento.tipo == "mensual",
+        )
+        .first()
+    )
+    return _con_utc(fila.fecha_vencimiento) if fila else None
+
+
+def _fecha_cronograma_sire(db: Session, empresa: Empresa, anio: int, mes: int) -> datetime | None:
+    """Misma logica que _fecha_cronograma_sunat, contra el cronograma de Atraso de Registros Electronicos (ver app.cronograma_sire)."""
+    periodo = f"{anio:04d}-{mes:02d}"
+    grupo = grupo_para_empresa(empresa.ruc, empresa.es_buen_contribuyente)
+    fila = (
+        db.query(CronogramaVencimiento)
+        .filter(
+            CronogramaVencimiento.periodo_tributario == periodo,
+            CronogramaVencimiento.grupo == grupo,
+            CronogramaVencimiento.tipo == "sire",
+        )
         .first()
     )
     return _con_utc(fila.fecha_vencimiento) if fila else None
@@ -124,6 +145,9 @@ def generar_tareas_mes(db: Session, tenant_id: str, anio: int, mes: int) -> dict
             proceso = "manual"
             if ob.regla_vencimiento == "cronograma_sunat":
                 fecha_vencimiento = _fecha_cronograma_sunat(db, empresa, anio, mes)
+                proceso = "automatica"
+            elif ob.regla_vencimiento == "cronograma_sire":
+                fecha_vencimiento = _fecha_cronograma_sire(db, empresa, anio, mes)
                 proceso = "automatica"
             elif ob.regla_vencimiento == "dia_fijo_mes" and ob.dia_fijo:
                 fecha_vencimiento = _fecha_dia_fijo(anio, mes, ob.dia_fijo)

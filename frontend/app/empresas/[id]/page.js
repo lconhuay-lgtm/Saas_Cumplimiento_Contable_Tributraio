@@ -685,11 +685,13 @@ const ETIQUETAS_TIPO_OBLIGACION = {
   sbs: "Reporte SBS",
   cts: "CTS",
   itan: "ITAN",
+  sire: "SIRE",
   otro: "Otro",
 };
 
 const ETIQUETAS_REGLA = {
   cronograma_sunat: "Sigue el cronograma SUNAT (misma fecha que IGV-Renta/PLAME)",
+  cronograma_sire: "Sigue el cronograma SIRE (Atraso de Registros Electronicos)",
   dia_fijo_mes: "Vence un dia fijo cada mes",
   dia_fijo_anual: "Vence un dia y mes fijo cada anio",
   manual: "Sin regla automatica -- se carga la fecha a mano cada vez",
@@ -923,6 +925,7 @@ function FormularioObligacion({ empresaId, onCreada }) {
             <option value="sbs">Reporte SBS</option>
             <option value="cts">CTS</option>
             <option value="itan">ITAN</option>
+            <option value="sire">SIRE</option>
             <option value="otro">Otro</option>
           </select>
         </div>
@@ -943,6 +946,7 @@ function FormularioObligacion({ empresaId, onCreada }) {
           <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Regla de vencimiento</label>
           <select value={reglaVencimiento} onChange={(e) => setReglaVencimiento(e.target.value)} className="campo-input">
             <option value="cronograma_sunat">Cronograma SUNAT (IGV-Renta/Planilla/AFP via PLAME)</option>
+            <option value="cronograma_sire">Cronograma SIRE (Atraso de Registros Electronicos)</option>
             <option value="dia_fijo_mes">Dia fijo del mes</option>
             <option value="dia_fijo_anual">Dia y mes fijo cada anio</option>
             <option value="manual">Manual (SBS, sin regla fija)</option>

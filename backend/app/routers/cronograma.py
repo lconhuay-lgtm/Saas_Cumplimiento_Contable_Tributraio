@@ -19,6 +19,7 @@ from app.schemas import (
     ProximoVencimientoItem,
 )
 from app import cronograma_sunat
+from app import cronograma_sire
 
 router = APIRouter(prefix="/cronograma", tags=["cronograma"])
 
@@ -47,17 +48,42 @@ def sincronizar(
     return CronogramaSincronizarResponse(**resultado)
 
 
+@router.post("/sincronizar-sire", response_model=CronogramaSincronizarResponse)
+def sincronizar_sire(
+    anio: int | None = None,
+    usuario: Usuario = Depends(get_usuario_actual),
+    db: Session = Depends(get_db),
+):
+    """Mismo boton "Sincronizar", version del cronograma de Atraso de Registros Electronicos (SIRE) -- ver app.cronograma_sire."""
+    anio_objetivo = anio or datetime.now(timezone.utc).year
+    try:
+        resultado = cronograma_sire.sincronizar_cronograma_sire(db, anio_objetivo)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"No se pudo sincronizar el cronograma SIRE {anio_objetivo}: {e}",
+        )
+    return CronogramaSincronizarResponse(**resultado)
+
+
 @router.get("/agenda", response_model=AgendaMesResponse)
 def agenda_mes(
     anio: int,
     mes: int,
+    tipo: str = "mensual",
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
-    """Vencimientos del mes/anio pedido, para las empresas activas del tenant -- vista de calendario."""
+    """
+    Vencimientos del mes/anio pedido, para las empresas activas del tenant
+    -- vista de calendario. `tipo`: "mensual" (default, IGV-Renta/PLAME) o
+    "sire" (Atraso de Registros Electronicos).
+    """
     if not (1 <= mes <= 12):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mes debe estar entre 1 y 12")
-    vencimientos = cronograma_sunat.agenda_mes_por_tenant(db, usuario.tenant_id, anio, mes, usuario)
+    if tipo not in ("mensual", "sire"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="tipo debe ser 'mensual' o 'sire'")
+    vencimientos = cronograma_sunat.agenda_mes_por_tenant(db, usuario.tenant_id, anio, mes, usuario, tipo=tipo)
     return AgendaMesResponse(
         anio=anio,
         mes=mes,
@@ -68,9 +94,12 @@ def agenda_mes(
 @router.get("/proximos", response_model=list[ProximoVencimientoItem])
 def proximos_vencimientos(
     dias_adelante: int = 15,
+    tipo: str = "mensual",
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
     """El proximo vencimiento de cada empresa activa del tenant, si cae dentro de `dias_adelante` dias -- usado por el aviso del Dashboard."""
-    resultado = cronograma_sunat.proximos_vencimientos_por_tenant(db, usuario.tenant_id, dias_adelante, usuario)
+    if tipo not in ("mensual", "sire"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="tipo debe ser 'mensual' o 'sire'")
+    resultado = cronograma_sunat.proximos_vencimientos_por_tenant(db, usuario.tenant_id, dias_adelante, usuario, tipo=tipo)
     return [ProximoVencimientoItem(**v) for v in resultado]

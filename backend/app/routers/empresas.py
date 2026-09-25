@@ -176,6 +176,7 @@ def crear_empresa(
         sbs=data.obligacion_sbs,
         cts=data.obligacion_cts,
         itan=data.obligacion_itan,
+        sire=data.obligacion_sire,
     )
     _encolar_consulta_automatica(empresa, usuario, db)
 
@@ -183,7 +184,8 @@ def crear_empresa(
 
 
 def _crear_obligaciones_por_defecto(
-    db: Session, empresa: Empresa, igv_renta: bool, plame: bool, sbs: bool, cts: bool = False, itan: bool = False
+    db: Session, empresa: Empresa, igv_renta: bool, plame: bool, sbs: bool,
+    cts: bool = False, itan: bool = False, sire: bool = False,
 ) -> None:
     """
     A pedido: en vez de que el usuario tenga que entrar a la empresa recien
@@ -213,6 +215,11 @@ def _crear_obligaciones_por_defecto(
     de al contado, puede editar esta obligacion despues desde el detalle
     de la empresa y cambiarla a regla "cronograma_sunat" con
     meses_activos="4,5,6,7,8,9,10,11,12".
+
+    SIRE (Fase 4): fecha maxima de atraso para el Registro de Compras y el
+    Registro de Ventas e Ingresos Electronicos, MISMA agrupacion por RUC
+    que el cronograma mensual pero fechas distintas (ver
+    app.cronograma_sire) -- se crea con regla "cronograma_sire".
 
     Nunca debe tumbar la creacion de la empresa -- si algo falla aca (muy
     improbable, son inserts simples) se loguea y se sigue, la empresa
@@ -248,6 +255,11 @@ def _crear_obligaciones_por_defecto(
             db.add(EmpresaObligacion(
                 empresa_id=empresa.id, tipo="itan", nombre="ITAN",
                 regla_vencimiento="dia_fijo_anual", dia_fijo=30, mes_fijo=4, activa=True,
+            ))
+        if sire:
+            db.add(EmpresaObligacion(
+                empresa_id=empresa.id, tipo="sire", nombre="SIRE -- Registro de Compras/Ventas",
+                regla_vencimiento="cronograma_sire", activa=True,
             ))
         db.commit()
     except Exception as e:
@@ -331,6 +343,8 @@ def _detectar_columnas(df: pd.DataFrame) -> dict:
             columnas["cts"] = col
         elif "itan" in cl and "itan" not in columnas:
             columnas["itan"] = col
+        elif "sire" in cl and "sire" not in columnas:
+            columnas["sire"] = col
     faltantes = [c for c in ("ruc", "usuario", "clave") if c not in columnas]
     if faltantes:
         raise ValueError(
@@ -436,6 +450,7 @@ async def importar_empresas(
                 sbs=_valor_obligacion_excel(fila, columnas, "sbs", default=False),
                 cts=_valor_obligacion_excel(fila, columnas, "cts", default=False),
                 itan=_valor_obligacion_excel(fila, columnas, "itan", default=False),
+                sire=_valor_obligacion_excel(fila, columnas, "sire", default=False),
             )
 
             # A pedido: igual que crear_empresa() de a una, pero espaciadas

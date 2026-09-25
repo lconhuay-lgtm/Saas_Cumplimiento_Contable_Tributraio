@@ -314,21 +314,29 @@ class CanarioCheck(Base):
 
 class CronogramaVencimiento(Base):
     """
-    Cronograma oficial de vencimientos mensuales de SUNAT (RS 281-2022,
+    Cronogramas oficiales de SUNAT por ultimo digito de RUC (RS 281-2022,
     vigente de forma permanente desde 2023 -- SUNAT solo republica la tabla
     cada ejercicio en una URL predecible, no cambia la regla). Una fila por
-    (periodo_tributario, grupo): el "grupo" es la columna de la tabla oficial
-    segun el ultimo digito del RUC -- "0", "1", "2_3", "4_5", "6_7", "8_9" --
-    o "buenos_contribuyentes" para la columna "BUENOS CONTRIBUYENTES y UESP".
-    Esta misma tabla cubre tanto la declaracion mensual de IGV-Renta
-    (PDT/F.621) como PLAME (F.601) -- no hay cronogramas separados.
-    Se llena via app.cronograma_sunat.sincronizar_cronograma(), disparado
-    automaticamente (ver asegurar_cronograma_vigente) y a mano desde
-    POST /cronograma/sincronizar.
+    (periodo_tributario, grupo, tipo): el "grupo" es la columna de la tabla
+    oficial segun el ultimo digito del RUC -- "0", "1", "2_3", "4_5", "6_7",
+    "8_9" -- o "buenos_contribuyentes" para la columna "BUENOS
+    CONTRIBUYENTES y UESP".
+
+    tipo:
+      - "mensual" (default): cronograma de Obligaciones Mensuales (Anexo I)
+        -- cubre tanto la declaracion de IGV-Renta (PDT/F.621) como PLAME
+        (F.601), no hay cronogramas separados para esas dos. Se llena via
+        app.cronograma_sunat.sincronizar_cronograma().
+      - "sire": cronograma de Atraso de los Registros Electronicos (Anexo
+        II) -- fecha maxima para registrar Compras y Ventas e Ingresos
+        Electronicos del periodo, SIEMPRE unas semanas despues que la
+        fecha "mensual" del mismo periodo+grupo (son dos obligaciones
+        distintas, dos filas distintas). Se llena via
+        app.cronograma_sire.sincronizar_cronograma_sire().
     """
     __tablename__ = "cronograma_vencimientos"
     __table_args__ = (
-        UniqueConstraint("periodo_tributario", "grupo", name="uq_cronograma_periodo_grupo"),
+        UniqueConstraint("periodo_tributario", "grupo", "tipo", name="uq_cronograma_periodo_grupo_tipo"),
     )
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
@@ -336,6 +344,7 @@ class CronogramaVencimiento(Base):
     # Ene-2026). NO es la fecha de vencimiento -- esa es fecha_vencimiento.
     periodo_tributario: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
     grupo: Mapped[str] = mapped_column(String(30), nullable=False)
+    tipo: Mapped[str] = mapped_column(String(20), default="mensual", nullable=False)
     fecha_vencimiento: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
 
@@ -358,6 +367,12 @@ class EmpresaObligacion(Base):
         ONP/EsSalud/renta 5ta en un solo envio -- e IGV-Renta porque ES ese
         mismo cronograma general) -- no hace falta guardar una fecha
         aparte, se reusa esa tabla.
+      - "cronograma_sire": mismo esquema que "cronograma_sunat" (por
+        ultimo digito de RUC) pero contra la tabla del cronograma de
+        Atraso de Registros Electronicos (CronogramaVencimiento.tipo=
+        "sire") -- fecha maxima para registrar Compras/Ventas e Ingresos
+        Electronicos, siempre distinta (mas tardia) que la fecha de
+        declaracion mensual del mismo periodo. Ver app.cronograma_sire.
       - "dia_fijo_mes": vence un dia fijo de cada mes (columna dia_fijo).
       - "dia_fijo_anual": vence un dia y mes fijo de cada anio (columnas
         dia_fijo + mes_fijo) -- para obligaciones que se repiten una vez
@@ -393,7 +408,7 @@ class EmpresaObligacion(Base):
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
     empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
-    # "igv_renta" | "planilla" | "afp" | "sbs" | "cts" | "itan" | "otro"
+    # "igv_renta" | "planilla" | "afp" | "sbs" | "cts" | "itan" | "sire" | "otro"
     tipo: Mapped[str] = mapped_column(String(30), nullable=False)
     nombre: Mapped[str] = mapped_column(String(200), nullable=False)
     activa: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

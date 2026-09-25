@@ -220,10 +220,16 @@ export const api = {
   sincronizarCronograma: (anio) =>
     apiFetch(`/cronograma/sincronizar${anio ? `?anio=${anio}` : ""}`, { method: "POST" }),
 
-  obtenerAgendaMes: (anio, mes) => apiFetch(`/cronograma/agenda?anio=${anio}&mes=${mes}`),
+  // Fase 4: mismo cronograma, version "Atraso de Registros Electronicos"
+  // (SIRE) -- ver backend/app/cronograma_sire.py.
+  sincronizarCronogramaSire: (anio) =>
+    apiFetch(`/cronograma/sincronizar-sire${anio ? `?anio=${anio}` : ""}`, { method: "POST" }),
 
-  obtenerProximosVencimientos: (diasAdelante = 15) =>
-    apiFetch(`/cronograma/proximos?dias_adelante=${diasAdelante}`),
+  obtenerAgendaMes: (anio, mes, tipo = "mensual") =>
+    apiFetch(`/cronograma/agenda?anio=${anio}&mes=${mes}&tipo=${tipo}`),
+
+  obtenerProximosVencimientos: (diasAdelante = 15, tipo = "mensual") =>
+    apiFetch(`/cronograma/proximos?dias_adelante=${diasAdelante}&tipo=${tipo}`),
 
   // Modulo de Tareas/Agenda: obligaciones configurables por empresa
   // (Planilla/AFP/SBS/otro -- no todas las empresas tienen todas) + las
