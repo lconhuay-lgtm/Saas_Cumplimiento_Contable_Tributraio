@@ -12,7 +12,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Empresa, CredencialSol, MensajeBuzon, ConsultaJob, Usuario
+from app.models import Empresa, CredencialSol, MensajeBuzon, ConsultaJob, Usuario, EmpresaObligacion
 from app.schemas import (
     EmpresaCreate,
     EmpresaResponse,
@@ -168,9 +168,65 @@ def crear_empresa(
     db.commit()
     db.refresh(empresa)
 
+    _crear_obligaciones_por_defecto(
+        db, empresa,
+        igv_renta=data.obligacion_igv_renta,
+        plame=data.obligacion_plame,
+        sbs=data.obligacion_sbs,
+    )
     _encolar_consulta_automatica(empresa, usuario, db)
 
     return empresa
+
+
+def _crear_obligaciones_por_defecto(db: Session, empresa: Empresa, igv_renta: bool, plame: bool, sbs: bool) -> None:
+    """
+    A pedido: en vez de que el usuario tenga que entrar a la empresa recien
+    creada y configurar sus obligaciones a mano en una pantalla aparte,
+    esto las deja listas desde el registro (manual o Excel) -- asi
+    IGV-Renta y PLAME empiezan a generar tareas automaticamente el primer
+    mes sin ningun paso extra (ver app.tareas.generar_tareas_mes, que ya
+    sabe calcular la fecha con regla_vencimiento="cronograma_sunat" para
+    cualquier tipo, no solo planilla/afp).
+
+    Planilla y AFP se declaran juntas en la PLAME (mismo cronograma,
+    mismo motivo que documenta EmpresaObligacion.regla_vencimiento) -- un
+    solo checkbox "PLAME" en el formulario crea las DOS filas.
+
+    SBS se crea con regla "manual" (su plazo no sigue un cronograma fijo,
+    ver el docstring de EmpresaObligacion) -- queda activa como
+    recordatorio mensual, pero sin fecha automatica hasta que el usuario
+    la revise a mano cada vez.
+
+    Nunca debe tumbar la creacion de la empresa -- si algo falla aca (muy
+    improbable, son inserts simples) se loguea y se sigue, la empresa
+    igual queda creada y el usuario puede agregar las obligaciones a mano
+    despues desde la pantalla de siempre.
+    """
+    try:
+        if igv_renta:
+            db.add(EmpresaObligacion(
+                empresa_id=empresa.id, tipo="igv_renta", nombre="IGV-Renta mensual",
+                regla_vencimiento="cronograma_sunat", activa=True,
+            ))
+        if plame:
+            db.add(EmpresaObligacion(
+                empresa_id=empresa.id, tipo="planilla", nombre="PLAME -- Planilla",
+                regla_vencimiento="cronograma_sunat", activa=True,
+            ))
+            db.add(EmpresaObligacion(
+                empresa_id=empresa.id, tipo="afp", nombre="PLAME -- AFP",
+                regla_vencimiento="cronograma_sunat", activa=True,
+            ))
+        if sbs:
+            db.add(EmpresaObligacion(
+                empresa_id=empresa.id, tipo="sbs", nombre="Reporte de Operaciones SBS",
+                regla_vencimiento="manual", activa=True,
+            ))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"No se pudieron crear las obligaciones por defecto de {empresa.ruc}: {e}")
 
 
 def _encolar_consulta_automatica(empresa: Empresa, usuario: Usuario, db: Session) -> None:
@@ -223,6 +279,16 @@ def _detectar_columnas(df: pd.DataFrame) -> dict:
             columnas["clave"] = col
         elif ("contribuyente" in cl or "razon" in cl) and "razon_social" not in columnas:
             columnas["razon_social"] = col
+        # Columnas de obligaciones -- OPCIONALES a proposito (a diferencia
+        # de ruc/usuario/clave): un Excel que no las trae sigue funcionando
+        # igual que antes, solo usa los mismos valores por defecto que el
+        # formulario manual (ver _valor_obligacion_excel).
+        elif "igv" in cl and "igv_renta" not in columnas:
+            columnas["igv_renta"] = col
+        elif "plame" in cl and "plame" not in columnas:
+            columnas["plame"] = col
+        elif "sbs" in cl and "sbs" not in columnas:
+            columnas["sbs"] = col
     faltantes = [c for c in ("ruc", "usuario", "clave") if c not in columnas]
     if faltantes:
         raise ValueError(
@@ -230,6 +296,28 @@ def _detectar_columnas(df: pd.DataFrame) -> dict:
             "Se esperan columnas con 'RUC', 'usuario', y 'clave'/'contraseña' en el nombre."
         )
     return columnas
+
+
+def _valor_obligacion_excel(fila, columnas: dict, clave: str, default: bool) -> bool:
+    """
+    Lee una columna opcional de obligacion (IGV-Renta/PLAME/SBS) de una
+    fila del Excel -- si la columna no existe en este archivo, o la celda
+    esta vacia, usa el mismo default que el formulario manual (IGV-Renta
+    activado, PLAME/SBS no). Acepta Si/No, X, 1/0, TRUE/FALSE con
+    mayusculas/tildes indistintas -- los formatos mas comunes en que un
+    contador tipea esto a mano en Excel.
+    """
+    if clave not in columnas:
+        return default
+    valor = fila[columnas[clave]]
+    if pd.isna(valor):
+        return default
+    texto = str(valor).strip().lower()
+    if texto in ("si", "sí", "x", "1", "true", "verdadero", "activo", "yes"):
+        return True
+    if texto in ("no", "0", "false", "falso", "inactivo"):
+        return False
+    return default
 
 
 @router.post("/importar", response_model=ImportarEmpresasResponse)
@@ -298,6 +386,13 @@ async def importar_empresas(
                 dek_cifrada=dek_cifrada,
             ))
             db.commit()
+
+            _crear_obligaciones_por_defecto(
+                db, empresa,
+                igv_renta=_valor_obligacion_excel(fila, columnas, "igv_renta", default=True),
+                plame=_valor_obligacion_excel(fila, columnas, "plame", default=False),
+                sbs=_valor_obligacion_excel(fila, columnas, "sbs", default=False),
+            )
 
             # A pedido: igual que crear_empresa() de a una, pero espaciadas
             # (mismo patron que "Consultar todas") para no mandarle a SUNAT

@@ -351,13 +351,18 @@ class EmpresaObligacion(Base):
     vencimiento.
 
     regla_vencimiento:
-      - "cronograma_sunat": Planilla y AFP se declaran juntas dentro de la
-        PLAME (confirmado: la PLAME incluye remuneraciones + aportes AFP/
-        ONP/EsSalud/renta 5ta en un solo envio), asi que comparten
-        EXACTAMENTE el mismo cronograma por ultimo digito de RUC que ya
-        usa cronograma_sunat.py -- no hace falta guardar una fecha aparte,
-        se reusa esa tabla.
+      - "cronograma_sunat": Planilla, AFP e IGV-Renta comparten EXACTAMENTE
+        el mismo cronograma por ultimo digito de RUC que ya usa
+        cronograma_sunat.py (Planilla/AFP porque se declaran juntas dentro
+        de la PLAME -- confirmado: incluye remuneraciones + aportes AFP/
+        ONP/EsSalud/renta 5ta en un solo envio -- e IGV-Renta porque ES ese
+        mismo cronograma general) -- no hace falta guardar una fecha
+        aparte, se reusa esa tabla.
       - "dia_fijo_mes": vence un dia fijo de cada mes (columna dia_fijo).
+      - "dia_fijo_anual": vence un dia y mes fijo de cada anio (columnas
+        dia_fijo + mes_fijo) -- para obligaciones que se repiten una vez
+        al anio, no todos los meses (ej. una declaracion jurada anual con
+        vencimiento fijo el 15/02).
       - "manual": sin regla automatica -- para reportes SBS, cuyo plazo
         varia mucho segun el tipo de reporte (desde horas hasta dias
         habiles, confirmado investigando) y no sigue ningun cronograma
@@ -370,12 +375,15 @@ class EmpresaObligacion(Base):
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
     empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
-    # "planilla" | "afp" | "sbs" | "otro"
+    # "igv_renta" | "planilla" | "afp" | "sbs" | "otro"
     tipo: Mapped[str] = mapped_column(String(30), nullable=False)
     nombre: Mapped[str] = mapped_column(String(200), nullable=False)
     activa: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     regla_vencimiento: Mapped[str] = mapped_column(String(30), nullable=False, default="manual")
     dia_fijo: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Solo para regla_vencimiento="dia_fijo_anual" -- mes (1-12) en el que
+    # cae el vencimiento cada anio. None para las demas reglas.
+    mes_fijo: Mapped[int | None] = mapped_column(Integer, nullable=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="obligaciones")

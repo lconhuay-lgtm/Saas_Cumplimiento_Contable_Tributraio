@@ -34,6 +34,16 @@ class EmpresaCreate(BaseModel):
     razon_social: str = Field(..., min_length=1, max_length=255)
     usuario_sol: str = Field(..., min_length=1, max_length=100)
     clave_sol: str = Field(..., min_length=1, max_length=200)
+    # A pedido: elegir de entrada que obligaciones recurrentes le
+    # corresponden a esta empresa, en vez de tener que configurarlas
+    # despues a mano en una pantalla aparte -- ver
+    # app.routers.empresas._crear_obligaciones_por_defecto. IGV-Renta
+    # viene marcado por defecto (le corresponde a casi todas las
+    # empresas activas); PLAME y SBS no (no todas tienen trabajadores en
+    # planilla o reportan a la SBS).
+    obligacion_igv_renta: bool = True
+    obligacion_plame: bool = False
+    obligacion_sbs: bool = False
 
 
 class UltimoMensajeResumen(BaseModel):
@@ -331,18 +341,20 @@ class AgendaMesResponse(BaseModel):
 
 
 class EmpresaObligacionCreate(BaseModel):
-    tipo: str = Field(..., pattern=r"^(planilla|afp|sbs|otro)$")
+    tipo: str = Field(..., pattern=r"^(igv_renta|planilla|afp|sbs|otro)$")
     nombre: str = Field(..., min_length=1, max_length=200)
     activa: bool = True
-    regla_vencimiento: str = Field("manual", pattern=r"^(cronograma_sunat|dia_fijo_mes|manual)$")
+    regla_vencimiento: str = Field("manual", pattern=r"^(cronograma_sunat|dia_fijo_mes|dia_fijo_anual|manual)$")
     dia_fijo: int | None = Field(None, ge=1, le=31)
+    mes_fijo: int | None = Field(None, ge=1, le=12)
 
 
 class EmpresaObligacionUpdate(BaseModel):
     nombre: str | None = Field(None, min_length=1, max_length=200)
     activa: bool | None = None
-    regla_vencimiento: str | None = Field(None, pattern=r"^(cronograma_sunat|dia_fijo_mes|manual)$")
+    regla_vencimiento: str | None = Field(None, pattern=r"^(cronograma_sunat|dia_fijo_mes|dia_fijo_anual|manual)$")
     dia_fijo: int | None = Field(None, ge=1, le=31)
+    mes_fijo: int | None = Field(None, ge=1, le=12)
 
 
 class EmpresaObligacionResponse(BaseModel):
@@ -353,6 +365,7 @@ class EmpresaObligacionResponse(BaseModel):
     activa: bool
     regla_vencimiento: str
     dia_fijo: int | None
+    mes_fijo: int | None
     creado_en: datetime
 
     class Config:

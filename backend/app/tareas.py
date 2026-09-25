@@ -18,6 +18,7 @@ from app.cronograma_sunat import grupo_para_empresa, empresas_para_cronograma
 logger = logging.getLogger("app.tareas")
 
 ETIQUETAS_TIPO = {
+    "igv_renta": "IGV-Renta",
     "planilla": "Planilla",
     "afp": "AFP",
     "sbs": "Reporte SBS",
@@ -95,12 +96,22 @@ def generar_tareas_mes(db: Session, tenant_id: str, anio: int, mes: int) -> dict
             if ya_existe:
                 continue
 
+            # "dia_fijo_anual" solo genera tarea en SU mes -- las demas
+            # reglas generan todos los meses, asi que esta es la unica que
+            # necesita saltarse el resto del periodo por completo (ni
+            # siquiera cuenta como "sin_regla", no es un error).
+            if ob.regla_vencimiento == "dia_fijo_anual" and ob.mes_fijo != mes:
+                continue
+
             fecha_vencimiento = None
             proceso = "manual"
             if ob.regla_vencimiento == "cronograma_sunat":
                 fecha_vencimiento = _fecha_cronograma_sunat(db, empresa, anio, mes)
                 proceso = "automatica"
             elif ob.regla_vencimiento == "dia_fijo_mes" and ob.dia_fijo:
+                fecha_vencimiento = _fecha_dia_fijo(anio, mes, ob.dia_fijo)
+                proceso = "automatica"
+            elif ob.regla_vencimiento == "dia_fijo_anual" and ob.dia_fijo and ob.mes_fijo:
                 fecha_vencimiento = _fecha_dia_fijo(anio, mes, ob.dia_fijo)
                 proceso = "automatica"
             # regla "manual": fecha_vencimiento queda en None -- el usuario

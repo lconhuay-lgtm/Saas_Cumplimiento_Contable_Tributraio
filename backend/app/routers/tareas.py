@@ -30,6 +30,7 @@ from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible
 router = APIRouter(tags=["tareas"])
 
 ETIQUETAS_TIPO_AVANCE = {
+    "igv_renta": "IGV-Renta",
     "planilla": "Planilla",
     "afp": "AFP",
     "sbs": "Reporte SBS",

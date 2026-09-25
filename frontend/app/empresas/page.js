@@ -1316,6 +1316,9 @@ function FormularioEmpresa({ onCreada }) {
   const [usuarioSol, setUsuarioSol] = useState("");
   const [claveSol, setClaveSol] = useState("");
   const [claveSolRepetir, setClaveSolRepetir] = useState("");
+  const [obligacionIgvRenta, setObligacionIgvRenta] = useState(true);
+  const [obligacionPlame, setObligacionPlame] = useState(false);
+  const [obligacionSbs, setObligacionSbs] = useState(false);
   const [error, setError] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [verificando, setVerificando] = useState(false);
@@ -1336,6 +1339,9 @@ function FormularioEmpresa({ onCreada }) {
         razon_social: razonSocial,
         usuario_sol: usuarioSol,
         clave_sol: claveSol,
+        obligacion_igv_renta: obligacionIgvRenta,
+        obligacion_plame: obligacionPlame,
+        obligacion_sbs: obligacionSbs,
       });
       setGuardando(false);
       await verificarCredencialesRecienCreadas(empresaCreada);
@@ -1479,6 +1485,46 @@ function FormularioEmpresa({ onCreada }) {
           />
         </Campo>
       </div>
+
+      <div className="mt-4">
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
+          Obligaciones recurrentes de esta empresa
+        </p>
+        <div className="flex flex-wrap gap-4">
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={obligacionIgvRenta}
+              onChange={(e) => setObligacionIgvRenta(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300"
+            />
+            IGV-Renta mensual
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={obligacionPlame}
+              onChange={(e) => setObligacionPlame(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300"
+            />
+            PLAME (Planilla y AFP)
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={obligacionSbs}
+              onChange={(e) => setObligacionSbs(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300"
+            />
+            Reporte de Operaciones SBS
+          </label>
+        </div>
+        <p className="mt-1.5 text-xs text-slate-400">
+          Las que marques generan tareas automaticamente cada mes en el modulo Tareas -- puedes ajustarlas despues
+          desde el detalle de la empresa.
+        </p>
+      </div>
+
       <button
         type="submit"
         disabled={guardando || verificando}
@@ -1523,6 +1569,11 @@ function FormularioImportar({ onImportado }) {
         Sube el Excel con las columnas de RUC, usuario SOL, clave SOL y razon social (el mismo formato que ya usas
         para la automatizacion). Las empresas que ya existan se saltan, asi que puedes volver a subir el mismo
         archivo sin duplicar nada.
+      </p>
+      <p className="mt-2 text-xs text-slate-400">
+        Opcional: agrega columnas "IGV-Renta", "PLAME" y/o "SBS" con Si/No para elegir sus obligaciones desde el
+        Excel -- si no las incluyes, cada empresa se crea con IGV-Renta activado (el resto sin marcar), igual que
+        en el formulario manual.
       </p>
 
       {error && (

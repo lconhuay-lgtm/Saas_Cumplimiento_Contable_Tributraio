@@ -679,6 +679,7 @@ function ModalCrearTarea({ empresaId, mensaje, onCerrar, onCreada }) {
 }
 
 const ETIQUETAS_TIPO_OBLIGACION = {
+  igv_renta: "IGV-Renta",
   planilla: "Planilla",
   afp: "AFP",
   sbs: "Reporte SBS",
@@ -686,10 +687,16 @@ const ETIQUETAS_TIPO_OBLIGACION = {
 };
 
 const ETIQUETAS_REGLA = {
-  cronograma_sunat: "Sigue el cronograma SUNAT (misma fecha que Planilla/PLAME)",
+  cronograma_sunat: "Sigue el cronograma SUNAT (misma fecha que IGV-Renta/PLAME)",
   dia_fijo_mes: "Vence un dia fijo cada mes",
+  dia_fijo_anual: "Vence un dia y mes fijo cada anio",
   manual: "Sin regla automatica -- se carga la fecha a mano cada vez",
 };
+
+const MESES = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+];
 
 // Modulo de Tareas/Agenda: que obligaciones RECURRENTES tiene esta empresa
 // ademas del cronograma general (que aplica solo con estar activa). No
@@ -777,6 +784,9 @@ function SeccionObligaciones({ empresaId }) {
                 <p className="mt-0.5 text-xs text-slate-500">
                   {ETIQUETAS_REGLA[ob.regla_vencimiento]}
                   {ob.regla_vencimiento === "dia_fijo_mes" && ob.dia_fijo ? ` (dia ${ob.dia_fijo})` : ""}
+                  {ob.regla_vencimiento === "dia_fijo_anual" && ob.dia_fijo && ob.mes_fijo
+                    ? ` (${ob.dia_fijo} de ${MESES[ob.mes_fijo - 1]})`
+                    : ""}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-1">
@@ -817,6 +827,7 @@ function FormularioObligacion({ empresaId, onCreada }) {
   const [nombre, setNombre] = useState("Planilla mensual");
   const [reglaVencimiento, setReglaVencimiento] = useState("cronograma_sunat");
   const [diaFijo, setDiaFijo] = useState(5);
+  const [mesFijo, setMesFijo] = useState(2);
   const [error, setError] = useState("");
   const [guardando, setGuardando] = useState(false);
 
@@ -829,7 +840,8 @@ function FormularioObligacion({ empresaId, onCreada }) {
         tipo,
         nombre,
         regla_vencimiento: reglaVencimiento,
-        dia_fijo: reglaVencimiento === "dia_fijo_mes" ? Number(diaFijo) : null,
+        dia_fijo: reglaVencimiento === "dia_fijo_mes" || reglaVencimiento === "dia_fijo_anual" ? Number(diaFijo) : null,
+        mes_fijo: reglaVencimiento === "dia_fijo_anual" ? Number(mesFijo) : null,
       });
       onCreada();
     } catch (err) {
@@ -848,6 +860,7 @@ function FormularioObligacion({ empresaId, onCreada }) {
         <div>
           <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Tipo</label>
           <select value={tipo} onChange={(e) => setTipo(e.target.value)} className="campo-input">
+            <option value="igv_renta">IGV-Renta</option>
             <option value="planilla">Planilla</option>
             <option value="afp">AFP</option>
             <option value="sbs">Reporte SBS</option>
@@ -861,12 +874,13 @@ function FormularioObligacion({ empresaId, onCreada }) {
         <div>
           <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Regla de vencimiento</label>
           <select value={reglaVencimiento} onChange={(e) => setReglaVencimiento(e.target.value)} className="campo-input">
-            <option value="cronograma_sunat">Cronograma SUNAT (Planilla/AFP via PLAME)</option>
+            <option value="cronograma_sunat">Cronograma SUNAT (IGV-Renta/Planilla/AFP via PLAME)</option>
             <option value="dia_fijo_mes">Dia fijo del mes</option>
+            <option value="dia_fijo_anual">Dia y mes fijo cada anio</option>
             <option value="manual">Manual (SBS, sin regla fija)</option>
           </select>
         </div>
-        {reglaVencimiento === "dia_fijo_mes" && (
+        {(reglaVencimiento === "dia_fijo_mes" || reglaVencimiento === "dia_fijo_anual") && (
           <div>
             <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Dia del mes</label>
             <input
@@ -877,6 +891,16 @@ function FormularioObligacion({ empresaId, onCreada }) {
               onChange={(e) => setDiaFijo(e.target.value)}
               className="campo-input"
             />
+          </div>
+        )}
+        {reglaVencimiento === "dia_fijo_anual" && (
+          <div>
+            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Mes</label>
+            <select value={mesFijo} onChange={(e) => setMesFijo(e.target.value)} className="campo-input">
+              {MESES.map((nombreMes, idx) => (
+                <option key={idx + 1} value={idx + 1}>{nombreMes}</option>
+              ))}
+            </select>
           </div>
         )}
       </div>
