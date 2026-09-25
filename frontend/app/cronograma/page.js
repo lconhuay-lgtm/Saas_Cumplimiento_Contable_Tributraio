@@ -92,7 +92,7 @@ export default function CronogramaPage() {
         api.listarTareas({ fechaDesde: inicioMes, fechaHasta: finMes }).catch(() => []),
       ]);
 
-      const itemsCronograma = dataCronograma.vencimientos.map((v) => ({
+      const itemsCronogramaCrudos = dataCronograma.vencimientos.map((v) => ({
         tipoItem: "cronograma",
         key: `c-${v.empresa_id}-${v.periodo_tributario}`,
         fecha_vencimiento: v.fecha_vencimiento,
@@ -114,6 +114,20 @@ export default function CronogramaPage() {
           titulo: t.titulo,
           prioridad: t.prioridad,
         }));
+
+      // Evitar el vencimiento duplicado: una tarea generada desde una
+      // obligacion "cronograma_sunat" (IGV-Renta/Planilla/AFP, ver
+      // app/tareas.py) cae exactamente en la misma fecha que ya trae el
+      // cronograma general -- si ya existe la tarea para esa empresa+dia
+      // (que ademas trae su estado de cumplimiento), el chip informativo
+      // del cronograma general sobra. Se mantiene el cronograma general
+      // solo para empresas/periodos que TODAVIA no tienen esa tarea (p.ej.
+      // si alguien desactivo la obligacion IGV-Renta) -- asi igual se ve
+      // cuando les toca, aunque no haya nada que marcar como cumplido.
+      const clavesConTarea = new Set(itemsTareas.map((t) => `${t.empresa_id}|${t.fecha_vencimiento.slice(0, 10)}`));
+      const itemsCronograma = itemsCronogramaCrudos.filter(
+        (v) => !clavesConTarea.has(`${v.empresa_id}|${v.fecha_vencimiento.slice(0, 10)}`)
+      );
 
       setVencimientos([...itemsCronograma, ...itemsTareas]);
     } catch (err) {
