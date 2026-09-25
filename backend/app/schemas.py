@@ -44,6 +44,12 @@ class EmpresaCreate(BaseModel):
     obligacion_igv_renta: bool = True
     obligacion_plame: bool = False
     obligacion_sbs: bool = False
+    # Fase 2: dos obligaciones mas con periodicidad no-mensual, a modo de
+    # ejemplo concreto de "recurrencia flexible" (ver
+    # app.routers.empresas._crear_obligaciones_por_defecto). No todas las
+    # empresas las tienen, asi que ambas vienen sin marcar por defecto.
+    obligacion_cts: bool = False
+    obligacion_itan: bool = False
 
 
 class UltimoMensajeResumen(BaseModel):
@@ -340,13 +346,17 @@ class AgendaMesResponse(BaseModel):
     vencimientos: list[VencimientoAgendaItem]
 
 
+_PATRON_MESES_ACTIVOS = r"^(1[0-2]|[1-9])(,(1[0-2]|[1-9]))*$"
+
+
 class EmpresaObligacionCreate(BaseModel):
-    tipo: str = Field(..., pattern=r"^(igv_renta|planilla|afp|sbs|otro)$")
+    tipo: str = Field(..., pattern=r"^(igv_renta|planilla|afp|sbs|cts|itan|otro)$")
     nombre: str = Field(..., min_length=1, max_length=200)
     activa: bool = True
     regla_vencimiento: str = Field("manual", pattern=r"^(cronograma_sunat|dia_fijo_mes|dia_fijo_anual|manual)$")
     dia_fijo: int | None = Field(None, ge=1, le=31)
     mes_fijo: int | None = Field(None, ge=1, le=12)
+    meses_activos: str | None = Field(None, pattern=_PATRON_MESES_ACTIVOS)
 
 
 class EmpresaObligacionUpdate(BaseModel):
@@ -355,6 +365,7 @@ class EmpresaObligacionUpdate(BaseModel):
     regla_vencimiento: str | None = Field(None, pattern=r"^(cronograma_sunat|dia_fijo_mes|dia_fijo_anual|manual)$")
     dia_fijo: int | None = Field(None, ge=1, le=31)
     mes_fijo: int | None = Field(None, ge=1, le=12)
+    meses_activos: str | None = Field(None, pattern=_PATRON_MESES_ACTIVOS)
 
 
 class EmpresaObligacionResponse(BaseModel):
@@ -366,6 +377,7 @@ class EmpresaObligacionResponse(BaseModel):
     regla_vencimiento: str
     dia_fijo: int | None
     mes_fijo: int | None
+    meses_activos: str | None
     creado_en: datetime
 
     class Config:

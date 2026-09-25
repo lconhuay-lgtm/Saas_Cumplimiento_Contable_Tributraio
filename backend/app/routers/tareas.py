@@ -34,6 +34,8 @@ ETIQUETAS_TIPO_AVANCE = {
     "planilla": "Planilla",
     "afp": "AFP",
     "sbs": "Reporte SBS",
+    "cts": "CTS",
+    "itan": "ITAN",
     "otro": "Otro",
 }
 

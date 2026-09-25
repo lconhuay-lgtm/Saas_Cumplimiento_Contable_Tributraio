@@ -173,13 +173,17 @@ def crear_empresa(
         igv_renta=data.obligacion_igv_renta,
         plame=data.obligacion_plame,
         sbs=data.obligacion_sbs,
+        cts=data.obligacion_cts,
+        itan=data.obligacion_itan,
     )
     _encolar_consulta_automatica(empresa, usuario, db)
 
     return empresa
 
 
-def _crear_obligaciones_por_defecto(db: Session, empresa: Empresa, igv_renta: bool, plame: bool, sbs: bool) -> None:
+def _crear_obligaciones_por_defecto(
+    db: Session, empresa: Empresa, igv_renta: bool, plame: bool, sbs: bool, cts: bool = False, itan: bool = False
+) -> None:
     """
     A pedido: en vez de que el usuario tenga que entrar a la empresa recien
     creada y configurar sus obligaciones a mano en una pantalla aparte,
@@ -197,6 +201,17 @@ def _crear_obligaciones_por_defecto(db: Session, empresa: Empresa, igv_renta: bo
     ver el docstring de EmpresaObligacion) -- queda activa como
     recordatorio mensual, pero sin fecha automatica hasta que el usuario
     la revise a mano cada vez.
+
+    CTS e ITAN (Fase 2, recurrencia flexible via EmpresaObligacion.
+    meses_activos -- ver su docstring): CTS vence el 15 de mayo y el 15 de
+    noviembre de cada anio (deposito semestral obligatorio por ley), asi
+    que se crea con dia_fijo=15 + meses_activos="5,11". ITAN se crea como
+    recordatorio anual el 30 de abril (fecha aproximada del primer pago/
+    pago unico, que es lo mas comun) -- si el contador de esta empresa en
+    particular lo paga en las 9 cuotas mensuales (abril-diciembre) en vez
+    de al contado, puede editar esta obligacion despues desde el detalle
+    de la empresa y cambiarla a regla "cronograma_sunat" con
+    meses_activos="4,5,6,7,8,9,10,11,12".
 
     Nunca debe tumbar la creacion de la empresa -- si algo falla aca (muy
     improbable, son inserts simples) se loguea y se sigue, la empresa
@@ -222,6 +237,16 @@ def _crear_obligaciones_por_defecto(db: Session, empresa: Empresa, igv_renta: bo
             db.add(EmpresaObligacion(
                 empresa_id=empresa.id, tipo="sbs", nombre="Reporte de Operaciones SBS",
                 regla_vencimiento="manual", activa=True,
+            ))
+        if cts:
+            db.add(EmpresaObligacion(
+                empresa_id=empresa.id, tipo="cts", nombre="Deposito de CTS",
+                regla_vencimiento="dia_fijo_mes", dia_fijo=15, meses_activos="5,11", activa=True,
+            ))
+        if itan:
+            db.add(EmpresaObligacion(
+                empresa_id=empresa.id, tipo="itan", nombre="ITAN",
+                regla_vencimiento="dia_fijo_anual", dia_fijo=30, mes_fijo=4, activa=True,
             ))
         db.commit()
     except Exception as e:
@@ -289,6 +314,10 @@ def _detectar_columnas(df: pd.DataFrame) -> dict:
             columnas["plame"] = col
         elif "sbs" in cl and "sbs" not in columnas:
             columnas["sbs"] = col
+        elif "cts" in cl and "cts" not in columnas:
+            columnas["cts"] = col
+        elif "itan" in cl and "itan" not in columnas:
+            columnas["itan"] = col
     faltantes = [c for c in ("ruc", "usuario", "clave") if c not in columnas]
     if faltantes:
         raise ValueError(
@@ -392,6 +421,8 @@ async def importar_empresas(
                 igv_renta=_valor_obligacion_excel(fila, columnas, "igv_renta", default=True),
                 plame=_valor_obligacion_excel(fila, columnas, "plame", default=False),
                 sbs=_valor_obligacion_excel(fila, columnas, "sbs", default=False),
+                cts=_valor_obligacion_excel(fila, columnas, "cts", default=False),
+                itan=_valor_obligacion_excel(fila, columnas, "itan", default=False),
             )
 
             # A pedido: igual que crear_empresa() de a una, pero espaciadas

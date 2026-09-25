@@ -22,6 +22,8 @@ ETIQUETAS_TIPO = {
     "planilla": "Planilla",
     "afp": "AFP",
     "sbs": "Reporte SBS",
+    "cts": "CTS",
+    "itan": "ITAN",
     "otro": "Otro",
 }
 
@@ -51,6 +53,13 @@ def _fecha_cronograma_sunat(db: Session, empresa: Empresa, anio: int, mes: int) 
         .first()
     )
     return _con_utc(fila.fecha_vencimiento) if fila else None
+
+
+def _parsear_meses_activos(valor: str | None) -> set[int] | None:
+    """"5,11" -> {5, 11}. None/vacio -> None (sin filtro, todos los meses)."""
+    if not valor:
+        return None
+    return {int(m) for m in valor.split(",") if m.strip()}
 
 
 def _fecha_dia_fijo(anio: int, mes: int, dia_fijo: int) -> datetime:
@@ -101,6 +110,14 @@ def generar_tareas_mes(db: Session, tenant_id: str, anio: int, mes: int) -> dict
             # necesita saltarse el resto del periodo por completo (ni
             # siquiera cuenta como "sin_regla", no es un error).
             if ob.regla_vencimiento == "dia_fijo_anual" and ob.mes_fijo != mes:
+                continue
+
+            # meses_activos (recurrencia flexible: CTS, ITAN en cuotas,
+            # bimestral/trimestral/semestral/personalizada) -- filtro
+            # adicional sobre cronograma_sunat/dia_fijo_mes, mismo criterio
+            # de "no cuenta como sin_regla" que dia_fijo_anual arriba.
+            meses_activos = _parsear_meses_activos(ob.meses_activos)
+            if meses_activos is not None and mes not in meses_activos:
                 continue
 
             fecha_vencimiento = None

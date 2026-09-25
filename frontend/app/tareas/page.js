@@ -18,16 +18,22 @@ import Sidebar from "../../components/Sidebar";
 import { api, getToken } from "../../lib/api";
 
 const ETIQUETAS_TIPO = {
+  igv_renta: "IGV-Renta",
   planilla: "Planilla",
   afp: "AFP",
   sbs: "Reporte SBS",
+  cts: "CTS",
+  itan: "ITAN",
   otro: "Otro",
 };
 
 const COLOR_TIPO = {
+  igv_renta: "bg-emerald-50 text-emerald-700",
   planilla: "bg-accent-light text-accent",
   afp: "bg-violet-50 text-violet-700",
   sbs: "bg-amber-50 text-amber-700",
+  cts: "bg-sky-50 text-sky-700",
+  itan: "bg-rose-50 text-rose-700",
   otro: "bg-slate-100 text-slate-600",
 };
 

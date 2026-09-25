@@ -367,6 +367,24 @@ class EmpresaObligacion(Base):
         varia mucho segun el tipo de reporte (desde horas hasta dias
         habiles, confirmado investigando) y no sigue ningun cronograma
         fijo. El usuario carga la fecha de vencimiento a mano cada vez.
+
+    meses_activos: filtro OPCIONAL de meses (texto, numeros de mes 1-12
+      separados por coma, ej. "5,11") que restringe EN QUE MESES del anio
+      se genera la tarea -- se usa junto con "cronograma_sunat" o
+      "dia_fijo_mes" (esas dos reglas ya calculan bien la fecha; este
+      filtro solo decide en que meses corresponde generarla). None/vacio
+      = todos los meses (default, compatible con lo que ya existia antes
+      de este campo). Cubre cualquier periodicidad -- bimestral,
+      trimestral, semestral, personalizada -- sin necesitar una regla
+      nueva por cada caso:
+        - CTS (deposito semestral, 15 de mayo y 15 de noviembre):
+          regla_vencimiento="dia_fijo_mes", dia_fijo=15,
+          meses_activos="5,11".
+        - ITAN pagado en 9 cuotas (abril a diciembre, mismo cronograma
+          por RUC que IGV-Renta/PLAME): regla_vencimiento="cronograma_sunat",
+          meses_activos="4,5,6,7,8,9,10,11,12".
+      No se usa junto con "dia_fijo_anual" (esa regla ya trae su propio
+      mes fijo via mes_fijo) ni con "manual" (no calcula fecha).
     """
     __tablename__ = "empresa_obligaciones"
     __table_args__ = (
@@ -375,7 +393,7 @@ class EmpresaObligacion(Base):
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
     empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
-    # "igv_renta" | "planilla" | "afp" | "sbs" | "otro"
+    # "igv_renta" | "planilla" | "afp" | "sbs" | "cts" | "itan" | "otro"
     tipo: Mapped[str] = mapped_column(String(30), nullable=False)
     nombre: Mapped[str] = mapped_column(String(200), nullable=False)
     activa: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -384,6 +402,9 @@ class EmpresaObligacion(Base):
     # Solo para regla_vencimiento="dia_fijo_anual" -- mes (1-12) en el que
     # cae el vencimiento cada anio. None para las demas reglas.
     mes_fijo: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Filtro opcional de meses (ver docstring de la clase) -- "5,11" para
+    # CTS, "4,5,...,12" para ITAN en 9 cuotas, etc. None = todos los meses.
+    meses_activos: Mapped[str | None] = mapped_column(String(50), nullable=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="obligaciones")

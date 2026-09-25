@@ -1319,6 +1319,8 @@ function FormularioEmpresa({ onCreada }) {
   const [obligacionIgvRenta, setObligacionIgvRenta] = useState(true);
   const [obligacionPlame, setObligacionPlame] = useState(false);
   const [obligacionSbs, setObligacionSbs] = useState(false);
+  const [obligacionCts, setObligacionCts] = useState(false);
+  const [obligacionItan, setObligacionItan] = useState(false);
   const [error, setError] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [verificando, setVerificando] = useState(false);
@@ -1342,6 +1344,8 @@ function FormularioEmpresa({ onCreada }) {
         obligacion_igv_renta: obligacionIgvRenta,
         obligacion_plame: obligacionPlame,
         obligacion_sbs: obligacionSbs,
+        obligacion_cts: obligacionCts,
+        obligacion_itan: obligacionItan,
       });
       setGuardando(false);
       await verificarCredencialesRecienCreadas(empresaCreada);
@@ -1518,10 +1522,29 @@ function FormularioEmpresa({ onCreada }) {
             />
             Reporte de Operaciones SBS
           </label>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={obligacionCts}
+              onChange={(e) => setObligacionCts(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300"
+            />
+            CTS (deposito semestral, Mayo y Noviembre)
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={obligacionItan}
+              onChange={(e) => setObligacionItan(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300"
+            />
+            ITAN (recordatorio anual, Abril)
+          </label>
         </div>
         <p className="mt-1.5 text-xs text-slate-400">
-          Las que marques generan tareas automaticamente cada mes en el modulo Tareas -- puedes ajustarlas despues
-          desde el detalle de la empresa.
+          Las que marques generan tareas automaticamente cada mes (o en los meses que corresponda) en el modulo
+          Tareas -- puedes ajustarlas despues desde el detalle de la empresa, incluyendo la periodicidad exacta
+          (mensual, cada cierto numero de meses, o meses especificos).
         </p>
       </div>
 
@@ -1571,9 +1594,9 @@ function FormularioImportar({ onImportado }) {
         archivo sin duplicar nada.
       </p>
       <p className="mt-2 text-xs text-slate-400">
-        Opcional: agrega columnas "IGV-Renta", "PLAME" y/o "SBS" con Si/No para elegir sus obligaciones desde el
-        Excel -- si no las incluyes, cada empresa se crea con IGV-Renta activado (el resto sin marcar), igual que
-        en el formulario manual.
+        Opcional: agrega columnas "IGV-Renta", "PLAME", "SBS", "CTS" y/o "ITAN" con Si/No para elegir sus
+        obligaciones desde el Excel -- si no las incluyes, cada empresa se crea con IGV-Renta activado (el resto
+        sin marcar), igual que en el formulario manual.
       </p>
 
       {error && (

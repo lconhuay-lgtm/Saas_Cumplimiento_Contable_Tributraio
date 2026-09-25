@@ -683,6 +683,8 @@ const ETIQUETAS_TIPO_OBLIGACION = {
   planilla: "Planilla",
   afp: "AFP",
   sbs: "Reporte SBS",
+  cts: "CTS",
+  itan: "ITAN",
   otro: "Otro",
 };
 
@@ -697,6 +699,17 @@ const MESES = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ];
+
+function formatearMesesActivos(mesesActivos) {
+  if (!mesesActivos) return "";
+  const meses = mesesActivos
+    .split(",")
+    .map((m) => parseInt(m, 10))
+    .filter((m) => m >= 1 && m <= 12)
+    .sort((a, b) => a - b)
+    .map((m) => MESES[m - 1]);
+  return meses.join(", ");
+}
 
 // Modulo de Tareas/Agenda: que obligaciones RECURRENTES tiene esta empresa
 // ademas del cronograma general (que aplica solo con estar activa). No
@@ -787,6 +800,10 @@ function SeccionObligaciones({ empresaId }) {
                   {ob.regla_vencimiento === "dia_fijo_anual" && ob.dia_fijo && ob.mes_fijo
                     ? ` (${ob.dia_fijo} de ${MESES[ob.mes_fijo - 1]})`
                     : ""}
+                  {(ob.regla_vencimiento === "dia_fijo_mes" || ob.regla_vencimiento === "cronograma_sunat") &&
+                  ob.meses_activos
+                    ? ` -- solo en: ${formatearMesesActivos(ob.meses_activos)}`
+                    : ""}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-1">
@@ -822,18 +839,37 @@ function SeccionObligaciones({ empresaId }) {
   );
 }
 
+const PRESETS_MESES_ACTIVOS = [
+  { etiqueta: "CTS (May y Nov)", meses: [5, 11] },
+  { etiqueta: "Bimestral", meses: [1, 3, 5, 7, 9, 11] },
+  { etiqueta: "Trimestral", meses: [1, 4, 7, 10] },
+  { etiqueta: "ITAN 9 cuotas (Abr-Dic)", meses: [4, 5, 6, 7, 8, 9, 10, 11, 12] },
+];
+
 function FormularioObligacion({ empresaId, onCreada }) {
   const [tipo, setTipo] = useState("planilla");
   const [nombre, setNombre] = useState("Planilla mensual");
   const [reglaVencimiento, setReglaVencimiento] = useState("cronograma_sunat");
   const [diaFijo, setDiaFijo] = useState(5);
   const [mesFijo, setMesFijo] = useState(2);
+  const [mesesEspecificos, setMesesEspecificos] = useState(false);
+  const [mesesActivos, setMesesActivos] = useState([]);
   const [error, setError] = useState("");
   const [guardando, setGuardando] = useState(false);
+
+  const permiteMesesActivos = reglaVencimiento === "cronograma_sunat" || reglaVencimiento === "dia_fijo_mes";
+
+  function toggleMes(mes) {
+    setMesesActivos((prev) => (prev.includes(mes) ? prev.filter((m) => m !== mes) : [...prev, mes].sort((a, b) => a - b)));
+  }
 
   async function onSubmit(e) {
     e.preventDefault();
     setError("");
+    if (permiteMesesActivos && mesesEspecificos && mesesActivos.length === 0) {
+      setError("Elige al menos un mes, o desmarca \"meses especificos\".");
+      return;
+    }
     setGuardando(true);
     try {
       await api.crearObligacion(empresaId, {
@@ -842,6 +878,7 @@ function FormularioObligacion({ empresaId, onCreada }) {
         regla_vencimiento: reglaVencimiento,
         dia_fijo: reglaVencimiento === "dia_fijo_mes" || reglaVencimiento === "dia_fijo_anual" ? Number(diaFijo) : null,
         mes_fijo: reglaVencimiento === "dia_fijo_anual" ? Number(mesFijo) : null,
+        meses_activos: permiteMesesActivos && mesesEspecificos ? mesesActivos.join(",") : null,
       });
       onCreada();
     } catch (err) {
@@ -864,6 +901,8 @@ function FormularioObligacion({ empresaId, onCreada }) {
             <option value="planilla">Planilla</option>
             <option value="afp">AFP</option>
             <option value="sbs">Reporte SBS</option>
+            <option value="cts">CTS</option>
+            <option value="itan">ITAN</option>
             <option value="otro">Otro</option>
           </select>
         </div>
@@ -904,6 +943,58 @@ function FormularioObligacion({ empresaId, onCreada }) {
           </div>
         )}
       </div>
+
+      {permiteMesesActivos && (
+        <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50/60 p-3">
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={mesesEspecificos}
+              onChange={(e) => setMesesEspecificos(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300"
+            />
+            Repetir solo en meses especificos (en vez de todos los meses) -- para CTS, ITAN en cuotas, bimestral,
+            trimestral, etc.
+          </label>
+          {mesesEspecificos && (
+            <div className="mt-2.5">
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {PRESETS_MESES_ACTIVOS.map((preset) => (
+                  <button
+                    key={preset.etiqueta}
+                    type="button"
+                    onClick={() => setMesesActivos(preset.meses)}
+                    className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-500 hover:border-accent hover:text-accent"
+                  >
+                    {preset.etiqueta}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {MESES.map((nombreMes, idx) => {
+                  const mes = idx + 1;
+                  const activo = mesesActivos.includes(mes);
+                  return (
+                    <button
+                      key={mes}
+                      type="button"
+                      onClick={() => toggleMes(mes)}
+                      className={`rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors ${
+                        activo
+                          ? "border-accent bg-accent-light text-accent"
+                          : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+                      }`}
+                    >
+                      {nombreMes.slice(0, 3)}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <button
         type="submit"
         disabled={guardando}
