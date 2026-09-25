@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routers import auth, empresas, consultas, admin, dashboard, ficha_ruc, reporte_tributario, cronograma, tareas, usuarios, invitaciones
 
 app = FastAPI(
-    title="Buzon SUNAT multi-RUC -- API",
+    title="Anzen Sol multi-RUC -- API",
     description="Auth, tenants, CRUD de empresas, y consultas en vivo al buzon SOL via cola de trabajos.",
     version="0.1.0",
 )

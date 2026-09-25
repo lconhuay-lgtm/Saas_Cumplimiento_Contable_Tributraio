@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Inbox, Loader2 } from "lucide-react";
+import { ShieldCheck, Loader2 } from "lucide-react";
 import { api, setToken } from "../../lib/api";
 
 export default function LoginPage() {
@@ -35,9 +35,9 @@ export default function LoginPage() {
       >
         <div className="mb-8 flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-light text-accent">
-            <Inbox size={16} strokeWidth={1.5} />
+            <ShieldCheck size={16} strokeWidth={1.5} />
           </div>
-          <span className="text-sm font-bold tracking-tight text-ink">Buzon SUNAT</span>
+          <span className="text-sm font-bold tracking-tight text-ink">Anzen Sol</span>
         </div>
 
         <h1 className="text-2xl font-extrabold tracking-tight text-ink">Inicia sesion</h1>

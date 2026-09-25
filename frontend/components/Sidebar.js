@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
-import { LayoutDashboard, Building2, LogOut, Inbox, HeartPulse, CalendarDays, ListChecks, Users } from "lucide-react";
+import { LayoutDashboard, Building2, LogOut, ShieldCheck, HeartPulse, CalendarDays, ListChecks, Users } from "lucide-react";
 import { api, clearToken } from "../lib/api";
 
 const ENLACES = [
@@ -38,9 +38,9 @@ export default function Sidebar() {
     <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col bg-ink">
       <div className="flex items-center gap-2.5 px-5 py-6">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-white">
-          <Inbox size={16} strokeWidth={1.5} />
+          <ShieldCheck size={16} strokeWidth={1.5} />
         </div>
-        <span className="font-heading text-base font-bold tracking-tight text-white">Buzon SUNAT</span>
+        <span className="font-heading text-base font-bold tracking-tight text-white">Anzen Sol</span>
       </div>
 
       <nav className="flex-1 space-y-1 px-3">

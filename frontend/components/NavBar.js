@@ -24,7 +24,7 @@ export default function NavBar() {
 
   return (
     <nav className="flex items-center gap-8 border-b border-slate-100 py-4">
-      <span className="text-sm font-bold tracking-tight text-ink">Buzon SUNAT</span>
+      <span className="text-sm font-bold tracking-tight text-ink">Anzen Sol</span>
 
       <div className="flex flex-1 gap-6">
         {enlaces.map(({ href, label, Icon }) => {

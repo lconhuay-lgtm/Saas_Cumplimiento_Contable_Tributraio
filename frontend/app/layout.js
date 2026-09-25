@@ -22,8 +22,8 @@ const openSans = Open_Sans({
 });
 
 export const metadata = {
-  title: "Buzon SUNAT",
-  description: "Tablero multi-RUC del buzon de notificaciones SUNAT",
+  title: "Anzen Sol",
+  description: "Anzen Sol -- tablero multi-RUC del buzon de notificaciones SUNAT",
 };
 
 export default function RootLayout({ children }) {

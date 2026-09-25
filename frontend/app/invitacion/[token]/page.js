@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Inbox, Loader2, XCircle } from "lucide-react";
+import { ShieldCheck, Loader2, XCircle } from "lucide-react";
 import { api, setToken } from "../../../lib/api";
 
 export default function AceptarInvitacionPage() {
@@ -45,9 +45,9 @@ export default function AceptarInvitacionPage() {
       <div className="surface-card w-full max-w-sm animate-fade-in-up p-10">
         <div className="mb-8 flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-light text-accent">
-            <Inbox size={16} strokeWidth={1.5} />
+            <ShieldCheck size={16} strokeWidth={1.5} />
           </div>
-          <span className="text-sm font-bold tracking-tight text-ink">Buzon SUNAT</span>
+          <span className="text-sm font-bold tracking-tight text-ink">Anzen Sol</span>
         </div>
 
         {info === null ? (

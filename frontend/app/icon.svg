@@ -1,0 +1,25 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0f172a" />
+      <stop offset="1" stop-color="#2563eb" />
+    </linearGradient>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="url(#bg)" />
+
+  <!-- Escudo: "Anzen" (seguridad/proteccion) -->
+  <path
+    d="M22,17 L42,17 Q45,17 45,20 L45,30 C45,42 38,49 32,52 C26,49 19,42 19,30 L19,20 Q19,17 22,17 Z"
+    fill="#ffffff"
+  />
+
+  <!-- Sol: "Sol" (SUNAT SOL / amanecer) -->
+  <g fill="#0f172a">
+    <circle cx="32" cy="29" r="5.5" />
+    <rect x="30.5" y="17" width="3" height="5" rx="1.5" />
+    <rect x="30.5" y="36" width="3" height="5" rx="1.5" />
+    <rect x="20" y="27.5" width="4" height="3" rx="1.5" />
+    <rect x="40" y="27.5" width="4" height="3" rx="1.5" />
+  </g>
+</svg>
