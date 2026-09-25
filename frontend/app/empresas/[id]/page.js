@@ -2,7 +2,29 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, CheckCheck, Mail, MailOpen, FileText, Loader2, Inbox, Filter, X, RadioTower, Award, ListChecks, Plus, Trash2, UserCog, ClipboardPlus, ClipboardCheck, KeyRound, MessageSquare } from "lucide-react";
+import {
+  ArrowLeft,
+  CheckCheck,
+  Mail,
+  MailOpen,
+  FileText,
+  Loader2,
+  Inbox,
+  Filter,
+  X,
+  RadioTower,
+  Award,
+  ListChecks,
+  Plus,
+  Trash2,
+  UserCog,
+  ClipboardPlus,
+  ClipboardCheck,
+  KeyRound,
+  MessageSquare,
+  Settings,
+  ShieldAlert,
+} from "lucide-react";
 import Sidebar from "../../../components/Sidebar";
 import { api, getToken } from "../../../lib/api";
 import { colorPuntoTipo } from "../../../lib/tiposMensaje";
@@ -12,6 +34,19 @@ const ETIQUETAS_FILTRO_ESPECIAL = {
   hoy: "novedades de hoy",
 };
 
+// Pestanas de nivel de pagina -- separan la configuracion de la empresa
+// (credenciales, cartera, canario, eliminar) y las obligaciones del buzon
+// en si, que antes vivian todas apiladas en una sola pantalla larga. A
+// pedido: "de talla mundial" -- se usa un tab bar con subrayado (patron de
+// Linear/GitHub/Stripe para navegacion de nivel de pagina), distinto del
+// estilo "pastilla" que ya usan los filtros por tipo mas abajo, para que
+// la jerarquia quede clara de un vistazo.
+const TABS_PAGINA = [
+  { id: "buzon", label: "Buzon", Icon: Inbox },
+  { id: "obligaciones", label: "Obligaciones", Icon: ListChecks },
+  { id: "configuracion", label: "Configuracion", Icon: Settings },
+];
+
 export default function DetalleEmpresaPage() {
   const { id } = useParams();
   const router = useRouter();
@@ -20,6 +55,11 @@ export default function DetalleEmpresaPage() {
   const [mensajes, setMensajes] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
+  const [tabActiva, setTabActiva] = useState("buzon");
+  // Buzon de Notificaciones (con PDF, con categorias) vs Buzon Mensajes
+  // (bandeja separada dentro de SUNAT, sin PDF, sin categorias) -- antes
+  // se mostraban mezclados en una sola lista, lo que restaba visibilidad.
+  const [origenActivo, setOrigenActivo] = useState("notificaciones");
   const [filtroTipo, setFiltroTipo] = useState("Todos");
   // Llega desde las tarjetas/dashboard con ?filtro=pendientes|hoy para entrar
   // directo con ese recorte aplicado, ademas de las pestanas por tipo.
@@ -181,19 +221,29 @@ export default function DetalleEmpresaPage() {
 
   const hayPendientes = mensajes.some((m) => !m.leido);
 
-  // Pestanas dinamicas: solo los tipos que de verdad aparecen en los
-  // mensajes de esta empresa, ordenadas por cuantas hay (las mas
-  // frecuentes primero) para que las pestanas utiles queden a la vista sin
-  // tener que hacer scroll horizontal.
-  const pestanas = useMemo(() => {
+  // Buzon de Notificaciones vs Buzon Mensajes -- ver comentario de
+  // origenActivo arriba. origen="notificaciones" es el default del
+  // backend (mensajes antiguos, de antes de que existiera Buzon Mensajes,
+  // tambien caen aca).
+  const mensajesNotificaciones = useMemo(
+    () => mensajes.filter((m) => m.origen !== "mensajes"),
+    [mensajes]
+  );
+  const mensajesBandeja = useMemo(() => mensajes.filter((m) => m.origen === "mensajes"), [mensajes]);
+
+  // Pestanas por categoria -- SOLO tienen sentido para Notificaciones (la
+  // clasificacion de tipo, ver lib/tiposMensaje.js, se pensó para esa
+  // bandeja). Buzon Mensajes queda como lista simple, sin categorias, a
+  // pedido.
+  const pestanasTipo = useMemo(() => {
     const conteo = {};
-    for (const m of mensajes) {
+    for (const m of mensajesNotificaciones) {
       const tipo = m.tipo || "Otros";
       conteo[tipo] = (conteo[tipo] || 0) + 1;
     }
     const ordenadas = Object.entries(conteo).sort((a, b) => b[1] - a[1]);
-    return [["Todos", mensajes.length], ...ordenadas];
-  }, [mensajes]);
+    return [["Todos", mensajesNotificaciones.length], ...ordenadas];
+  }, [mensajesNotificaciones]);
 
   const inicioDeHoy = useMemo(() => {
     const d = new Date();
@@ -201,8 +251,10 @@ export default function DetalleEmpresaPage() {
     return d;
   }, []);
 
-  const mensajesFiltrados = mensajes
-    .filter((m) => filtroTipo === "Todos" || (m.tipo || "Otros") === filtroTipo)
+  const listaBase = origenActivo === "notificaciones" ? mensajesNotificaciones : mensajesBandeja;
+
+  const mensajesFiltrados = listaBase
+    .filter((m) => origenActivo !== "notificaciones" || filtroTipo === "Todos" || (m.tipo || "Otros") === filtroTipo)
     .filter((m) => {
       if (filtroEspecial === "pendientes") return !m.leido;
       if (filtroEspecial === "hoy") return new Date(m.descubierto_en) >= inicioDeHoy;
@@ -227,107 +279,71 @@ export default function DetalleEmpresaPage() {
               {empresa ? empresa.razon_social : "Mensajes del buzon"}
             </h1>
             {empresa && (
-              <p className="mt-0.5 text-sm text-slate-500">
-                RUC {empresa.ruc} &middot; Mensajes del buzon
-              </p>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {empresa && usuarioActual?.rol === "admin" && (
-              <div
-                className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                title="Cartera: que usuario del estudio tiene asignada esta empresa (solo el admin puede reasignarla)"
-              >
-                <UserCog size={15} strokeWidth={1.5} className="shrink-0 text-slate-400" />
-                <select
-                  value={empresa.asignado_a_usuario_id || ""}
-                  onChange={(e) => cambiarAsignado(e.target.value)}
-                  className="bg-transparent text-sm font-medium text-slate-600 outline-none"
-                >
-                  <option value="">Sin asignar</option>
-                  {usuarios.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.email}
-                    </option>
-                  ))}
-                </select>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+                <span>RUC {empresa.ruc}</span>
+                {empresa.es_canario && (
+                  <span className="flex items-center gap-1 rounded-full bg-accent-light px-2 py-0.5 text-[11px] font-semibold text-accent">
+                    <RadioTower size={11} strokeWidth={1.75} />
+                    Canario
+                  </span>
+                )}
+                {empresa.es_buen_contribuyente && (
+                  <span className="flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                    <Award size={11} strokeWidth={1.75} />
+                    Buen Contribuyente
+                  </span>
+                )}
               </div>
             )}
-            {empresa && usuarioActual && usuarioActual.rol !== "admin" && (
-              <div
-                className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-500"
-                title="Cartera: solo el admin puede reasignarla"
-              >
-                <UserCog size={15} strokeWidth={1.5} className="shrink-0 text-slate-400" />
-                {usuarios.find((u) => u.id === empresa.asignado_a_usuario_id)?.email || "Sin asignar"}
-              </div>
-            )}
-            {empresa && (
-              <button
-                onClick={toggleCanario}
-                title="Fase 3: usar esta empresa como cuenta de prueba para el monitoreo automatico del login a SUNAT (ver Salud del sistema)"
-                className={`flex items-center gap-1.5 rounded-lg border px-3.5 py-2 text-sm font-medium transition-all duration-300 ease-out ${
-                  empresa.es_canario
-                    ? "border-accent bg-accent-light text-accent"
-                    : "border-slate-200 text-slate-500 hover:border-accent hover:text-accent"
-                }`}
-              >
-                <RadioTower size={15} strokeWidth={1.5} />
-                {empresa.es_canario ? "Cuenta canario activa" : "Marcar como cuenta canario"}
-              </button>
-            )}
-            {empresa && (
-              <button
-                onClick={toggleBuenContribuyente}
-                title="Modulo de cronograma: usar la fecha de vencimiento extendida de 'Buenos Contribuyentes y UESP' en vez del cronograma general por ultimo digito de RUC"
-                className={`flex items-center gap-1.5 rounded-lg border px-3.5 py-2 text-sm font-medium transition-all duration-300 ease-out ${
-                  empresa.es_buen_contribuyente
-                    ? "border-accent bg-accent-light text-accent"
-                    : "border-slate-200 text-slate-500 hover:border-accent hover:text-accent"
-                }`}
-              >
-                <Award size={15} strokeWidth={1.5} />
-                {empresa.es_buen_contribuyente ? "Buen Contribuyente" : "Marcar Buen Contribuyente"}
-              </button>
-            )}
-            <button
-              onClick={marcarTodos}
-              disabled={!hayPendientes}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition-all duration-300 ease-out hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <CheckCheck size={15} strokeWidth={1.5} />
-              Marcar todos como leidos
-            </button>
-            {empresa && (
-              <button
-                onClick={() => setMostrarEditarCredenciales(true)}
-                title="Cambiar el usuario/clave SOL guardados de esta empresa"
-                className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-500 transition-all duration-300 ease-out hover:border-accent hover:text-accent"
-              >
-                <KeyRound size={15} strokeWidth={1.5} />
-                Credenciales
-              </button>
-            )}
-            {empresa && (
-              <button
-                onClick={eliminarEmpresa}
-                title="Eliminar esta empresa y todo su historial"
-                className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-500 transition-all duration-300 ease-out hover:border-red-300 hover:text-red-600"
-              >
-                <Trash2 size={15} strokeWidth={1.5} />
-                Eliminar
-              </button>
-            )}
           </div>
+          <button
+            onClick={marcarTodos}
+            disabled={!hayPendientes}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition-all duration-300 ease-out hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <CheckCheck size={15} strokeWidth={1.5} />
+            Marcar todos como leidos
+          </button>
         </div>
 
         {error && (
           <div className="mt-6 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>
         )}
 
-        {empresa && <SeccionObligaciones empresaId={id} />}
+        <div className="mt-5 flex gap-1 border-b border-slate-200">
+          {TABS_PAGINA.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              onClick={() => setTabActiva(id)}
+              className={`flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-sm font-semibold transition-colors duration-300 ease-out ${
+                tabActiva === id
+                  ? "border-accent text-accent"
+                  : "border-transparent text-slate-500 hover:text-ink"
+              }`}
+            >
+              <Icon size={15} strokeWidth={1.75} />
+              {label}
+              {id === "buzon" && hayPendientes && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />}
+            </button>
+          ))}
+        </div>
 
-        {cargando ? (
+        {tabActiva === "obligaciones" && empresa && <SeccionObligaciones empresaId={id} />}
+
+        {tabActiva === "configuracion" && empresa && (
+          <SeccionConfiguracion
+            empresa={empresa}
+            usuarios={usuarios}
+            usuarioActual={usuarioActual}
+            onCambiarAsignado={cambiarAsignado}
+            onToggleCanario={toggleCanario}
+            onToggleBuenContribuyente={toggleBuenContribuyente}
+            onEditarCredenciales={() => setMostrarEditarCredenciales(true)}
+            onEliminar={eliminarEmpresa}
+          />
+        )}
+
+        {tabActiva === "buzon" && (cargando ? (
           <p className="mt-8 text-sm text-slate-500">Cargando...</p>
         ) : mensajes.length === 0 ? (
           <p className="mt-8 text-sm text-slate-500">
@@ -336,10 +352,36 @@ export default function DetalleEmpresaPage() {
           </p>
         ) : (
           <div className="mt-6 flex flex-col gap-6 xl:flex-row xl:items-start">
-            {/* Panel izquierdo: pestanas por tipo + lista de mensajes */}
+            {/* Panel izquierdo: Notificaciones/Mensajes + (solo Notificaciones) pestanas por tipo + lista */}
             <div className="min-w-0 xl:w-[34%] xl:shrink-0">
+              <div className="flex gap-1.5">
+                {[
+                  ["notificaciones", "Notificaciones", mensajesNotificaciones.length],
+                  ["mensajes", "Mensajes", mensajesBandeja.length],
+                ].map(([id, label, cantidad]) => (
+                  <button
+                    key={id}
+                    onClick={() => setOrigenActivo(id)}
+                    className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition-colors duration-300 ease-out ${
+                      origenActivo === id
+                        ? "bg-ink text-white"
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    {label}
+                    <span
+                      className={`rounded-full px-1.5 text-[11px] ${
+                        origenActivo === id ? "bg-white/20" : "bg-white text-slate-500"
+                      }`}
+                    >
+                      {cantidad}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
               {filtroEspecial && ETIQUETAS_FILTRO_ESPECIAL[filtroEspecial] && (
-                <div className="mb-3 flex items-center gap-2 rounded-lg bg-accent-light px-3 py-2 text-xs font-medium text-accent">
+                <div className="mt-3 flex items-center gap-2 rounded-lg bg-accent-light px-3 py-2 text-xs font-medium text-accent">
                   <Filter size={12} strokeWidth={1.5} />
                   Mostrando solo: {ETIQUETAS_FILTRO_ESPECIAL[filtroEspecial]}
                   <button
@@ -352,35 +394,41 @@ export default function DetalleEmpresaPage() {
                 </div>
               )}
 
-              <div className="flex flex-wrap gap-1.5 border-b border-slate-100 pb-3">
-                {pestanas.map(([tipo, cantidad]) => (
-                  <button
-                    key={tipo}
-                    onClick={() => setFiltroTipo(tipo)}
-                    className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors duration-300 ease-out ${
-                      filtroTipo === tipo
-                        ? "bg-accent text-white"
-                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                    }`}
-                  >
-                    {tipo !== "Todos" && (
-                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${colorPuntoTipo(tipo)}`} />
-                    )}
-                    {tipo}
-                    <span
-                      className={`rounded-full px-1.5 text-[11px] ${
-                        filtroTipo === tipo ? "bg-white/20" : "bg-white text-slate-500"
+              {origenActivo === "notificaciones" && (
+                <div className="mt-3 flex flex-wrap gap-1.5 border-b border-slate-100 pb-3">
+                  {pestanasTipo.map(([tipo, cantidad]) => (
+                    <button
+                      key={tipo}
+                      onClick={() => setFiltroTipo(tipo)}
+                      className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors duration-300 ease-out ${
+                        filtroTipo === tipo
+                          ? "bg-accent text-white"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                       }`}
                     >
-                      {cantidad}
-                    </span>
-                  </button>
-                ))}
-              </div>
+                      {tipo !== "Todos" && (
+                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${colorPuntoTipo(tipo)}`} />
+                      )}
+                      {tipo}
+                      <span
+                        className={`rounded-full px-1.5 text-[11px] ${
+                          filtroTipo === tipo ? "bg-white/20" : "bg-white text-slate-500"
+                        }`}
+                      >
+                        {cantidad}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
               <div className="surface-card mt-4 max-h-[80vh] divide-y divide-slate-100 overflow-y-auto">
                 {mensajesFiltrados.length === 0 ? (
-                  <p className="p-5 text-sm text-slate-500">No hay mensajes en esta categoria/filtro.</p>
+                  <p className="p-5 text-sm text-slate-500">
+                    {origenActivo === "notificaciones"
+                      ? "No hay notificaciones en esta categoria/filtro."
+                      : "No hay mensajes en este filtro."}
+                  </p>
                 ) : (
                   mensajesFiltrados.map((m) => {
                     const esClickeable = m.tiene_documento || !!m.contenido_texto;
@@ -511,7 +559,7 @@ export default function DetalleEmpresaPage() {
               </div>
             </div>
           </div>
-        )}
+        ))}
 
         {mensajeParaTarea && (
           <ModalCrearTarea
@@ -536,6 +584,140 @@ export default function DetalleEmpresaPage() {
           />
         )}
       </main>
+    </div>
+  );
+}
+
+// Todo lo que antes estaba apilado como botones sueltos en el encabezado
+// (cartera, canario, buen contribuyente, credenciales, eliminar) -- a
+// pedido: separarlo en su propia pestana para que el encabezado y el
+// buzon no queden saturados. Zona de peligro (Eliminar) queda visualmente
+// aparte del resto, ultima y en rojo, patron estandar de "danger zone".
+function SeccionConfiguracion({
+  empresa,
+  usuarios,
+  usuarioActual,
+  onCambiarAsignado,
+  onToggleCanario,
+  onToggleBuenContribuyente,
+  onEditarCredenciales,
+  onEliminar,
+}) {
+  const esAdmin = usuarioActual?.rol === "admin";
+  const emailAsignado = usuarios.find((u) => u.id === empresa.asignado_a_usuario_id)?.email;
+
+  return (
+    <div className="mt-6 max-w-2xl space-y-4">
+      <div className="surface-card divide-y divide-slate-100 p-1">
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <div className="flex items-center gap-2.5">
+            <UserCog size={16} strokeWidth={1.5} className="shrink-0 text-slate-400" />
+            <div>
+              <p className="text-sm font-semibold text-ink">Cartera</p>
+              <p className="text-xs text-slate-500">Que usuario del estudio tiene asignada esta empresa.</p>
+            </div>
+          </div>
+          {esAdmin ? (
+            <select
+              value={empresa.asignado_a_usuario_id || ""}
+              onChange={(e) => onCambiarAsignado(e.target.value)}
+              className="campo-input w-52"
+            >
+              <option value="">Sin asignar</option>
+              {usuarios.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.email}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="text-sm text-slate-500">{emailAsignado || "Sin asignar"}</span>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <div className="flex items-center gap-2.5">
+            <RadioTower size={16} strokeWidth={1.5} className="shrink-0 text-slate-400" />
+            <div>
+              <p className="text-sm font-semibold text-ink">Cuenta canario</p>
+              <p className="text-xs text-slate-500">
+                Usar esta empresa como cuenta de prueba para el monitoreo automatico del login a SUNAT (ver Salud
+                del sistema).
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onToggleCanario}
+            className={`shrink-0 rounded-lg border px-3.5 py-1.5 text-xs font-semibold transition-all duration-300 ease-out ${
+              empresa.es_canario
+                ? "border-accent bg-accent-light text-accent"
+                : "border-slate-200 text-slate-500 hover:border-accent hover:text-accent"
+            }`}
+          >
+            {empresa.es_canario ? "Activa" : "Activar"}
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <div className="flex items-center gap-2.5">
+            <Award size={16} strokeWidth={1.5} className="shrink-0 text-slate-400" />
+            <div>
+              <p className="text-sm font-semibold text-ink">Buen Contribuyente</p>
+              <p className="text-xs text-slate-500">
+                Usar la fecha de vencimiento extendida de &quot;Buenos Contribuyentes y UESP&quot; en vez del
+                cronograma general por ultimo digito de RUC.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onToggleBuenContribuyente}
+            className={`shrink-0 rounded-lg border px-3.5 py-1.5 text-xs font-semibold transition-all duration-300 ease-out ${
+              empresa.es_buen_contribuyente
+                ? "border-accent bg-accent-light text-accent"
+                : "border-slate-200 text-slate-500 hover:border-accent hover:text-accent"
+            }`}
+          >
+            {empresa.es_buen_contribuyente ? "Activo" : "Activar"}
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <div className="flex items-center gap-2.5">
+            <KeyRound size={16} strokeWidth={1.5} className="shrink-0 text-slate-400" />
+            <div>
+              <p className="text-sm font-semibold text-ink">Credenciales SOL</p>
+              <p className="text-xs text-slate-500">Usuario y clave guardados para consultar el buzon de SUNAT.</p>
+            </div>
+          </div>
+          <button
+            onClick={onEditarCredenciales}
+            className="shrink-0 rounded-lg border border-slate-200 px-3.5 py-1.5 text-xs font-semibold text-slate-600 transition-all duration-300 ease-out hover:border-accent hover:text-accent"
+          >
+            Cambiar
+          </button>
+        </div>
+      </div>
+
+      <div className="surface-card border-red-100 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <ShieldAlert size={16} strokeWidth={1.5} className="shrink-0 text-red-400" />
+            <div>
+              <p className="text-sm font-semibold text-red-700">Eliminar empresa</p>
+              <p className="text-xs text-slate-500">
+                Borra tambien su historial de mensajes, tareas y credenciales guardadas. No se puede deshacer.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onEliminar}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 px-3.5 py-1.5 text-xs font-semibold text-red-600 transition-all duration-300 ease-out hover:bg-red-50"
+          >
+            <Trash2 size={13} strokeWidth={1.5} />
+            Eliminar
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
