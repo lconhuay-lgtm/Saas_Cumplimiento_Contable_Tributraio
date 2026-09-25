@@ -349,6 +349,9 @@ class AgendaMesResponse(BaseModel):
 _PATRON_MESES_ACTIVOS = r"^(1[0-2]|[1-9])(,(1[0-2]|[1-9]))*$"
 
 
+_PATRON_PRIORIDAD = r"^(baja|media|alta|urgente)$"
+
+
 class EmpresaObligacionCreate(BaseModel):
     tipo: str = Field(..., pattern=r"^(igv_renta|planilla|afp|sbs|cts|itan|otro)$")
     nombre: str = Field(..., min_length=1, max_length=200)
@@ -357,6 +360,7 @@ class EmpresaObligacionCreate(BaseModel):
     dia_fijo: int | None = Field(None, ge=1, le=31)
     mes_fijo: int | None = Field(None, ge=1, le=12)
     meses_activos: str | None = Field(None, pattern=_PATRON_MESES_ACTIVOS)
+    prioridad: str = Field("media", pattern=_PATRON_PRIORIDAD)
 
 
 class EmpresaObligacionUpdate(BaseModel):
@@ -366,6 +370,7 @@ class EmpresaObligacionUpdate(BaseModel):
     dia_fijo: int | None = Field(None, ge=1, le=31)
     mes_fijo: int | None = Field(None, ge=1, le=12)
     meses_activos: str | None = Field(None, pattern=_PATRON_MESES_ACTIVOS)
+    prioridad: str | None = Field(None, pattern=_PATRON_PRIORIDAD)
 
 
 class EmpresaObligacionResponse(BaseModel):
@@ -378,6 +383,7 @@ class EmpresaObligacionResponse(BaseModel):
     dia_fijo: int | None
     mes_fijo: int | None
     meses_activos: str | None
+    prioridad: str
     creado_en: datetime
 
     class Config:

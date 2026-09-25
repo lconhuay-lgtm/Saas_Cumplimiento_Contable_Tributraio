@@ -153,7 +153,7 @@ def generar_tareas_mes(db: Session, tenant_id: str, anio: int, mes: int) -> dict
                 periodo=periodo,
                 fecha_vencimiento=fecha_vencimiento,
                 proceso=proceso,
-                prioridad="media",
+                prioridad=ob.prioridad,
             )
             db.add(tarea)
             creadas += 1

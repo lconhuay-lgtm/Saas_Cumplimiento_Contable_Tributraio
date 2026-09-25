@@ -405,6 +405,12 @@ class EmpresaObligacion(Base):
     # Filtro opcional de meses (ver docstring de la clase) -- "5,11" para
     # CTS, "4,5,...,12" para ITAN en 9 cuotas, etc. None = todos los meses.
     meses_activos: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Prioridad por defecto de las tareas que genere esta obligacion --
+    # baja|media|alta|urgente, mismo vocabulario que TareaObligacion.prioridad
+    # (ver esa clase). Se copia a cada TareaObligacion en el momento de
+    # generarla (app.tareas.generar_tareas_mes); cambiarla despues no
+    # reescribe las tareas ya generadas, solo aplica a las nuevas.
+    prioridad: Mapped[str] = mapped_column(String(20), default="media", nullable=False)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="obligaciones")

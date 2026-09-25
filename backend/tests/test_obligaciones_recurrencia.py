@@ -146,6 +146,47 @@ def test_meses_activos_filtra_cronograma_sunat_para_itan_en_cuotas(client, db_se
     assert tareas[0]["tipo"] == "itan"
 
 
+def test_prioridad_de_la_obligacion_se_copia_a_la_tarea_generada(client):
+    headers = _registrar(client)
+    empresa_id = client.post(
+        "/empresas",
+        json={
+            "ruc": "20121212121", "razon_social": "Empresa Prioridad", "usuario_sol": "x", "clave_sol": "x",
+            "obligacion_igv_renta": False,
+        },
+        headers=headers,
+    ).json()["id"]
+
+    resp = client.post(
+        f"/empresas/{empresa_id}/obligaciones",
+        json={
+            "tipo": "otro", "nombre": "Recordatorio urgente", "regla_vencimiento": "dia_fijo_mes",
+            "dia_fijo": 10, "prioridad": "urgente",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["prioridad"] == "urgente"
+
+    hoy = datetime.now(timezone.utc)
+    periodo_actual = f"{hoy.year:04d}-{hoy.month:02d}"
+    tareas = client.get(f"/tareas?empresa_id={empresa_id}&periodo={periodo_actual}", headers=headers).json()
+    assert len(tareas) == 1
+    assert tareas[0]["prioridad"] == "urgente"
+
+
+def test_prioridad_por_defecto_de_obligacion_es_media(client):
+    headers = _registrar(client)
+    empresa_id = client.post(
+        "/empresas",
+        json={"ruc": "20131313131", "razon_social": "Empresa Prioridad2", "usuario_sol": "x", "clave_sol": "x"},
+        headers=headers,
+    ).json()["id"]
+
+    obligaciones = client.get(f"/empresas/{empresa_id}/obligaciones", headers=headers).json()
+    assert obligaciones[0]["prioridad"] == "media"
+
+
 def test_crear_obligacion_genera_tarea_del_mes_actual_sin_boton_manual(client):
     """Bug reportado: crear una obligacion dejaba la tarea del mes actual
     invisible en Tareas/Calendario hasta que alguien se acordara de apretar

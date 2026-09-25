@@ -695,6 +695,17 @@ const ETIQUETAS_REGLA = {
   manual: "Sin regla automatica -- se carga la fecha a mano cada vez",
 };
 
+// Mismos colores que usa el modulo Tareas para pintar la prioridad -- la
+// obligacion solo define el default que hereda cada tarea que genera (ver
+// EmpresaObligacion.prioridad en el backend), asi que conviene que se lea
+// igual en los dos lugares.
+const COLOR_PRIORIDAD = {
+  baja: "bg-slate-100 text-slate-600",
+  media: "bg-blue-50 text-blue-700",
+  alta: "bg-amber-100 text-amber-800",
+  urgente: "bg-red-100 text-red-700",
+};
+
 const MESES = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
@@ -792,6 +803,13 @@ function SeccionObligaciones({ empresaId }) {
                   <span className="rounded-full bg-accent-light px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-accent">
                     {ETIQUETAS_TIPO_OBLIGACION[ob.tipo] || ob.tipo}
                   </span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                      COLOR_PRIORIDAD[ob.prioridad] || COLOR_PRIORIDAD.media
+                    }`}
+                  >
+                    {ob.prioridad}
+                  </span>
                   <span className="text-sm font-medium text-ink">{ob.nombre}</span>
                 </div>
                 <p className="mt-0.5 text-xs text-slate-500">
@@ -854,6 +872,7 @@ function FormularioObligacion({ empresaId, onCreada }) {
   const [mesFijo, setMesFijo] = useState(2);
   const [mesesEspecificos, setMesesEspecificos] = useState(false);
   const [mesesActivos, setMesesActivos] = useState([]);
+  const [prioridad, setPrioridad] = useState("media");
   const [error, setError] = useState("");
   const [guardando, setGuardando] = useState(false);
 
@@ -879,6 +898,7 @@ function FormularioObligacion({ empresaId, onCreada }) {
         dia_fijo: reglaVencimiento === "dia_fijo_mes" || reglaVencimiento === "dia_fijo_anual" ? Number(diaFijo) : null,
         mes_fijo: reglaVencimiento === "dia_fijo_anual" ? Number(mesFijo) : null,
         meses_activos: permiteMesesActivos && mesesEspecificos ? mesesActivos.join(",") : null,
+        prioridad,
       });
       onCreada();
     } catch (err) {
@@ -909,6 +929,15 @@ function FormularioObligacion({ empresaId, onCreada }) {
         <div>
           <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Nombre</label>
           <input value={nombre} onChange={(e) => setNombre(e.target.value)} required className="campo-input" />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Prioridad</label>
+          <select value={prioridad} onChange={(e) => setPrioridad(e.target.value)} className="campo-input">
+            <option value="baja">Baja</option>
+            <option value="media">Media</option>
+            <option value="alta">Alta</option>
+            <option value="urgente">Urgente</option>
+          </select>
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Regla de vencimiento</label>
