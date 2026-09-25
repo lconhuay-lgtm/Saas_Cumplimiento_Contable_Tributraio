@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from app.database import SessionLocal
 from app.models import ConsultaJob, FichaRucJob, ReporteTributarioJob, Empresa, CredencialSol, MensajeBuzon
 from app.security import descifrar_clave_sol
-from app.rate_limit import adquirir_slot_global, liberar_slot_global
+from app.rate_limit import adquirir_slot_global, liberar_slot_global, limite_mensajes_por_consulta
 from app.almacenamiento import guardar_documento, guardar_documento_bytes, AlmacenamientoError
 from app.clasificacion import clasificar_tipo
 
@@ -174,6 +174,7 @@ def ejecutar_consulta_buzon(job_id: str):
                     clave_sol=clave_en_claro,
                     razon_social=empresa.razon_social,
                     headless=False,
+                    limite_mensajes=limite_mensajes_por_consulta(),
                     ids_conocidos=ids_conocidos,
                     ids_conocidos_buzon_mensajes=ids_conocidos_buzon_mensajes,
                     on_progreso=_reportar_etapa,

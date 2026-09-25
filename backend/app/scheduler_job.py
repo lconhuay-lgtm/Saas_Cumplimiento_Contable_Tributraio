@@ -25,12 +25,10 @@ from app.models import Usuario
 from app.queue_conn import cola_consultas, redis_conn
 from app.jobs import ejecutar_consulta_buzon
 from app.email_utils import enviar_resumen_diario, enviar_alerta_canario
-from app.rate_limit import adquirir_slot_global, liberar_slot_global
+from app.rate_limit import adquirir_slot_global, liberar_slot_global, espaciado_consultas_seg
 from app.security import descifrar_clave_sol
 
 logger = logging.getLogger("app.scheduler_job")
-
-ESPACIADO_SEG_DEFAULT = 45
 
 # Fase 3 (confiabilidad/observabilidad): correo que recibe la alerta del
 # canario -- es un aviso operativo para quien administra el sistema, no
@@ -49,7 +47,7 @@ CANARIO_FALLOS_CONSECUTIVOS_PARA_ALERTA = int(
 _CLAVE_REDIS_CANARIO_EN_ALERTA = "canario:en_alerta"
 
 
-def encolar_chequeo_nocturno(espaciado_seg: int = ESPACIADO_SEG_DEFAULT) -> dict:
+def encolar_chequeo_nocturno(espaciado_seg: int | None = None) -> dict:
     """
     Crea un ConsultaJob 'pendiente' por cada empresa activa (de un tenant
     activo, con credenciales cargadas) y lo programa en la cola con
@@ -59,10 +57,17 @@ def encolar_chequeo_nocturno(espaciado_seg: int = ESPACIADO_SEG_DEFAULT) -> dict
     que esta funcion (y el endpoint /admin que la llama) responda al toque,
     sin importar cuantas empresas haya.
 
+    espaciado_seg=None (default) usa el valor configurado en el panel
+    maestro (Fase 5, ver app.rate_limit.espaciado_consultas_seg) -- se
+    resuelve aca y no como default del parametro porque ese se evalua una
+    sola vez al importar el modulo, no en cada llamada.
+
     Requiere que el worker corra con with_scheduler=True (ver worker_entry.py)
     para que los jobs programados realmente se muevan a la cola cuando les
     toca.
     """
+    if espaciado_seg is None:
+        espaciado_seg = espaciado_consultas_seg()
     db = SessionLocal()
     try:
         empresas = (

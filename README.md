@@ -166,6 +166,10 @@ Prioriza lo que más daño hace si se rompe sin avisar, no cobertura total: aisl
 - [x] Rediseño visual (Tailwind CSS + lucide-react): paleta esmeralda corporativo, tipografía con jerarquía marcada, sombras sutiles, microinteracciones.
 - [x] Visor de PDF: el worker descarga el documento de cada mensaje nuevo (reutilizando la lógica de descarga ya probada del motor original) dentro de la misma sesión de SUNAT, y el tablero lo muestra en un visor integrado.
 
+**Fase 5 (a pedido, plan de "obligaciones inteligentes" -- ver módulo de Tareas/Agenda).**
+- [x] Verificación de email: link de activación por correo al registrarse (no bloquea el login), banner + botón "reenviar" en el tablero mientras no se confirme (`Usuario.email_verificado`, `POST /auth/verificar-email/{token}`, `POST /auth/reenviar-verificacion`).
+- [x] Panel maestro (`/configuracion`, solo staff de la plataforma vía `es_staff_plataforma`): límite de mensajes por consulta, espaciado entre consultas de una tanda, concurrencia máxima de sesiones SUNAT, y mínimo entre consultas del mismo RUC -- editables desde el tablero sin redeploy (`ConfiguracionSistema`, `GET/PUT /admin/configuracion`). `app.rate_limit` lee estos valores de la base en cada chequeo, con fallback a las variables de entorno de siempre si la fila todavía no existe o la base no responde.
+
 ## Visor de PDF: cómo funciona y cómo migrar a producción
 
 Cuando el worker encuentra un mensaje nuevo, hace clic en él (dentro de la misma sesión ya autenticada) y descarga su documento con `_descargar_documento_constancia()` — el método que ya usaba la automatización original, sin reescribir esa lógica. Un fallo descargando el documento nunca tumba la consulta: el mensaje se guarda igual, solo queda sin botón "Ver PDF" hasta la próxima consulta.

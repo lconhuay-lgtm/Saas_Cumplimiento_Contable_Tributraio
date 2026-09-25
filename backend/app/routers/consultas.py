@@ -17,21 +17,19 @@ from app.schemas import (
 from app.deps import get_usuario_actual
 from app.queue_conn import cola_consultas
 from app.jobs import ejecutar_consulta_buzon
-from app.rate_limit import verificar_limite_ruc, LimiteExcedido
+from app.rate_limit import verificar_limite_ruc, espaciado_consultas_seg, LimiteExcedido
 from app.almacenamiento import leer_documento, AlmacenamientoError
 from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible
 
 router = APIRouter(tags=["consultas"])
 
-ESPACIADO_CONSULTAR_TODAS_SEG = 45
-
 # Ventana de tiempo para decidir que jobs pertenecen a "la tanda actual" al
 # calcular el progreso de una consulta masiva (ver /consultas/estado).
 # No existe un concepto de "lote" en la base de datos -- se aproxima con
-# esta ventana, generosa a proposito: con ESPACIADO_CONSULTAR_TODAS_SEG=45s
-# y cada consulta individual pudiendo tardar 1-2 minutos, una tanda de
-# varias decenas de empresas puede tardar mas de una hora en drenar del
-# todo.
+# esta ventana, generosa a proposito: con un espaciado tipico de 45s (ver
+# app.rate_limit.espaciado_consultas_seg, editable en el panel maestro) y
+# cada consulta individual pudiendo tardar 1-2 minutos, una tanda de varias
+# decenas de empresas puede tardar mas de una hora en drenar del todo.
 VENTANA_ESTADO_CONSULTAS_MIN = 90
 
 
@@ -60,10 +58,13 @@ def consultar_empresa(
 
 @router.post("/empresas/consultar-todas")
 def consultar_todas_empresas(
-    espaciado_seg: int = ESPACIADO_CONSULTAR_TODAS_SEG,
+    espaciado_seg: int | None = None,
     usuario: Usuario = Depends(get_usuario_actual),
     db: Session = Depends(get_db),
 ):
+    if espaciado_seg is None:
+        espaciado_seg = espaciado_consultas_seg()
+
     empresas = (
         filtrar_empresas_visibles(db.query(Empresa), usuario)
         .filter(Empresa.activo.is_(True))

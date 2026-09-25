@@ -84,6 +84,12 @@ export const api = {
 
   me: () => apiFetch("/auth/me"),
 
+  // Fase 5: verificacion de email (link de activacion, no bloquea el login).
+  reenviarVerificacion: () => apiFetch("/auth/reenviar-verificacion", { method: "POST" }),
+
+  // Publico (sin token) -- para quien hace clic en el link del correo.
+  verificarEmail: (token) => apiFetch(`/auth/verificar-email/${token}`, { method: "POST" }),
+
   // Cartera: usuarios del propio tenant, para el selector de "asignar a".
   listarUsuarios: () => apiFetch("/usuarios"),
 
@@ -144,6 +150,12 @@ export const api = {
   obtenerDocumentosRecientes: (limite = 10) => apiFetch(`/admin/documentos-recientes?limite=${limite}`),
 
   ejecutarCanario: () => apiFetch("/admin/canario/ejecutar", { method: "POST" }),
+
+  // Fase 5: "panel maestro" -- ajustes operativos globales, solo staff de la plataforma.
+  obtenerConfiguracionSistema: () => apiFetch("/admin/configuracion"),
+
+  actualizarConfiguracionSistema: (data) =>
+    apiFetch("/admin/configuracion", { method: "PUT", body: JSON.stringify(data) }),
 
   /**
    * "Ingreso directo": pide un token de un solo uso (dura 2 minutos) para

@@ -23,17 +23,18 @@ from app.schemas import (
     UltimoMensajeResumen,
 )
 from app.security import cifrar_clave_sol, descifrar_clave_sol, crear_token_ingreso_directo, decodificar_token
-from app.rate_limit import adquirir_slot_global, liberar_slot_global, verificar_limite_ruc, LimiteExcedido
+from app.rate_limit import (
+    adquirir_slot_global,
+    liberar_slot_global,
+    verificar_limite_ruc,
+    espaciado_consultas_seg,
+    LimiteExcedido,
+)
 from app.queue_conn import cola_consultas
 from app.jobs import ejecutar_consulta_buzon
 from app.deps import get_usuario_actual
 from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible, es_admin
 from app import tareas as tareas_logic
-
-# Mismo espaciado que "Consultar todas" (ver routers/consultas.py) -- se
-# repite aca en vez de importarlo para no crear una dependencia cruzada
-# entre routers por una sola constante.
-ESPACIADO_IMPORTACION_SEG = 45
 
 logger = logging.getLogger("app.routers.empresas")
 
@@ -395,6 +396,10 @@ async def importar_empresas(
 
     detalle: list[EmpresaImportadaItem] = []
     creadas = ya_existian = con_error = 0
+    # Mismo espaciado que "Consultar todas" (ver routers/consultas.py) --
+    # se resuelve una sola vez ANTES del loop (no en cada fila) para no
+    # golpear la base de datos una vez por empresa importada.
+    espaciado_seg = espaciado_consultas_seg()
 
     for _, fila in df.iterrows():
         try:
@@ -465,7 +470,7 @@ async def importar_empresas(
                 db.commit()
                 db.refresh(job)
                 cola_consultas.enqueue_in(
-                    timedelta(seconds=creadas * ESPACIADO_IMPORTACION_SEG),
+                    timedelta(seconds=creadas * espaciado_seg),
                     ejecutar_consulta_buzon,
                     job.id,
                     job_timeout="10m",

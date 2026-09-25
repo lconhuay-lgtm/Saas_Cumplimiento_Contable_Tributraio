@@ -166,6 +166,32 @@ def enviar_invitacion_equipo(destinatario: str, nombre_tenant: str, invitado_por
     logger.info(f"Correo de invitacion enviado a {destinatario} (tenant {nombre_tenant})")
 
 
+def enviar_verificacion_email(destinatario: str, link: str) -> None:
+    """
+    Fase 5: link de activacion de cuenta -- se manda al registrarse y cada
+    vez que se pide "reenviar" (ver routers/auth.py). NO bloquea el login
+    (el token de acceso ya se devolvio en /auth/registro); esto solo le
+    permite al usuario confirmar que el correo es real. Mismo doble modo
+    que el resto del modulo, y misma politica que enviar_invitacion_equipo
+    (SI lanza si el envio real falla) porque quien pide un reenvio esta
+    esperando una confirmacion en pantalla, no puede quedarse pensando que
+    salio bien si en realidad no llego.
+    """
+    asunto = "Confirma tu correo en Anzen Sol"
+    cuerpo = (
+        "Gracias por registrarte en Anzen Sol.\n\n"
+        f"Para confirmar que este correo es tuyo, entra a:\n{link}\n\n"
+        "Este link vence en 3 dias. Si no creaste esta cuenta, podes ignorar este correo."
+    )
+
+    if _modo_prueba_activo():
+        _guardar_modo_prueba(destinatario, asunto, cuerpo)
+        return
+
+    _enviar_smtp(destinatario, asunto, cuerpo)
+    logger.info(f"Correo de verificacion enviado a {destinatario}")
+
+
 def _enviar_smtp(destinatario: str, asunto: str, cuerpo: str) -> None:
     mensaje = MIMEMultipart()
     mensaje["From"] = SMTP_FROM

@@ -24,6 +24,8 @@ class UsuarioResponse(BaseModel):
     email: EmailStr
     rol: str
     tenant_id: str
+    email_verificado: bool = True
+    es_staff_plataforma: bool = False
 
     class Config:
         from_attributes = True
@@ -519,3 +521,35 @@ class InvitacionInfoPublica(BaseModel):
     motivo_invalido: str | None = None
     tenant_nombre: str | None = None
     email: str | None = None
+
+
+# ---- Fase 5: verificacion de email + panel maestro ----
+
+
+class VerificacionEmailResponse(BaseModel):
+    """Respuesta de POST /auth/verificar-email/{token} -- pantalla publica, sin auth."""
+    verificado: bool
+    mensaje: str
+
+
+class ReenviarVerificacionResponse(BaseModel):
+    enviado: bool
+
+
+class ConfiguracionSistemaResponse(BaseModel):
+    limite_mensajes_por_consulta: int
+    espaciado_seg_entre_consultas: int
+    concurrencia_maxima: int
+    segundos_entre_consultas_mismo_ruc: int
+    actualizado_en: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ConfiguracionSistemaUpdate(BaseModel):
+    """Todos opcionales -- el panel maestro solo manda los campos que el usuario cambio."""
+    limite_mensajes_por_consulta: int | None = Field(default=None, ge=1, le=200)
+    espaciado_seg_entre_consultas: int | None = Field(default=None, ge=5, le=600)
+    concurrencia_maxima: int | None = Field(default=None, ge=1, le=20)
+    segundos_entre_consultas_mismo_ruc: int | None = Field(default=None, ge=5, le=3600)

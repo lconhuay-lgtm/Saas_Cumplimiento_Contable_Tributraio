@@ -57,6 +57,19 @@ class Usuario(Base):
     es_staff_plataforma: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
     ultimo_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Fase 5: verificacion de email por link de activacion (punto 10 del
+    # plan). NO bloquea el login ni el uso del tablero -- /auth/registro
+    # sigue devolviendo el token de acceso igual que siempre, esto solo
+    # habilita un aviso + boton "reenviar" en el tablero mientras el usuario
+    # no confirme. Los usuarios que ya existian antes de esta migracion
+    # quedan marcados como verificados de entrada (ver alembic 0024) para no
+    # aparecer de golpe como "sin verificar" sin haber hecho nada distinto.
+    email_verificado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Token de un solo uso del link de verificacion -- se regenera cada vez
+    # que se reenvia (ver /auth/reenviar-verificacion), asi que un link
+    # viejo deja de servir apenas se pide uno nuevo. None una vez verificado.
+    token_verificacion: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    token_verificacion_expira: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     tenant: Mapped["Tenant"] = relationship(back_populates="usuarios")
 
@@ -515,3 +528,38 @@ class InvitacionUsuario(Base):
     cancelado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     tenant: Mapped["Tenant"] = relationship()
+
+
+class ConfiguracionSistema(Base):
+    """
+    Fase 5: "panel maestro" -- ajustes operativos GLOBALES (no por tenant,
+    todos comparten el mismo scraper/worker), editables desde el tablero
+    por el equipo de la plataforma (ver deps.get_staff_actual) sin necesitar
+    redeploy para cambiar un numero. Antes de esto, limite_mensajes/
+    espaciado/concurrencia_maxima solo se podian tocar editando variables
+    de entorno y reiniciando los contenedores.
+
+    Fila unica (id fijo "global") -- no hace falta una tabla clave/valor
+    generica para 4 numeros. Ver app.rate_limit para como se leen estos
+    valores en tiempo real (con fallback a las variables de entorno de
+    siempre si esta fila todavia no existe) y donde se usa cada uno:
+      - limite_mensajes_por_consulta: cuantos mensajes del Buzon de
+        Notificaciones lee como maximo cada consulta (adapter.consultar_buzon).
+      - espaciado_seg_entre_consultas: segundos entre cada empresa de una
+        tanda (chequeo nocturno, "Consultar todas", importacion masiva).
+      - concurrencia_maxima: cuantas sesiones de Selenium contra SUNAT
+        pueden correr en paralelo en todo el sistema.
+      - segundos_entre_consultas_mismo_ruc: minimo entre dos consultas de
+        LA MISMA empresa (rate_limit.verificar_limite_ruc).
+    """
+    __tablename__ = "configuracion_sistema"
+
+    id: Mapped[str] = mapped_column(String(20), primary_key=True, default=lambda: "global")
+    limite_mensajes_por_consulta: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
+    espaciado_seg_entre_consultas: Mapped[int] = mapped_column(Integer, default=45, nullable=False)
+    concurrencia_maxima: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    segundos_entre_consultas_mismo_ruc: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+    actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+    actualizado_por_usuario_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True
+    )

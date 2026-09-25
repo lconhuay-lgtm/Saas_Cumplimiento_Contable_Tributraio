@@ -22,6 +22,7 @@ from app.scheduler_job import (
 )
 from app.clasificacion import clasificar_tipo
 from app.almacenamiento import limpiar_datos_antiguos
+from app.rate_limit import obtener_o_crear_configuracion
 from app.schemas import (
     SaludResponse,
     SaludCanarioResumen,
@@ -29,6 +30,8 @@ from app.schemas import (
     SaludConsultasResumen,
     ErrorRecienteItem,
     DocumentoRecienteItem,
+    ConfiguracionSistemaResponse,
+    ConfiguracionSistemaUpdate,
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -46,7 +49,7 @@ def _con_utc(momento):
 
 @router.post("/chequeo-nocturno")
 def disparar_chequeo_nocturno(
-    espaciado_seg: int = 45,
+    espaciado_seg: int | None = None,
     usuario: Usuario = Depends(get_staff_actual),
 ):
     return encolar_chequeo_nocturno(espaciado_seg=espaciado_seg)
@@ -249,6 +252,37 @@ def obtener_errores_recientes(
 
     items.sort(key=lambda i: i.ocurrido_en or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
     return items[:limite]
+
+
+@router.get("/configuracion", response_model=ConfiguracionSistemaResponse)
+def obtener_configuracion(
+    usuario: Usuario = Depends(get_staff_actual),
+    db: Session = Depends(get_db),
+):
+    """
+    Fase 5: "panel maestro" -- ajustes operativos globales (limite de
+    mensajes por consulta, espaciado entre consultas de una tanda,
+    concurrencia maxima de sesiones SUNAT, minimo entre dos consultas del
+    mismo RUC). Solo para el equipo de la plataforma (get_staff_actual):
+    estos numeros no son por tenant, los comparte todo el sistema.
+    """
+    return obtener_o_crear_configuracion(db)
+
+
+@router.put("/configuracion", response_model=ConfiguracionSistemaResponse)
+def actualizar_configuracion(
+    data: ConfiguracionSistemaUpdate,
+    usuario: Usuario = Depends(get_staff_actual),
+    db: Session = Depends(get_db),
+):
+    config = obtener_o_crear_configuracion(db)
+    cambios = data.model_dump(exclude_unset=True)
+    for campo, valor in cambios.items():
+        setattr(config, campo, valor)
+    config.actualizado_por_usuario_id = usuario.id
+    db.commit()
+    db.refresh(config)
+    return config
 
 
 @router.get("/documentos-recientes", response_model=list[DocumentoRecienteItem])
