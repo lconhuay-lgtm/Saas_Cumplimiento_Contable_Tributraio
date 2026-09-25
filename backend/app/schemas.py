@@ -252,6 +252,10 @@ class DashboardResumen(BaseModel):
     # mensual (IGV-Renta/PLAME) dentro de los proximos dias -- ver
     # app.cronograma_sunat.proximos_vencimientos_por_tenant.
     proximos_vencimientos: list[ProximoVencimientoItem] = []
+    # Modulo de Tareas/Agenda: tareas pendientes cuya fecha de vencimiento
+    # ya paso, de CUALQUIER periodo (no solo el mes actual) -- ver
+    # routers.dashboard.resumen.
+    tareas_vencidas: int = 0
 
 
 class EmpresaEnProgresoItem(BaseModel):
@@ -444,11 +448,13 @@ class GenerarTareasResponse(BaseModel):
 
 class AvancePorTipo(BaseModel):
     """Un renglon del panel 'Avance de Cumplimiento' del Dashboard -- cuantas
-    tareas de este tipo hay para el periodo pedido y cuantas ya se
-    completaron."""
+    tareas de este tipo hay para el periodo pedido, cuantas ya se
+    completaron y cuantas estan vencidas (pendientes con fecha ya
+    pasada)."""
     tipo: str
     total: int
     completados: int
+    vencidas: int = 0
     avance: float  # 0.0 a 100.0
 
 

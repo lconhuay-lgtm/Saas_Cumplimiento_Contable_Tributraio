@@ -1,6 +1,6 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   ListChecks,
@@ -46,6 +46,7 @@ const COLOR_PRIORIDAD = {
 
 const ETIQUETAS_FILTRO = [
   { valor: "pendiente", etiqueta: "Pendientes" },
+  { valor: "vencida", etiqueta: "Vencidas" },
   { valor: "completado", etiqueta: "Completadas" },
   { valor: "no_aplica", etiqueta: "No aplica" },
   { valor: "", etiqueta: "Todas" },
@@ -65,13 +66,26 @@ function diasRestantes(fechaIso) {
   return Math.round((fecha - hoy) / 86400000);
 }
 
+// useSearchParams() exige un limite de Suspense en el build de produccion
+// (next build) -- mismo fix que empresas/page.js (Fase R4).
 export default function TareasPage() {
+  return (
+    <Suspense fallback={null}>
+      <TareasPageContenido />
+    </Suspense>
+  );
+}
+
+function TareasPageContenido() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [tareas, setTareas] = useState([]);
   const [empresas, setEmpresas] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
-  const [filtroEstado, setFiltroEstado] = useState("pendiente");
+  // El Dashboard enlaza aca con ?estado=vencida para llegar directo con el
+  // filtro activado (ver TarjetaMetricaColor "Tareas vencidas").
+  const [filtroEstado, setFiltroEstado] = useState(searchParams.get("estado") || "pendiente");
   // Cartera: "" = todas, "yo" = solo las de mi cartera, o el id de otro
   // usuario del tenant (para que un socio/admin vea la cartera de alguien
   // mas puntual).

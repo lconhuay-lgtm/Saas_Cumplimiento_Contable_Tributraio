@@ -14,9 +14,11 @@ import {
   Clock,
   ListChecks,
   RefreshCw,
+  AlarmClock,
 } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
 import { api, getToken } from "../../lib/api";
+import BotonConsultarTodas, { formatoDuracionEstimada } from "../../components/BotonConsultarTodas";
 
 function formatoRelativoCorto(fechaIso) {
   if (!fechaIso) return "--";
@@ -36,6 +38,8 @@ export default function DashboardPage() {
   const [tareasPendientes, setTareasPendientes] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
+  const [consultandoTodas, setConsultandoTodas] = useState(false);
+  const [estadoConsultas, setEstadoConsultas] = useState(null);
 
   useEffect(() => {
     if (!getToken()) {
@@ -44,6 +48,29 @@ export default function DashboardPage() {
     }
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Mismo patron de polling que /empresas -- refleja tanto lo que dispara
+  // este boton como lo que dispare el chequeo automatico (11am/7:30pm) o
+  // el mismo boton desde /empresas, si el usuario tiene esta pagina
+  // abierta en ese momento.
+  useEffect(() => {
+    if (!getToken()) return;
+    let cancelado = false;
+    async function poll() {
+      try {
+        const data = await api.estadoConsultas();
+        if (!cancelado) setEstadoConsultas(data);
+      } catch (err) {
+        // silencioso -- un poll fallido no debe interrumpir la pagina
+      }
+    }
+    poll();
+    const intervalo = setInterval(poll, 5000);
+    return () => {
+      cancelado = true;
+      clearInterval(intervalo);
+    };
   }, []);
 
   async function cargar() {
@@ -63,17 +90,53 @@ export default function DashboardPage() {
     }
   }
 
+  async function consultarTodas() {
+    const cantidad = resumen?.empresas_activas || 0;
+    if (
+      !confirm(
+        `Esto va a consultar en vivo las ${cantidad} empresa(s) activa(s), espaciadas ~45s entre si para no sobrecargar SUNAT -- tiempo estimado total: ${formatoDuracionEstimada(cantidad)}. No hace falta dejar esta pantalla abierta, se sigue procesando igual. Continuar?`
+      )
+    ) {
+      return;
+    }
+    setConsultandoTodas(true);
+    try {
+      const resultado = await api.consultarTodas();
+      alert(
+        `${resultado.empresas_encoladas} empresa(s) encoladas` +
+          (resultado.saltadas_sin_credencial > 0
+            ? `, ${resultado.saltadas_sin_credencial} salteada(s) por falta de credenciales.`
+            : ".") +
+          ` Tiempo estimado total: ${formatoDuracionEstimada(resultado.empresas_encoladas, resultado.espaciado_seg)}. ` +
+          "Se iran procesando de a poco -- el boton va a mostrar el avance (X/Y) mientras tanto."
+      );
+      await cargar();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setConsultandoTodas(false);
+    }
+  }
+
   const ultimaSincronizacion = resumen?.actividad_reciente?.[0];
 
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
       <main className="min-w-0 flex-1 px-8 py-8 xl:px-12">
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-ink">Dashboard</h1>
-          <p className="mt-1 text-sm text-slate-600">
-            {resumen ? `${resumen.empresas_activas} de ${resumen.empresas_totales} empresas activas` : "Resumen general de todas tus empresas monitoreadas"}
-          </p>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-extrabold tracking-tight text-ink">Dashboard</h1>
+            <p className="mt-1 text-sm text-slate-600">
+              {resumen ? `${resumen.empresas_activas} de ${resumen.empresas_totales} empresas activas` : "Resumen general de todas tus empresas monitoreadas"}
+            </p>
+          </div>
+          <BotonConsultarTodas
+            onClick={consultarTodas}
+            consultando={consultandoTodas}
+            estado={estadoConsultas}
+            disabled={!resumen || resumen.empresas_totales === 0}
+          />
         </div>
 
         {error && (
@@ -88,7 +151,7 @@ export default function DashboardPage() {
                 solido con icono en circulo translucido -- lectura
                 instantanea de que necesita atencion, inspirado en el
                 dashboard de BuzOne. */}
-            <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
               <TarjetaMetricaColor
                 Icon={Bell}
                 color="emerald"
@@ -112,6 +175,14 @@ export default function DashboardPage() {
                 value={tareasPendientes?.length ?? 0}
                 detalle="Pendientes"
                 href="/tareas"
+              />
+              <TarjetaMetricaColor
+                Icon={AlarmClock}
+                color="red"
+                label="Tareas vencidas"
+                value={resumen.tareas_vencidas || 0}
+                detalle="Sin completar, fecha pasada"
+                href="/tareas?estado=vencida"
               />
               <TarjetaMetricaColor
                 Icon={RefreshCw}
@@ -160,6 +231,7 @@ const COLORES_METRICA = {
   emerald: "bg-emerald-500",
   amber: "bg-amber-500",
   rose: "bg-rose-500",
+  red: "bg-red-600",
   teal: "bg-teal-600",
 };
 
@@ -272,7 +344,7 @@ function TarjetaAvance({ item, destacada }) {
       <div className={`px-4 py-2.5 text-sm font-bold text-white ${destacada ? "bg-teal-600" : "bg-ink"}`}>
         {item.tipo}
       </div>
-      <div className="grid grid-cols-2 gap-2 p-4">
+      <div className="grid grid-cols-3 gap-2 p-4">
         <div>
           <div className="text-2xl font-extrabold text-ink">{item.total}</div>
           <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Total</div>
@@ -280,6 +352,12 @@ function TarjetaAvance({ item, destacada }) {
         <div>
           <div className="text-2xl font-extrabold text-emerald-600">{item.completados}</div>
           <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Completados</div>
+        </div>
+        <div>
+          <div className={`text-2xl font-extrabold ${item.vencidas > 0 ? "text-red-600" : "text-slate-300"}`}>
+            {item.vencidas}
+          </div>
+          <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Vencidas</div>
         </div>
       </div>
       <div className="px-4 pb-4">

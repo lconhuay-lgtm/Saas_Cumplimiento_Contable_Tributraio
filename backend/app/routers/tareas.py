@@ -32,6 +32,16 @@ logger = logging.getLogger("app.routers.tareas")
 
 router = APIRouter(tags=["tareas"])
 
+
+def _con_utc(momento):
+    # SQLite (pruebas) devuelve datetimes "naive" aunque la columna sea
+    # DateTime(timezone=True); Postgres (produccion) los devuelve con
+    # tzinfo. Sin normalizar esto, comparar un naive con uno aware revienta
+    # con TypeError.
+    if momento is not None and momento.tzinfo is None:
+        return momento.replace(tzinfo=timezone.utc)
+    return momento
+
 ETIQUETAS_TIPO_AVANCE = {
     "igv_renta": "IGV-Renta",
     "planilla": "Planilla",
@@ -193,7 +203,17 @@ def listar_tareas_endpoint(
     query = filtrar_empresas_visibles(
         db.query(TareaObligacion, Empresa).join(Empresa, Empresa.id == TareaObligacion.empresa_id), usuario
     )
-    if estado:
+    if estado == "vencida":
+        # No es un valor real de TareaObligacion.estado -- una tarea
+        # "vencida" es cualquier pendiente cuya fecha ya paso. Se traduce
+        # aca en vez de guardar un estado aparte, para no tener que ir
+        # actualizando tareas viejas dia a dia solo para que "se pongan
+        # vencidas" solas.
+        query = query.filter(
+            TareaObligacion.estado == "pendiente",
+            TareaObligacion.fecha_vencimiento < datetime.now(timezone.utc),
+        )
+    elif estado:
         query = query.filter(TareaObligacion.estado == estado)
     if empresa_id:
         query = query.filter(TareaObligacion.empresa_id == empresa_id)
@@ -342,13 +362,13 @@ def avance_cumplimiento(
     """
     Panel "Avance de Cumplimiento" del Dashboard: para el periodo pedido
     (por defecto el mes actual, formato "YYYY-MM"), cuenta cuantas
-    TareaObligacion hay por tipo (Planilla/AFP/Reporte SBS/Otro) y cuantas
-    ya estan completadas. Solo cubre lo que este modulo puede medir de
-    verdad -- las obligaciones configuradas por empresa -- no incluye el
-    cronograma general de IGV-Renta/PLAME (esa declaracion es automatica
-    para toda empresa activa y el sistema no tiene forma de confirmar que
-    se presento, a diferencia de las tareas de este modulo que si se
-    marcan como completadas a mano).
+    TareaObligacion hay por tipo (IGV-Renta/Planilla/AFP/Reporte SBS/CTS/
+    ITAN/Otro), cuantas ya estan completadas y cuantas estan vencidas
+    (pendientes con fecha ya pasada). Cubre cualquier obligacion que
+    genere tareas -- incluido el cronograma general de IGV-Renta/PLAME,
+    que desde que se autogeneran sus tareas (ver
+    app.routers.empresas._crear_obligaciones_por_defecto) tambien se
+    puede marcar como completada igual que cualquier otra.
     """
     hoy = datetime.now(timezone.utc)
     periodo_objetivo = periodo or f"{hoy.year:04d}-{hoy.month:02d}"
@@ -359,7 +379,7 @@ def avance_cumplimiento(
     # por tenant no amerita esa complejidad.
     tareas_del_periodo = (
         filtrar_empresas_visibles(
-            db.query(TareaObligacion.tipo, TareaObligacion.estado).join(
+            db.query(TareaObligacion.tipo, TareaObligacion.estado, TareaObligacion.fecha_vencimiento).join(
                 Empresa, Empresa.id == TareaObligacion.empresa_id
             ),
             usuario,
@@ -369,14 +389,16 @@ def avance_cumplimiento(
     )
 
     acumulado: dict[str, dict[str, int]] = {}
-    for tipo, estado in tareas_del_periodo:
-        acc = acumulado.setdefault(tipo, {"total": 0, "completados": 0})
+    for tipo, estado, fecha_vencimiento in tareas_del_periodo:
+        acc = acumulado.setdefault(tipo, {"total": 0, "completados": 0, "vencidas": 0})
         acc["total"] += 1
         if estado == "completado":
             acc["completados"] += 1
+        elif estado == "pendiente" and fecha_vencimiento is not None and _con_utc(fecha_vencimiento) < hoy:
+            acc["vencidas"] += 1
 
     por_tipo = []
-    total_general = {"total": 0, "completados": 0}
+    total_general = {"total": 0, "completados": 0, "vencidas": 0}
     for tipo in sorted(acumulado.keys()):
         acc = acumulado[tipo]
         avance = round((acc["completados"] / acc["total"]) * 100, 1) if acc["total"] else 0.0
@@ -384,10 +406,12 @@ def avance_cumplimiento(
             tipo=ETIQUETAS_TIPO_AVANCE.get(tipo, tipo.title()),
             total=acc["total"],
             completados=acc["completados"],
+            vencidas=acc["vencidas"],
             avance=avance,
         ))
         total_general["total"] += acc["total"]
         total_general["completados"] += acc["completados"]
+        total_general["vencidas"] += acc["vencidas"]
 
     avance_total = (
         round((total_general["completados"] / total_general["total"]) * 100, 1)
@@ -401,6 +425,7 @@ def avance_cumplimiento(
             tipo="Total",
             total=total_general["total"],
             completados=total_general["completados"],
+            vencidas=total_general["vencidas"],
             avance=avance_total,
         ),
     )

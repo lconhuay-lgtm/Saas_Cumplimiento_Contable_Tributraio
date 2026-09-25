@@ -6,7 +6,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Empresa, MensajeBuzon, ConsultaJob, Usuario
+from app.models import Empresa, MensajeBuzon, ConsultaJob, Usuario, TareaObligacion
 from app.schemas import (
     DashboardResumen,
     EmpresaPendienteResumen,
@@ -158,6 +158,20 @@ def resumen(
         for v in proximos_vencimientos_por_tenant(db, usuario.tenant_id, DIAS_PROXIMO_VENCIMIENTO, usuario)
     ]
 
+    # Modulo de Tareas/Agenda: cuantas tareas pendientes ya pasaron su fecha
+    # de vencimiento sin completarse, de CUALQUIER periodo -- a diferencia
+    # del panel "Avance de Cumplimiento" (que solo mira un periodo a la
+    # vez), esto es el numero que importa ver de un vistazo en el
+    # Dashboard para saber si hay algo atrasado sin tener que ir a revisar
+    # mes por mes.
+    tareas_vencidas = (
+        filtrar_empresas_visibles(
+            db.query(TareaObligacion).join(Empresa, Empresa.id == TareaObligacion.empresa_id), usuario
+        )
+        .filter(TareaObligacion.estado == "pendiente", TareaObligacion.fecha_vencimiento < datetime.now(timezone.utc))
+        .count()
+    )
+
     return DashboardResumen(
         empresas_activas=empresas_activas,
         empresas_totales=len(empresas),
@@ -169,4 +183,5 @@ def resumen(
         cambios_domicilio_recientes=cambios_domicilio_recientes,
         cambios_estado_contribuyente_recientes=cambios_estado_contribuyente_recientes,
         proximos_vencimientos=proximos_vencimientos,
+        tareas_vencidas=tareas_vencidas,
     )
