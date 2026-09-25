@@ -59,6 +59,8 @@ def consultar_buzon(
     limite_mensajes: int = 20,
     ids_conocidos: set | None = None,
     descargar_documentos: bool = True,
+    leer_buzon_mensajes: bool = True,
+    ids_conocidos_buzon_mensajes: set | None = None,
     on_progreso=None,
 ) -> dict:
     """
@@ -79,19 +81,30 @@ def consultar_buzon(
     mano -- decision del usuario del producto, dado el impacto de una baja
     de oficio en la declaracion de impuestos.
 
+    Si leer_buzon_mensajes=True (default), tambien entra a "Buzón
+    Mensajes" -- bandeja SEPARADA de Notificaciones dentro del mismo
+    Buzon Electronico, sin PDF adjunto en general (el contenido completo
+    esta en el cuerpo del mensaje, ver adapter._leer_mensajes_buzon_mensajes
+    y navegacion_buzon._navegar_a_buzon_mensajes). Un fallo leyendo esta
+    bandeja NUNCA debe tumbar la consulta completa -- Notificaciones es
+    lo principal, esto es informacion adicional.
+
     on_progreso: callback opcional, se llama con un string de etapa
     ("iniciando_sesion", "autenticando", "leyendo_estado", "abriendo_buzon",
-    "leyendo_mensajes", "descargando_documentos") en cada punto de avance
-    -- mismo patron que generar_ficha_ruc_pdf(on_progreso=...), para que el
-    llamador (jobs.py) pueda mostrar una barra de progreso real en el
-    boton "Consultar" de cada empresa. Un fallo del callback en si nunca
-    debe tumbar la consulta.
+    "leyendo_mensajes", "descargando_documentos", "leyendo_buzon_mensajes")
+    en cada punto de avance -- mismo patron que
+    generar_ficha_ruc_pdf(on_progreso=...), para que el llamador (jobs.py)
+    pueda mostrar una barra de progreso real en el boton "Consultar" de
+    cada empresa. Un fallo del callback en si nunca debe tumbar la
+    consulta.
 
     Returns:
         dict: {
             "ok": bool,
             "mensajes": [{"fecha": str, "asunto": str}, ...],
             "documentos": {mensaje_id: ruta_local_del_pdf, ...},
+            "mensajes_bandeja": [{"id_sunat", "fecha", "asunto", "leido",
+                "contenido_texto"}, ...],  # Buzón Mensajes, ver arriba
             "razon_social_sunat": str | None,  # nombre real segun SUNAT
             "condicion_domicilio": str | None,  # Habido / No Habido / No Hallado
             "estado_contribuyente": str | None,  # Activo / Baja de Oficio / etc.
@@ -112,7 +125,7 @@ def consultar_buzon(
     navegador = SunatWebNavigator(empresa=empresa, headless=headless)
     try:
         if not navegador.initialize_browser():
-            return {"ok": False, "mensajes": [], "documentos": {}, "razon_social_sunat": None, "condicion_domicilio": None, "estado_contribuyente": None, "flujo_detectado": None, "error": "No se pudo iniciar el navegador"}
+            return {"ok": False, "mensajes": [], "documentos": {}, "mensajes_bandeja": [], "razon_social_sunat": None, "condicion_domicilio": None, "estado_contribuyente": None, "flujo_detectado": None, "error": "No se pudo iniciar el navegador"}
 
         _reportar("iniciando_sesion")
         navegador.driver.get(config.URL_SUNAT)
@@ -120,7 +133,7 @@ def consultar_buzon(
 
         _reportar("autenticando")
         if not navegador._hacer_clicks_sunat(empresa):
-            return {"ok": False, "mensajes": [], "documentos": {}, "razon_social_sunat": navegador.razon_social_detectada, "condicion_domicilio": navegador.condicion_domicilio_detectada, "estado_contribuyente": None, "flujo_detectado": navegador.flujo_detectado, "error": "No se pudo iniciar sesion en SUNAT (revisa usuario/clave)"}
+            return {"ok": False, "mensajes": [], "documentos": {}, "mensajes_bandeja": [], "razon_social_sunat": navegador.razon_social_detectada, "condicion_domicilio": navegador.condicion_domicilio_detectada, "estado_contribuyente": None, "flujo_detectado": navegador.flujo_detectado, "error": "No se pudo iniciar sesion en SUNAT (revisa usuario/clave)"}
 
         # Se hace ANTES de navegar al Buzon (no despues) porque el
         # desplegable del nombre y el boton "Ver Ficha Ruc" viven en esta
@@ -133,7 +146,7 @@ def consultar_buzon(
 
         _reportar("abriendo_buzon")
         if not navegador._navegar_a_buzon_notificaciones():
-            return {"ok": False, "mensajes": [], "documentos": {}, "razon_social_sunat": navegador.razon_social_detectada, "condicion_domicilio": navegador.condicion_domicilio_detectada, "estado_contribuyente": navegador.estado_contribuyente_detectado, "flujo_detectado": navegador.flujo_detectado, "error": "Se inicio sesion pero no se pudo abrir el Buzon Electronico"}
+            return {"ok": False, "mensajes": [], "documentos": {}, "mensajes_bandeja": [], "razon_social_sunat": navegador.razon_social_detectada, "condicion_domicilio": navegador.condicion_domicilio_detectada, "estado_contribuyente": navegador.estado_contribuyente_detectado, "flujo_detectado": navegador.flujo_detectado, "error": "Se inicio sesion pero no se pudo abrir el Buzon Electronico"}
 
         _reportar("leyendo_mensajes")
         mensajes = _leer_lista_mensajes(navegador, limite_mensajes)
@@ -151,10 +164,24 @@ def consultar_buzon(
                 # porque el mensaje en si si se guarda igual).
                 logger.error(f"Error general descargando documentos para {ruc}: {e}")
 
+        mensajes_bandeja = []
+        if leer_buzon_mensajes:
+            _reportar("leyendo_buzon_mensajes")
+            try:
+                mensajes_bandeja = _leer_mensajes_buzon_mensajes(
+                    navegador, limite_mensajes, ids_conocidos_buzon_mensajes or set()
+                )
+            except Exception as e:
+                # Mismo criterio que descargando_documentos arriba -- Buzón
+                # Mensajes es informacion adicional, un fallo aca nunca debe
+                # tumbar la consulta principal (Notificaciones ya se leyo bien).
+                logger.error(f"Error leyendo Buzón Mensajes para {ruc}: {e}")
+
         return {
             "ok": True,
             "mensajes": mensajes,
             "documentos": documentos,
+            "mensajes_bandeja": mensajes_bandeja,
             "razon_social_sunat": navegador.razon_social_detectada,
             "condicion_domicilio": navegador.condicion_domicilio_detectada,
             "estado_contribuyente": navegador.estado_contribuyente_detectado,
@@ -164,7 +191,7 @@ def consultar_buzon(
 
     except Exception as e:
         logger.error(f"Error consultando buzon de {ruc}: {e}")
-        return {"ok": False, "mensajes": [], "documentos": {}, "razon_social_sunat": None, "condicion_domicilio": None, "estado_contribuyente": None, "flujo_detectado": None, "error": str(e)}
+        return {"ok": False, "mensajes": [], "documentos": {}, "mensajes_bandeja": [], "razon_social_sunat": None, "condicion_domicilio": None, "estado_contribuyente": None, "flujo_detectado": None, "error": str(e)}
     finally:
         navegador.close_browser()
 
@@ -401,6 +428,181 @@ def _leer_lista_mensajes(navegador, limite):
         {"fecha": m["fecha"], "asunto": m["asunto"]}
         for m in _escanear_mensajes(navegador, limite)
     ]
+
+
+# Cuantos mensajes NUEVOS de Buzón Mensajes se abren (para leer su
+# contenido) en una sola corrida -- cada uno cuesta varios segundos
+# (clic + esperar el iframe interno), asi que un limite bajo evita que
+# la primera consulta de una empresa con mucho historial se alargue
+# indefinidamente. El resto queda pendiente para la proxima consulta
+# (mismo criterio que MAX_DESCARGAS_POR_CORRIDA arriba).
+MAX_MENSAJES_NUEVOS_BUZON_MENSAJES_POR_CORRIDA = int(
+    os.environ.get("SUNAT_MAX_MENSAJES_BUZON_MENSAJES_POR_CORRIDA", 15)
+)
+
+
+def mensaje_id_buzon_mensajes(id_sunat: str) -> str:
+    """
+    Identificador estable de un mensaje de Buzón Mensajes -- a diferencia
+    de Notificaciones (que solo tiene fecha+asunto y necesita un hash,
+    ver mensaje_id() arriba), esta bandeja SI trae un id nativo de SUNAT
+    (el atributo id del <li> de cada mensaje en el listado, confirmado en
+    vivo 25/09/2026) -- se usa directo, con un prefijo para que este
+    espacio de nombres nunca choque por casualidad con un hash de
+    Notificaciones.
+    """
+    return f"bm-{id_sunat}"
+
+
+def _escanear_mensajes_buzon_mensajes(navegador, limite):
+    """
+    Escanea el listado de "Buzón Mensajes" (bandeja separada de
+    Notificaciones, ver navegacion_buzon._navegar_a_buzon_mensajes).
+    Estructura real confirmada en vivo (25/09/2026): cada mensaje es
+    <li id="ID_SUNAT">...<a class="linkMensaje">ASUNTO</a>...
+    <small class="fecPublica">FECHA</small>...
+    <input id="idLeido" value="0|1">...</li>, dentro de
+    <ul id="listaMensajes">.
+    """
+    def buscar_enlaces(driver):
+        elementos = driver.find_elements(By.CLASS_NAME, "linkMensaje")
+        return elementos or None
+
+    encontrados = navegador._buscar_en_default_y_iframes(buscar_enlaces)
+    if not encontrados:
+        return []
+
+    resultado = []
+    vistos = set()
+    for enlace in encontrados[:limite]:
+        try:
+            li_padre = enlace.find_element(By.XPATH, "./ancestor::li")
+            id_sunat = li_padre.get_attribute("id") or ""
+            if not id_sunat or id_sunat in vistos:
+                continue
+            vistos.add(id_sunat)
+
+            asunto = enlace.text.strip() or "(sin asunto)"
+
+            fecha = ""
+            try:
+                fecha = li_padre.find_element(By.CLASS_NAME, "fecPublica").text.strip()
+            except Exception:
+                pass
+
+            leido = False
+            try:
+                leido = li_padre.find_element(By.ID, "idLeido").get_attribute("value") == "1"
+            except Exception:
+                pass
+
+            resultado.append({
+                "id_sunat": id_sunat, "fecha": fecha, "asunto": asunto,
+                "leido": leido, "elemento": enlace,
+            })
+        except Exception:
+            continue
+
+    return resultado
+
+
+def _leer_contenido_texto_mensaje(navegador, timeout=8):
+    """
+    Despues de hacer clic en un mensaje de Buzón Mensajes, el contenido
+    real se carga en un iframe anidado <iframe id="contenedorMensaje">
+    (confirmado en vivo 25/09/2026) -- el body.text "de arriba" solo trae
+    la lista de mensajes mas un texto de respaldo ("El browser no soporta
+    IFRAMES..."), asi que hay que cambiar de contexto explicitamente.
+
+    Devuelve el texto o None si no se pudo leer -- p.ej. algunos mensajes
+    de esta bandeja (caso minoritario, confirmado en vivo con el icono de
+    clip en la lista) traen un adjunto en vez de contenido en linea y no
+    siempre usan este mismo iframe; no vale la pena tumbar la consulta
+    por eso, se guarda el mensaje igual, solo sin contenido_texto.
+    """
+    def buscar_iframe(driver):
+        try:
+            return driver.find_element(By.ID, "contenedorMensaje")
+        except Exception:
+            return None
+
+    iframe_el = navegador._buscar_en_default_y_iframes(buscar_iframe)
+    if iframe_el is None:
+        return None
+
+    try:
+        navegador.driver.switch_to.frame(iframe_el)
+        time.sleep(1)
+        texto = navegador.driver.find_element(By.TAG_NAME, "body").text.strip()
+        return texto or None
+    except Exception as e:
+        logger.warning(f"No se pudo leer el contenido del iframe 'contenedorMensaje': {e}")
+        return None
+    finally:
+        navegador.driver.switch_to.default_content()
+
+
+def _leer_mensajes_buzon_mensajes(navegador, limite, ids_conocidos: set) -> list[dict]:
+    """
+    Navega a Buzón Mensajes, y para cada mensaje NUEVO (id_sunat no esta
+    en ids_conocidos) hace clic y extrae su contenido de texto completo.
+    Los mensajes ya conocidos NO se vuelven a abrir -- ya se guardaron
+    con su contenido en una corrida anterior.
+
+    Vuelve a escanear la lista COMPLETA despues de cada mensaje procesado
+    (en vez de reusar referencias de elementos ya usadas una vez) --
+    mismo motivo y mismo patron que _descargar_documentos_nuevos: entrar
+    al iframe anidado del contenido y volver a default_content dentro de
+    _leer_contenido_texto_mensaje puede dejar obsoletas las referencias
+    del DOM que Selenium ya tenia para el resto de la lista.
+
+    Devuelve una lista de dicts: {"id_sunat", "fecha", "asunto", "leido",
+    "contenido_texto"} -- contenido_texto puede ser None (ver docstring
+    de _leer_contenido_texto_mensaje).
+    """
+    if not navegador._navegar_a_buzon_mensajes():
+        logger.warning("No se pudo entrar a Buzón Mensajes -- se omite esta bandeja en esta consulta.")
+        return []
+
+    resultado = []
+    intentados = set()
+
+    while len(resultado) < MAX_MENSAJES_NUEVOS_BUZON_MENSAJES_POR_CORRIDA:
+        candidatos = _escanear_mensajes_buzon_mensajes(navegador, limite)
+
+        objetivo = None
+        for c in candidatos:
+            if mensaje_id_buzon_mensajes(c["id_sunat"]) in ids_conocidos or c["id_sunat"] in intentados:
+                continue
+            objetivo = c
+            break
+
+        if objetivo is None:
+            break  # no quedan mensajes nuevos por leer
+
+        intentados.add(objetivo["id_sunat"])
+        logger.info(f"Leyendo contenido del mensaje nuevo de Buzón Mensajes: '{objetivo['asunto']}'")
+
+        contenido_texto = None
+        try:
+            try:
+                objetivo["elemento"].click()
+            except Exception:
+                navegador.driver.execute_script("arguments[0].click();", objetivo["elemento"])
+            time.sleep(3)
+            contenido_texto = _leer_contenido_texto_mensaje(navegador)
+        except Exception as e:
+            logger.warning(f"No se pudo abrir el mensaje '{objetivo['asunto']}' de Buzón Mensajes: {e}")
+
+        resultado.append({
+            "id_sunat": objetivo["id_sunat"],
+            "fecha": objetivo["fecha"],
+            "asunto": objetivo["asunto"],
+            "leido": objetivo["leido"],
+            "contenido_texto": contenido_texto,
+        })
+
+    return resultado
 
 
 def _descargar_documentos_nuevos(navegador, ids_conocidos: set, limite: int) -> dict:

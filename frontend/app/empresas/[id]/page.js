@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, CheckCheck, Mail, MailOpen, FileText, Loader2, Inbox, Filter, X, RadioTower, Award, ListChecks, Plus, Trash2, UserCog, ClipboardPlus, ClipboardCheck, KeyRound } from "lucide-react";
+import { ArrowLeft, CheckCheck, Mail, MailOpen, FileText, Loader2, Inbox, Filter, X, RadioTower, Award, ListChecks, Plus, Trash2, UserCog, ClipboardPlus, ClipboardCheck, KeyRound, MessageSquare } from "lucide-react";
 import Sidebar from "../../../components/Sidebar";
 import { api, getToken } from "../../../lib/api";
 import { colorPuntoTipo } from "../../../lib/tiposMensaje";
@@ -166,6 +166,17 @@ export default function DetalleEmpresaPage() {
     } finally {
       setCargandoPdf(false);
     }
+  }
+
+  // Buzón Mensajes (origen="mensajes"): no tiene PDF, el contenido
+  // completo ya viene incluido en la respuesta del mensaje (ver
+  // MensajeBuzonResponse.contenido_texto) -- no hace falta ningun fetch
+  // aparte, solo mostrarlo en el panel derecho en vez del visor de PDF.
+  function verMensaje(mensaje) {
+    setSeleccionado(mensaje);
+    setErrorPdf("");
+    setPdfUrl(null);
+    setCargandoPdf(false);
   }
 
   const hayPendientes = mensajes.some((m) => !m.leido);
@@ -371,14 +382,19 @@ export default function DetalleEmpresaPage() {
                 {mensajesFiltrados.length === 0 ? (
                   <p className="p-5 text-sm text-slate-500">No hay mensajes en esta categoria/filtro.</p>
                 ) : (
-                  mensajesFiltrados.map((m) => (
+                  mensajesFiltrados.map((m) => {
+                    const esClickeable = m.tiene_documento || !!m.contenido_texto;
+                    return (
                     <div
                       key={m.id}
-                      onClick={() => m.tiene_documento && verPdf(m)}
+                      onClick={() => {
+                        if (m.tiene_documento) verPdf(m);
+                        else if (m.contenido_texto) verMensaje(m);
+                      }}
                       className={`px-4 py-3.5 transition-colors duration-300 ease-out ${
-                        m.tiene_documento ? "cursor-pointer" : ""
+                        esClickeable ? "cursor-pointer" : ""
                       } ${seleccionado?.id === m.id ? "bg-accent-light" : m.leido ? "" : "bg-accent-light/30"} ${
-                        m.tiene_documento ? "hover:bg-accent-light/60" : ""
+                        esClickeable ? "hover:bg-accent-light/60" : ""
                       }`}
                     >
                       <div className="flex items-start gap-2.5">
@@ -395,6 +411,12 @@ export default function DetalleEmpresaPage() {
                               <span className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-500">
                                 <FileText size={11} strokeWidth={1.5} />
                                 PDF
+                              </span>
+                            )}
+                            {!m.tiene_documento && m.origen === "mensajes" && (
+                              <span className="flex items-center gap-1 rounded-full bg-cyan-50 px-2 py-0.5 font-medium text-cyan-700">
+                                <MessageSquare size={11} strokeWidth={1.5} />
+                                {m.contenido_texto ? "Mensaje" : "Sin contenido"}
                               </span>
                             )}
                           </div>
@@ -434,18 +456,20 @@ export default function DetalleEmpresaPage() {
                         </button>
                       </div>
                     </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>
 
-            {/* Panel derecho: visor de PDF, grande y fijo mientras se hace scroll a la lista */}
+            {/* Panel derecho: visor de PDF o de contenido de texto (Buzón
+                Mensajes), grande y fijo mientras se hace scroll a la lista */}
             <div className="min-w-0 flex-1 xl:sticky xl:top-6">
               <div className="surface-card flex h-[80vh] flex-col overflow-hidden xl:h-[calc(100vh-140px)]">
                 {!seleccionado ? (
                   <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center text-slate-400">
                     <FileText size={32} strokeWidth={1.2} />
-                    <p className="text-sm">Selecciona un mensaje con PDF para verlo aqui</p>
+                    <p className="text-sm">Selecciona un mensaje con PDF o contenido para verlo aqui</p>
                   </div>
                 ) : (
                   <>
@@ -454,7 +478,22 @@ export default function DetalleEmpresaPage() {
                         {seleccionado.asunto}
                       </span>
                     </div>
-                    {cargandoPdf ? (
+                    {seleccionado.origen === "mensajes" ? (
+                      seleccionado.contenido_texto ? (
+                        <div className="flex-1 overflow-y-auto p-5">
+                          <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink">
+                            {seleccionado.contenido_texto}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">
+                          <MessageSquare size={28} strokeWidth={1.2} className="text-slate-300" />
+                          <p className="text-sm text-slate-500">
+                            No se pudo capturar el contenido de este mensaje -- revisalo directo en SUNAT.
+                          </p>
+                        </div>
+                      )
+                    ) : cargandoPdf ? (
                       <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-400">
                         <Loader2 size={24} strokeWidth={1.5} className="animate-spin" />
                         <p className="text-sm">Cargando documento...</p>

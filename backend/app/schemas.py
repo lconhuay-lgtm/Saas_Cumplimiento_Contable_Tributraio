@@ -179,6 +179,11 @@ class MensajeBuzonResponse(BaseModel):
     leido: bool
     descubierto_en: datetime
     tiene_documento: bool = False
+    # "notificaciones" (Buzon Notificaciones, con PDF via tiene_documento) o
+    # "mensajes" (Buzon Mensajes, sin PDF -- el contenido completo esta en
+    # contenido_texto). Ver docstring de MensajeBuzon en models.py.
+    origen: str = "notificaciones"
+    contenido_texto: str | None = None
 
     class Config:
         from_attributes = True

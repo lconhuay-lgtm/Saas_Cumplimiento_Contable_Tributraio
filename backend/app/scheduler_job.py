@@ -238,6 +238,7 @@ def ejecutar_chequeo_canario() -> dict:
                         razon_social=empresa.razon_social,
                         headless=False,
                         descargar_documentos=False,  # el canario no necesita PDFs, solo medir el login
+                        leer_buzon_mensajes=False,  # idem -- solo medir el login, no leer Buzón Mensajes
                     )
                 finally:
                     liberar_slot_global()

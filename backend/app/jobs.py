@@ -25,6 +25,11 @@ def _mensaje_id(fecha: str, asunto: str) -> str:
     return hashlib.sha256(f"{fecha}|{asunto}".encode("utf-8")).hexdigest()
 
 
+def _mensaje_id_buzon_mensajes(id_sunat: str) -> str:
+    """Mismo criterio que adapter.mensaje_id_buzon_mensajes() -- debe coincidir, si uno cambia el otro tambien."""
+    return f"bm-{id_sunat}"
+
+
 def _parsear_fecha(texto_fecha: str) -> datetime:
     texto_fecha = (texto_fecha or "").strip()
     match = re.match(r"(\d{2})/(\d{2})/(\d{4})\s*(\d{2}):(\d{2}):(\d{2})?", texto_fecha)
@@ -142,6 +147,23 @@ def ejecutar_consulta_buzon(job_id: str):
             .all()
         }
 
+        # Mismo criterio que ids_conocidos arriba, version Buzón Mensajes:
+        # solo cuentan como "ya conocidos" los que YA tienen su contenido
+        # de texto capturado -- si una corrida anterior guardo el mensaje
+        # pero no pudo leer su contenido (ver _leer_contenido_texto_mensaje
+        # en adapter.py), se vuelve a intentar en vez de quedarse sin texto
+        # para siempre.
+        ids_conocidos_buzon_mensajes = {
+            fila[0]
+            for fila in db.query(MensajeBuzon.mensaje_externo_id)
+            .filter(
+                MensajeBuzon.empresa_id == empresa.id,
+                MensajeBuzon.origen == "mensajes",
+                MensajeBuzon.contenido_texto.isnot(None),
+            )
+            .all()
+        }
+
         adquirir_slot_global()
         try:
             resultado = None
@@ -153,6 +175,7 @@ def ejecutar_consulta_buzon(job_id: str):
                     razon_social=empresa.razon_social,
                     headless=False,
                     ids_conocidos=ids_conocidos,
+                    ids_conocidos_buzon_mensajes=ids_conocidos_buzon_mensajes,
                     on_progreso=_reportar_etapa,
                 )
                 if resultado["ok"]:
@@ -282,6 +305,41 @@ def ejecutar_consulta_buzon(job_id: str):
                 asunto=msg["asunto"],
                 tipo=clasificar_tipo(msg["asunto"]),
                 documento_ref=documento_ref,
+            ))
+            nuevos += 1
+
+        # Buzón Mensajes (bandeja separada de Notificaciones, sin PDF en
+        # general -- ver adapter._leer_mensajes_buzon_mensajes). Mismo
+        # criterio de dedup e idempotencia que el bucle de arriba, pero
+        # usando el id nativo de SUNAT como mensaje_externo_id en vez de un
+        # hash fecha+asunto (ver _mensaje_id_buzon_mensajes).
+        for msg in resultado.get("mensajes_bandeja", []):
+            mid = _mensaje_id_buzon_mensajes(msg["id_sunat"])
+            if mid in vistos_en_esta_corrida:
+                continue
+            vistos_en_esta_corrida.add(mid)
+            existe = (
+                db.query(MensajeBuzon)
+                .filter(MensajeBuzon.empresa_id == empresa.id, MensajeBuzon.mensaje_externo_id == mid)
+                .first()
+            )
+            if existe:
+                # Igual que con el PDF arriba: si una corrida anterior no
+                # logro leer el contenido, se completa aca en vez de
+                # perderlo para siempre.
+                if existe.contenido_texto is None and msg.get("contenido_texto"):
+                    existe.contenido_texto = msg["contenido_texto"]
+                continue
+
+            db.add(MensajeBuzon(
+                empresa_id=empresa.id,
+                mensaje_externo_id=mid,
+                fecha_publicacion=_parsear_fecha(msg["fecha"]),
+                asunto=msg["asunto"],
+                tipo=clasificar_tipo(msg["asunto"]),
+                leido=msg.get("leido", False),
+                origen="mensajes",
+                contenido_texto=msg.get("contenido_texto"),
             ))
             nuevos += 1
 

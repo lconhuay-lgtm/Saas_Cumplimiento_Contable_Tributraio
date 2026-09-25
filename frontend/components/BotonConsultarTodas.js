@@ -23,8 +23,9 @@ const ETAPAS_CONSULTA = {
   autenticando: { porcentaje: 30, etiqueta: "Iniciando sesion..." },
   leyendo_estado: { porcentaje: 50, etiqueta: "Leyendo estado del contribuyente..." },
   abriendo_buzon: { porcentaje: 65, etiqueta: "Abriendo el buzon..." },
-  leyendo_mensajes: { porcentaje: 80, etiqueta: "Leyendo mensajes..." },
-  descargando_documentos: { porcentaje: 92, etiqueta: "Descargando documentos nuevos..." },
+  leyendo_mensajes: { porcentaje: 75, etiqueta: "Leyendo mensajes..." },
+  descargando_documentos: { porcentaje: 85, etiqueta: "Descargando documentos nuevos..." },
+  leyendo_buzon_mensajes: { porcentaje: 95, etiqueta: "Leyendo Buzón Mensajes..." },
 };
 
 function infoEtapaConsulta(etapa) {

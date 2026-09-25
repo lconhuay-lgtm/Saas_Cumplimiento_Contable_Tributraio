@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    String, Boolean, DateTime, ForeignKey, UniqueConstraint, Integer, LargeBinary, Float
+    String, Boolean, DateTime, ForeignKey, UniqueConstraint, Integer, LargeBinary, Float, Text
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -172,6 +172,17 @@ class MensajeBuzon(Base):
     (empresa_id, mensaje_externo_id) es la que evita el bug de duplicados
     que arreglamos en la automatizacion original -- aqui queda resuelto a
     nivel de base de datos.
+
+    origen: de que bandeja de SUNAT viene -- "notificaciones" (Buzon
+      Notificaciones, la bandeja original -- trae PDF adjunto casi
+      siempre, documento_ref apunta a ese archivo) o "mensajes" (Buzon
+      Mensajes, bandeja separada dentro del mismo Buzon Electronico -- en
+      general NO trae PDF, el contenido completo esta en el cuerpo del
+      mensaje, guardado en contenido_texto). Ver core_scraper/adapter.py
+      (_leer_mensajes_buzon_mensajes) y el diagnostico en vivo del
+      25/09/2026 que confirmo la estructura real de esta bandeja.
+    contenido_texto: texto completo del mensaje, solo para origen=
+      "mensajes" (Buzon Notificaciones no lo necesita, ya tiene su PDF).
     """
     __tablename__ = "mensajes_buzon"
     __table_args__ = (
@@ -187,6 +198,8 @@ class MensajeBuzon(Base):
     leido: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     descubierto_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
     documento_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    origen: Mapped[str] = mapped_column(String(20), default="notificaciones", nullable=False)
+    contenido_texto: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="mensajes")
 

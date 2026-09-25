@@ -158,7 +158,92 @@ class NavegacionBuzonMixin:
             self.driver.save_screenshot(screenshot_path)
             logger.info(f"Se guardó una captura de pantalla en: {screenshot_path}")
             return False
-    
+
+    def _buscar_en_default_y_iframes(self, buscar_fn):
+        """
+        Prueba buscar_fn(self.driver) primero en default_content, y si no
+        encuentra nada recorre cada iframe de primer nivel -- mismo patron
+        ya usado en _escanear_mensajes (adapter.py) para el Buzon
+        Notificaciones, confirmado en vivo (25/09/2026) que el Buzon
+        Mensajes vive dentro de un iframe (no siempre el mismo indice,
+        asi que hay que recorrerlos en vez de asumir uno fijo). Deja el
+        driver posicionado en el contexto donde SI encontro algo.
+
+        Returns:
+            El resultado de buscar_fn si algo se encontro, o None.
+        """
+        self.driver.switch_to.default_content()
+        resultado = buscar_fn(self.driver)
+        if resultado:
+            return resultado
+
+        for iframe in self.driver.find_elements(By.TAG_NAME, "iframe"):
+            try:
+                self.driver.switch_to.frame(iframe)
+            except Exception:
+                self.driver.switch_to.default_content()
+                continue
+            resultado = buscar_fn(self.driver)
+            if resultado:
+                return resultado
+            self.driver.switch_to.default_content()
+
+        return None
+
+    def _navegar_a_buzon_mensajes(self):
+        """
+        Navega a "Buzón Mensajes" -- bandeja SEPARADA de "Buzón
+        Notificaciones" dentro del mismo Buzon Electronico (confirmado en
+        vivo 25/09/2026: enlace de texto "Buzón Mensajes" en el sidebar,
+        en el mismo iframe donde vive la lista de Notificaciones). A
+        diferencia de Notificaciones, esta bandeja no tiene PDF adjunto en
+        general -- el contenido completo esta en el cuerpo del mensaje.
+
+        Debe llamarse DESPUES de _navegar_a_buzon_notificaciones() (o de
+        cualquier punto donde ya se este dentro del Buzon Electronico),
+        nunca antes -- el enlace de "Buzón Mensajes" solo existe una vez
+        que se entro al Buzon.
+        """
+        try:
+            logger.info("Navegando a Buzón Mensajes...")
+
+            def buscar_link_mensajes(driver):
+                estrategias = [
+                    (By.PARTIAL_LINK_TEXT, "Buzón Mensajes"),
+                    (By.PARTIAL_LINK_TEXT, "Buzon Mensajes"),
+                    (By.XPATH, "//a[contains(text(), 'Mensajes')]"),
+                ]
+                for by, valor in estrategias:
+                    try:
+                        el = driver.find_element(by, valor)
+                        if el:
+                            return el
+                    except Exception:
+                        continue
+                return None
+
+            elemento = self._buscar_en_default_y_iframes(buscar_link_mensajes)
+            if elemento is None:
+                logger.warning("No se encontro el enlace 'Buzón Mensajes'.")
+                return False
+
+            try:
+                elemento.click()
+            except Exception:
+                self.driver.execute_script("arguments[0].click();", elemento)
+            time.sleep(3)
+            logger.info("Clic exitoso en 'Buzón Mensajes'")
+            return True
+        except Exception as e:
+            logger.error(f"Error al navegar a Buzón Mensajes: {str(e)}")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            screenshot_path = os.path.join(config.LOGS_DIR, f"error_buzon_mensajes_{timestamp}.png")
+            try:
+                self.driver.save_screenshot(screenshot_path)
+            except Exception:
+                pass
+            return False
+
     def _recargar_elementos_mensaje(self, mensajes, indice_actual):
         """
         Recarga los elementos de los mensajes después de navegar de regreso a la lista
