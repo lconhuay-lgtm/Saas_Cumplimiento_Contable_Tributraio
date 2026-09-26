@@ -89,7 +89,7 @@ def encolar_chequeo_nocturno(espaciado_seg: int | None = None) -> dict:
                 logger.warning(f"Empresa {empresa.ruc} sin credenciales SOL, se salta del chequeo nocturno")
                 continue
 
-            job = ConsultaJob(empresa_id=empresa.id, solicitado_por=None, estado="pendiente")
+            job = ConsultaJob(empresa_id=empresa.id, solicitado_por=None, estado="pendiente", origen="masiva")
             db.add(job)
             db.commit()
             db.refresh(job)

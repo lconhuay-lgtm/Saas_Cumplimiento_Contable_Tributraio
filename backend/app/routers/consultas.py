@@ -80,7 +80,7 @@ def consultar_todas_empresas(
             saltadas_sin_credencial += 1
             continue
 
-        job = ConsultaJob(empresa_id=empresa.id, solicitado_por=usuario.id, estado="pendiente")
+        job = ConsultaJob(empresa_id=empresa.id, solicitado_por=usuario.id, estado="pendiente", origen="masiva")
         db.add(job)
         db.commit()
         db.refresh(job)
@@ -106,12 +106,17 @@ def estado_consultas(
     db: Session = Depends(get_db),
 ):
     """
-    Progreso de la "tanda" de consultas mas reciente de este tenant --
-    dispare quien la haya disparado: el boton "Consultar todas", el
-    chequeo automatico programado, o una consulta individual. El frontend
-    hace polling de este endpoint para mostrar el avance y deshabilitar el
-    boton "Consultar todas" mientras haya algo en curso, sin importar quien
-    lo haya iniciado.
+    Progreso de la "tanda" de consultas MASIVAS mas reciente de este tenant --
+    dispare quien la haya disparado: el boton "Consulta masiva", el import
+    de Excel, o el chequeo automatico programado (ver ConsultaJob.origen).
+    El frontend hace polling de este endpoint para mostrar el avance y
+    deshabilitar el boton "Consulta masiva" mientras haya algo en curso, y
+    para mostrar el resumen final al terminar.
+
+    A proposito NO incluye los jobs "individual" (boton Consultar de una
+    sola empresa, o la auto-consulta al crear una empresa sola) -- si los
+    incluyera, consultar una sola empresa disparaba tambien el dialogo de
+    "Consulta masiva terminada" (reportado en produccion, 26/09).
 
     No hay un concepto de "lote" en la base de datos, asi que se aproxima
     mirando los ConsultaJob creados en los ultimos VENTANA_ESTADO_CONSULTAS_MIN
@@ -121,7 +126,11 @@ def estado_consultas(
     filas_recientes = (
         db.query(ConsultaJob, Empresa)
         .join(Empresa, Empresa.id == ConsultaJob.empresa_id)
-        .filter(Empresa.tenant_id == usuario.tenant_id, ConsultaJob.creado_en >= desde)
+        .filter(
+            Empresa.tenant_id == usuario.tenant_id,
+            ConsultaJob.creado_en >= desde,
+            ConsultaJob.origen == "masiva",
+        )
         .all()
     )
 

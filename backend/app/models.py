@@ -237,6 +237,13 @@ class ConsultaJob(Base):
     empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
     solicitado_por: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
     estado: Mapped[str] = mapped_column(String(20), default="pendiente", nullable=False, index=True)
+    # "individual" (boton Consultar de una empresa, o la auto-consulta al
+    # crear una empresa sola) vs "masiva" (Consulta masiva, import de Excel,
+    # chequeo automatico 11am/7:30pm) -- GET /consultas/estado solo agrega
+    # los "masiva" para decidir el progreso/resumen de esa tanda, asi una
+    # consulta individual no dispara el dialogo de "Consulta masiva
+    # terminada" (reportado en produccion, 26/09).
+    origen: Mapped[str] = mapped_column(String(20), default="individual", nullable=False)
     # Etapa dentro de "en_progreso" -- iniciando_sesion / autenticando /
     # leyendo_estado / abriendo_buzon / leyendo_mensajes /
     # descargando_documentos -- mismo patron que FichaRucJob.etapa, para

@@ -465,7 +465,7 @@ async def importar_empresas(
             # creada bien, el usuario siempre puede apretar "Consultar" a
             # mano despues si esto no llegara a dispararse.
             try:
-                job = ConsultaJob(empresa_id=empresa.id, solicitado_por=usuario.id, estado="pendiente")
+                job = ConsultaJob(empresa_id=empresa.id, solicitado_por=usuario.id, estado="pendiente", origen="masiva")
                 db.add(job)
                 db.commit()
                 db.refresh(job)
