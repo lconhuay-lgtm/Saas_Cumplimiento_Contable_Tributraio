@@ -32,7 +32,7 @@ from app.rate_limit import (
 )
 from app.queue_conn import cola_consultas
 from app.jobs import ejecutar_consulta_buzon
-from app.deps import get_usuario_actual
+from app.deps import get_usuario_actual, get_admin_actual
 from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible, es_admin
 from app import tareas as tareas_logic
 
@@ -566,7 +566,10 @@ def actualizar_credenciales_empresa(
 @router.delete("/{empresa_id}", status_code=status.HTTP_204_NO_CONTENT)
 def eliminar_empresa(
     empresa_id: str,
-    usuario: Usuario = Depends(get_usuario_actual),
+    # Eliminar una empresa borra en cascada su historial de mensajes,
+    # tareas y credenciales SOL -- solo el admin del tenant puede hacerlo,
+    # nunca un miembro con cartera asignada.
+    usuario: Usuario = Depends(get_admin_actual),
     db: Session = Depends(get_db),
 ):
     empresa = obtener_empresa_visible(empresa_id, usuario, db)

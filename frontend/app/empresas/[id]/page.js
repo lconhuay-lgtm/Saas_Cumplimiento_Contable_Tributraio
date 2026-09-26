@@ -28,6 +28,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import Sidebar from "../../../components/Sidebar";
+import ConfirmDialog from "../../../components/ConfirmDialog";
 import { api, getToken } from "../../../lib/api";
 import { colorPuntoTipo } from "../../../lib/tiposMensaje";
 
@@ -80,6 +81,7 @@ export default function DetalleEmpresaPage() {
   const [tareasPorMensaje, setTareasPorMensaje] = useState({});
   const [mensajeParaTarea, setMensajeParaTarea] = useState(null); // mensaje completo | null
   const [mostrarEditarCredenciales, setMostrarEditarCredenciales] = useState(false);
+  const [mostrarConfirmarEliminar, setMostrarConfirmarEliminar] = useState(false);
 
   useEffect(() => {
     if (!getToken()) {
@@ -184,10 +186,8 @@ export default function DetalleEmpresaPage() {
     }
   }
 
-  async function eliminarEmpresa() {
-    if (!confirm(`Eliminar "${empresa.razon_social}"? Se borra tambien su historial de mensajes, tareas y credenciales guardadas. Esto no se puede deshacer.`)) {
-      return;
-    }
+  async function confirmarEliminarEmpresa() {
+    setMostrarConfirmarEliminar(false);
     try {
       await api.eliminarEmpresa(id);
       router.push("/empresas");
@@ -389,7 +389,7 @@ export default function DetalleEmpresaPage() {
             onToggleCanario={toggleCanario}
             onToggleBuenContribuyente={toggleBuenContribuyente}
             onEditarCredenciales={() => setMostrarEditarCredenciales(true)}
-            onEliminar={eliminarEmpresa}
+            onEliminar={() => setMostrarConfirmarEliminar(true)}
           />
         )}
 
@@ -657,6 +657,17 @@ export default function DetalleEmpresaPage() {
             }}
           />
         )}
+
+        {mostrarConfirmarEliminar && empresa && (
+          <ConfirmDialog
+            titulo={`Eliminar "${empresa.razon_social}"?`}
+            mensaje="Se borra tambien su historial de mensajes, tareas y credenciales guardadas. Esto no se puede deshacer."
+            textoConfirmar="Si, eliminar"
+            peligroso
+            onConfirmar={confirmarEliminarEmpresa}
+            onCancelar={() => setMostrarConfirmarEliminar(false)}
+          />
+        )}
       </main>
     </div>
   );
@@ -772,26 +783,28 @@ function SeccionConfiguracion({
         </div>
       </div>
 
-      <div className="surface-card border-red-100 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <ShieldAlert size={16} strokeWidth={1.5} className="shrink-0 text-red-400" />
-            <div>
-              <p className="text-sm font-semibold text-red-700">Eliminar empresa</p>
-              <p className="text-xs text-slate-500">
-                Borra tambien su historial de mensajes, tareas y credenciales guardadas. No se puede deshacer.
-              </p>
+      {esAdmin && (
+        <div className="surface-card border-red-100 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <ShieldAlert size={16} strokeWidth={1.5} className="shrink-0 text-red-400" />
+              <div>
+                <p className="text-sm font-semibold text-red-700">Eliminar empresa</p>
+                <p className="text-xs text-slate-500">
+                  Borra tambien su historial de mensajes, tareas y credenciales guardadas. No se puede deshacer.
+                </p>
+              </div>
             </div>
+            <button
+              onClick={onEliminar}
+              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 px-3.5 py-1.5 text-xs font-semibold text-red-600 transition-all duration-300 ease-out hover:bg-red-50"
+            >
+              <Trash2 size={13} strokeWidth={1.5} />
+              Eliminar
+            </button>
           </div>
-          <button
-            onClick={onEliminar}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 px-3.5 py-1.5 text-xs font-semibold text-red-600 transition-all duration-300 ease-out hover:bg-red-50"
-          >
-            <Trash2 size={13} strokeWidth={1.5} />
-            Eliminar
-          </button>
         </div>
-      </div>
+      )}
     </div>
   );
 }

@@ -25,6 +25,7 @@ import Sidebar from "../../components/Sidebar";
 import { api, getToken, API_URL } from "../../lib/api";
 import { colorBadgeTipo } from "../../lib/tiposMensaje";
 import BotonConsultarTodas, { formatoDuracionEstimada, formatoResumenFinal } from "../../components/BotonConsultarTodas";
+import ConfirmDialog from "../../components/ConfirmDialog";
 import { infoEtapaConsulta, infoEtapaFichaRuc, infoEtapaReporteTributario } from "../../lib/etapasTrabajos";
 import { useTrabajos, progresoPorTipo } from "../../contexts/TrabajosContext";
 
@@ -1144,6 +1145,7 @@ function FormularioEmpresa({ onCreada }) {
   const [guardando, setGuardando] = useState(false);
   const [verificando, setVerificando] = useState(false);
   const [avisoCredenciales, setAvisoCredenciales] = useState(null); // { empresaId, razonSocial, detalle, esCredencialesIncorrectas } | null
+  const [mostrarConfirmarEliminarConError, setMostrarConfirmarEliminarConError] = useState(false);
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -1211,14 +1213,19 @@ function FormularioEmpresa({ onCreada }) {
     onCreada();
   }
 
-  async function eliminarEmpresaConError() {
+  async function confirmarEliminarEmpresaConError() {
+    setMostrarConfirmarEliminarConError(false);
     if (!avisoCredenciales) return;
-    if (!confirm(`Seguro que quieres eliminar "${avisoCredenciales.razonSocial}"? Se borraran tambien sus mensajes.`)) return;
-    await api.eliminarEmpresa(avisoCredenciales.empresaId);
-    setAvisoCredenciales(null);
+    try {
+      await api.eliminarEmpresa(avisoCredenciales.empresaId);
+      setAvisoCredenciales(null);
+    } catch (err) {
+      alert(err.message);
+    }
   }
 
   return (
+    <>
     <form onSubmit={onSubmit} className="surface-card mt-6 animate-fade-in-up p-6">
       {error && (
         <div className="mb-4 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>
@@ -1252,7 +1259,7 @@ function FormularioEmpresa({ onCreada }) {
             <Link href={`/empresas/${avisoCredenciales.empresaId}`} className="font-medium underline">
               Ir a corregir credenciales
             </Link>
-            <button type="button" onClick={eliminarEmpresaConError} className="font-medium underline">
+            <button type="button" onClick={() => setMostrarConfirmarEliminarConError(true)} className="font-medium underline">
               Eliminar empresa
             </button>
           </div>
@@ -1386,6 +1393,18 @@ function FormularioEmpresa({ onCreada }) {
         {guardando ? "Guardando..." : verificando ? "Verificando..." : "Guardar empresa"}
       </button>
     </form>
+
+    {mostrarConfirmarEliminarConError && avisoCredenciales && (
+      <ConfirmDialog
+        titulo={`Eliminar "${avisoCredenciales.razonSocial}"?`}
+        mensaje="Se borraran tambien sus mensajes. Esto no se puede deshacer."
+        textoConfirmar="Si, eliminar"
+        peligroso
+        onConfirmar={confirmarEliminarEmpresaConError}
+        onCancelar={() => setMostrarConfirmarEliminarConError(false)}
+      />
+    )}
+    </>
   );
 }
 
