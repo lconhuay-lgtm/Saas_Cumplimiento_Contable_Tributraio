@@ -70,6 +70,14 @@ class Usuario(Base):
     # viejo deja de servir apenas se pide uno nuevo. None una vez verificado.
     token_verificacion: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     token_verificacion_expira: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Punto 2 (menu de cuenta): como le llega el resumen/aviso a ESTE usuario
+    # -- "correo" (de siempre, sin cambios) o "whatsapp". celular/pais_celular
+    # solo se piden si forma_notificacion="whatsapp" (mismo formulario del
+    # tablero, ver /auth/perfil). El envio real por WhatsApp queda para mas
+    # adelante -- por ahora estos campos solo se guardan, ningun job los usa todavia.
+    forma_notificacion: Mapped[str] = mapped_column(String(20), default="correo", nullable=False)
+    celular: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    pais_celular: Mapped[str | None] = mapped_column(String(5), default="+51", nullable=True)
 
     tenant: Mapped["Tenant"] = relationship(back_populates="usuarios")
 

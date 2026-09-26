@@ -85,6 +85,13 @@ export const api = {
 
   me: () => apiFetch("/auth/me"),
 
+  // Punto 2: menu de cuenta (dropdown arriba a la derecha) -- cada usuario
+  // edita su propia preferencia de notificacion y contrasena.
+  actualizarPerfil: (data) => apiFetch("/auth/perfil", { method: "PUT", body: JSON.stringify(data) }),
+
+  cambiarPassword: (data) =>
+    apiFetch("/auth/cambiar-password", { method: "POST", body: JSON.stringify(data) }),
+
   // Fase 5: verificacion de email (link de activacion, no bloquea el login).
   reenviarVerificacion: () => apiFetch("/auth/reenviar-verificacion", { method: "POST" }),
 

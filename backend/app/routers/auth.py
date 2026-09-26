@@ -16,6 +16,9 @@ from app.schemas import (
     UsuarioResponse,
     VerificacionEmailResponse,
     ReenviarVerificacionResponse,
+    ActualizarPerfilRequest,
+    CambiarPasswordRequest,
+    CambiarPasswordResponse,
 )
 from app.security import hash_password, verify_password, crear_token
 from app.deps import get_usuario_actual
@@ -90,6 +93,40 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
 @router.get("/me", response_model=UsuarioResponse)
 def me(usuario: Usuario = Depends(get_usuario_actual)):
     return usuario
+
+
+@router.put("/perfil", response_model=UsuarioResponse)
+def actualizar_perfil(
+    data: ActualizarPerfilRequest,
+    usuario: Usuario = Depends(get_usuario_actual),
+    db: Session = Depends(get_db),
+):
+    """
+    Punto 2 (menu de cuenta): cada usuario edita su PROPIA preferencia de
+    notificacion (correo/whatsapp) -- celular/pais_celular solo hacen falta
+    si eligio whatsapp, pero se guardan igual si vienen (para no perderlos
+    si despues vuelve a correo y elige whatsapp de nuevo mas adelante).
+    """
+    usuario.forma_notificacion = data.forma_notificacion
+    usuario.celular = data.celular
+    usuario.pais_celular = data.pais_celular
+    db.commit()
+    db.refresh(usuario)
+    return usuario
+
+
+@router.post("/cambiar-password", response_model=CambiarPasswordResponse)
+def cambiar_password(
+    data: CambiarPasswordRequest,
+    usuario: Usuario = Depends(get_usuario_actual),
+    db: Session = Depends(get_db),
+):
+    """Punto 2 (menu de cuenta): exige la contrasena actual -- evita que una sesion abierta olvidada sirva para tomar la cuenta."""
+    if not verify_password(data.password_actual, usuario.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="La contrasena actual no es correcta")
+    usuario.password_hash = hash_password(data.password_nuevo)
+    db.commit()
+    return CambiarPasswordResponse(actualizado=True)
 
 
 @router.post("/reenviar-verificacion", response_model=ReenviarVerificacionResponse)

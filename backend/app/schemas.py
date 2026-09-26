@@ -26,9 +26,29 @@ class UsuarioResponse(BaseModel):
     tenant_id: str
     email_verificado: bool = True
     es_staff_plataforma: bool = False
+    forma_notificacion: str = "correo"
+    celular: str | None = None
+    pais_celular: str | None = None
 
     class Config:
         from_attributes = True
+
+
+class ActualizarPerfilRequest(BaseModel):
+    """Punto 2 (menu de cuenta): cada usuario edita su PROPIA preferencia de notificacion, nunca la de otro."""
+
+    forma_notificacion: str = Field(..., pattern=r"^(correo|whatsapp)$")
+    celular: str | None = Field(None, max_length=20)
+    pais_celular: str | None = Field(None, max_length=5)
+
+
+class CambiarPasswordRequest(BaseModel):
+    password_actual: str
+    password_nuevo: str = Field(..., min_length=8)
+
+
+class CambiarPasswordResponse(BaseModel):
+    actualizado: bool = True
 
 
 class EmpresaCreate(BaseModel):
