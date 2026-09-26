@@ -29,15 +29,26 @@ class UsuarioResponse(BaseModel):
     forma_notificacion: str = "correo"
     celular: str | None = None
     pais_celular: str | None = None
+    nombre: str | None = None
+    apellidos: str | None = None
 
     class Config:
         from_attributes = True
 
 
 class ActualizarPerfilRequest(BaseModel):
-    """Punto 2 (menu de cuenta): cada usuario edita su PROPIA preferencia de notificacion, nunca la de otro."""
+    """
+    Punto 2 (menu de cuenta): cada usuario edita su PROPIO perfil, nunca el
+    de otro. Todos los campos opcionales (actualizacion parcial, mismo
+    patron que ConfiguracionSistemaUpdate en /admin/configuracion) porque
+    las pestanas Perfil y Notificaciones del modal mandan cada una solo SUS
+    campos -- sin esto, guardar la preferencia de notificacion pisaria el
+    nombre/apellidos con lo que tuviera cargado ese formulario en ese momento.
+    """
 
-    forma_notificacion: str = Field(..., pattern=r"^(correo|whatsapp)$")
+    nombre: str | None = Field(None, max_length=100)
+    apellidos: str | None = Field(None, max_length=100)
+    forma_notificacion: str | None = Field(None, pattern=r"^(correo|whatsapp)$")
     celular: str | None = Field(None, max_length=20)
     pais_celular: str | None = Field(None, max_length=5)
 

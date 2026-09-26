@@ -314,7 +314,7 @@ export default function DetalleEmpresaPage() {
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="min-w-0 flex-1 px-8 py-8 xl:px-12">
+      <main className="min-w-0 flex-1 px-8 pb-8 pt-24 xl:px-12">
         <Link
           href="/empresas"
           className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-600 shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-accent hover:text-accent"

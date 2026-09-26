@@ -107,7 +107,7 @@ export default function EquipoPage() {
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="min-w-0 flex-1 px-8 py-8 xl:px-12">
+      <main className="min-w-0 flex-1 px-8 pb-8 pt-24 xl:px-12">
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight text-ink">Mi equipo</h1>
           <p className="mt-1 text-sm text-slate-600">

@@ -78,6 +78,12 @@ class Usuario(Base):
     forma_notificacion: Mapped[str] = mapped_column(String(20), default="correo", nullable=False)
     celular: Mapped[str | None] = mapped_column(String(20), nullable=True)
     pais_celular: Mapped[str | None] = mapped_column(String(5), default="+51", nullable=True)
+    # Datos de perfil (pestana "Perfil" del menu de cuenta) -- nunca fueron
+    # obligatorios para operar el tablero (el login siempre uso solo email),
+    # asi que quedan nullable a proposito: los usuarios existentes los tienen
+    # en blanco hasta que entren y los completen.
+    nombre: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    apellidos: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     tenant: Mapped["Tenant"] = relationship(back_populates="usuarios")
 

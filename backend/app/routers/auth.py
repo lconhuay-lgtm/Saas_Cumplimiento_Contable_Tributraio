@@ -102,14 +102,14 @@ def actualizar_perfil(
     db: Session = Depends(get_db),
 ):
     """
-    Punto 2 (menu de cuenta): cada usuario edita su PROPIA preferencia de
-    notificacion (correo/whatsapp) -- celular/pais_celular solo hacen falta
-    si eligio whatsapp, pero se guardan igual si vienen (para no perderlos
-    si despues vuelve a correo y elige whatsapp de nuevo mas adelante).
+    Punto 2 (menu de cuenta): actualizacion PARCIAL (exclude_unset, mismo
+    patron que /admin/configuracion) -- la pestana Perfil manda solo
+    nombre/apellidos/celular/pais_celular, y la pestana Notificaciones manda
+    solo forma_notificacion, sin pisarse una a la otra.
     """
-    usuario.forma_notificacion = data.forma_notificacion
-    usuario.celular = data.celular
-    usuario.pais_celular = data.pais_celular
+    cambios = data.model_dump(exclude_unset=True)
+    for campo, valor in cambios.items():
+        setattr(usuario, campo, valor)
     db.commit()
     db.refresh(usuario)
     return usuario

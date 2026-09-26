@@ -98,7 +98,7 @@ export default function ConfiguracionPage() {
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="min-w-0 flex-1 px-8 py-8 xl:px-12">
+      <main className="min-w-0 flex-1 px-8 pb-8 pt-24 xl:px-12">
         <div className="flex items-center gap-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-light text-accent">
             <Settings size={18} strokeWidth={1.5} />
