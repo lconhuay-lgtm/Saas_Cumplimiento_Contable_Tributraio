@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import NoAlertPresentException
 
 import config
 
@@ -26,6 +27,25 @@ logger = logging.getLogger('web_navigation')
 
 class NavegacionBuzonMixin:
     """Navegacion del buzon: entrar, recorrer mensajes, procesar por dia/periodo."""
+
+    def _cerrar_alerta_si_aparece(self):
+        """
+        SUNAT a veces dispara un alert() nativo cuando alguna llamada interna
+        de su propia pagina falla (confirmado 26/09: 'listarAlertas' devuelve
+        Internal Server Error justo al entrar al Buzon). Un humano le da OK
+        sin pensarlo y sigue -- Selenium en cambio no puede ejecutar ningun
+        otro comando mientras el alert este abierto y revienta con
+        "unexpected alert open". Hay que descartarlo del mismo modo antes de
+        devolver el control.
+        """
+        try:
+            alerta = self.driver.switch_to.alert
+            texto = alerta.text
+            alerta.accept()
+            logger.warning(f"Se descartó un alert inesperado de SUNAT: {texto}")
+            return True
+        except NoAlertPresentException:
+            return False
 
     def _navegar_a_buzon_notificaciones(self):
         """
@@ -68,6 +88,7 @@ class NavegacionBuzonMixin:
                 buzon_elemento.click()
                 logger.info("Clic exitoso usando Estrategia 0")
                 time.sleep(3)
+                self._cerrar_alerta_si_aparece()
                 return True
             except Exception as e:
                 logger.warning(f"Estrategia 0 falló: {str(e)}")
@@ -81,6 +102,7 @@ class NavegacionBuzonMixin:
                 buzon_elemento.click()
                 logger.info("Clic exitoso usando Estrategia 1")
                 time.sleep(3)
+                self._cerrar_alerta_si_aparece()
                 return True
             except Exception as e:
                 logger.warning(f"Estrategia 1 falló: {str(e)}")
@@ -92,6 +114,7 @@ class NavegacionBuzonMixin:
                 self.driver.execute_script("arguments[0].click();", buzon_elemento)
                 logger.info("Clic exitoso usando Estrategia 2")
                 time.sleep(3)
+                self._cerrar_alerta_si_aparece()
                 return True
             except Exception as e:
                 logger.warning(f"Estrategia 2 falló: {str(e)}")
@@ -107,6 +130,7 @@ class NavegacionBuzonMixin:
                         self.driver.execute_script("arguments[0].click();", buzon_elemento)
                         logger.info(f"Clic exitoso en Buzón desde iframe {i+1}")
                         time.sleep(3)
+                        self._cerrar_alerta_si_aparece()
                         return True
                     except:
                         logger.info(f"No se encontró 'Buzón' en iframe {i+1}")
@@ -131,6 +155,7 @@ class NavegacionBuzonMixin:
                             self.driver.execute_script("arguments[0].click();", enlace)
                             logger.info(f"Clic exitoso en '{texto}'")
                             time.sleep(3)
+                            self._cerrar_alerta_si_aparece()
                             return True
                     except:
                         continue
