@@ -183,9 +183,13 @@ function EmpresasPageContenido() {
       // servidor).
       const jobFinal = await iniciarTrabajo("consulta", empresaId, empresaNombre, job.id);
       if (jobFinal.estado === "error") {
+        // A pedido: no se muestra el detalle tecnico crudo (jobFinal.error
+        // puede traer un stacktrace de Selenium) -- el usuario no puede
+        // hacer nada con eso, y la consulta ya se reintento sola una vez
+        // (ver MAX_INTENTOS en jobs.py) antes de llegar a este punto.
         setResultadoConsulta({
-          titulo: "La consulta fallo",
-          mensaje: jobFinal.error || "error desconocido",
+          titulo: "La consulta no se pudo completar",
+          mensaje: "Intenta de nuevo en unos minutos.",
           variante: "error",
         });
       } else if (jobFinal.mensajes_nuevos > 0) {

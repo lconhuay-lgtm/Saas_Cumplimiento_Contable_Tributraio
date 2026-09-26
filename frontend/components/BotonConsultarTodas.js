@@ -29,9 +29,13 @@ export function formatoResumenFinal(estado) {
     lineas.push(`${estado.mensajes_nuevos_total} mensaje(s) nuevo(s) encontrados en total.`);
   }
   if (estado.con_error > 0) {
-    lineas.push(`${estado.con_error} con error:`);
+    // A pedido: no se lista el detalle tecnico crudo por empresa (puede
+    // traer un stacktrace de Selenium) -- el usuario no puede hacer nada
+    // con eso, y cada consulta ya se reintento sola una vez antes de
+    // marcarse como error (ver MAX_INTENTOS en jobs.py).
+    lineas.push(`${estado.con_error} no se pudieron completar -- intenta consultarlas de nuevo en unos minutos:`);
     for (const e of estado.empresas_con_error || []) {
-      lineas.push(`- ${e.empresa_razon_social}: ${e.error || "error desconocido"}`);
+      lineas.push(`- ${e.empresa_razon_social}`);
     }
   }
   return lineas.join("\n");

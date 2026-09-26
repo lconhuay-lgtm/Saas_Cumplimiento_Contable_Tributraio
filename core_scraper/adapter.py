@@ -161,6 +161,15 @@ def consultar_buzon(
         if not navegador._navegar_a_buzon_notificaciones():
             return {"ok": False, "mensajes": [], "documentos": {}, "mensajes_bandeja": [], "razon_social_sunat": navegador.razon_social_detectada, "condicion_domicilio": navegador.condicion_domicilio_detectada, "estado_contribuyente": navegador.estado_contribuyente_detectado, "estado_contribuyente_verificado": leer_estado_contribuyente, "flujo_detectado": navegador.flujo_detectado, "error": "Se inicio sesion pero no se pudo abrir el Buzon Electronico"}
 
+        # Segundo chequeo del alert de listarAlertas (ver
+        # _cerrar_alerta_si_aparece en navegacion_buzon.py): el de adentro de
+        # _navegar_a_buzon_notificaciones espera un time.sleep(3) fijo tras
+        # el clic, pero listarAlertas es una llamada async de la propia
+        # pagina de SUNAT que a veces tarda mas que eso en fallar (confirmado
+        # en produccion, 26/09: goteaba igual como "unexpected alert open" en
+        # el siguiente comando de Selenium). Gratis si no hay alerta abierta.
+        navegador._cerrar_alerta_si_aparece()
+
         _reportar("leyendo_mensajes")
         mensajes = _leer_lista_mensajes(navegador, limite_mensajes)
 
