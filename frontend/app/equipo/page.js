@@ -20,9 +20,12 @@ export default function EquipoPage() {
   const router = useRouter();
   const [usuarios, setUsuarios] = useState([]);
   const [invitaciones, setInvitaciones] = useState([]);
+  const [empresas, setEmpresas] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
   const [emailNuevo, setEmailNuevo] = useState("");
+  const [rolNuevo, setRolNuevo] = useState("miembro");
+  const [empresaIdsNuevo, setEmpresaIdsNuevo] = useState([]);
   const [invitando, setInvitando] = useState(false);
   const [copiadoId, setCopiadoId] = useState(null);
 
@@ -39,12 +42,14 @@ export default function EquipoPage() {
     setCargando(true);
     setError("");
     try {
-      const [datosUsuarios, datosInvitaciones] = await Promise.all([
+      const [datosUsuarios, datosInvitaciones, datosEmpresas] = await Promise.all([
         api.listarUsuarios(),
         api.listarInvitaciones(),
+        api.listarEmpresas(),
       ]);
       setUsuarios(datosUsuarios);
       setInvitaciones(datosInvitaciones);
+      setEmpresas(datosEmpresas);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -52,13 +57,25 @@ export default function EquipoPage() {
     }
   }
 
+  function alternarEmpresa(id) {
+    setEmpresaIdsNuevo((actual) =>
+      actual.includes(id) ? actual.filter((x) => x !== id) : [...actual, id]
+    );
+  }
+
   async function invitar(e) {
     e.preventDefault();
     setInvitando(true);
     setError("");
     try {
-      const nueva = await api.crearInvitacion(emailNuevo.trim());
+      const nueva = await api.crearInvitacion(
+        emailNuevo.trim(),
+        rolNuevo,
+        rolNuevo === "miembro" ? empresaIdsNuevo : []
+      );
       setEmailNuevo("");
+      setRolNuevo("miembro");
+      setEmpresaIdsNuevo([]);
       await cargar();
       copiarLink(nueva);
     } catch (err) {
@@ -115,6 +132,19 @@ export default function EquipoPage() {
               className="campo-input"
             />
           </div>
+          <div className="min-w-[160px]">
+            <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-500">
+              Categoria
+            </label>
+            <select
+              value={rolNuevo}
+              onChange={(e) => setRolNuevo(e.target.value)}
+              className="campo-input"
+            >
+              <option value="miembro">Usuario</option>
+              <option value="admin">Administrador</option>
+            </select>
+          </div>
           <button
             type="submit"
             disabled={invitando}
@@ -123,6 +153,38 @@ export default function EquipoPage() {
             {invitando ? <Loader2 size={15} strokeWidth={2} className="animate-spin" /> : <UserPlus size={15} strokeWidth={1.5} />}
             Invitar
           </button>
+
+          {rolNuevo === "miembro" && (
+            <div className="w-full">
+              <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                Empresas asignadas (solo para "Usuario" -- un Administrador ve todas)
+              </label>
+              {empresas.length === 0 ? (
+                <p className="text-xs text-slate-400">No hay empresas registradas todavia.</p>
+              ) : (
+                <div className="flex max-h-32 flex-wrap gap-2 overflow-y-auto rounded-lg border border-slate-200 p-2.5">
+                  {empresas.map((emp) => (
+                    <label
+                      key={emp.id}
+                      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+                        empresaIdsNuevo.includes(emp.id)
+                          ? "border-accent bg-accent/10 text-accent-dark"
+                          : "border-slate-200 text-slate-600 hover:border-slate-300"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="sr-only"
+                        checked={empresaIdsNuevo.includes(emp.id)}
+                        onChange={() => alternarEmpresa(emp.id)}
+                      />
+                      {emp.razon_social || emp.ruc}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </form>
 
         {cargando ? (
@@ -156,6 +218,9 @@ export default function EquipoPage() {
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium text-ink">{inv.email}</span>
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold uppercase text-slate-500">
+                              {inv.rol === "admin" ? "Administrador" : "Usuario"}
+                            </span>
                             <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${est.color}`}>
                               <est.Icon size={11} strokeWidth={2} />
                               {est.etiqueta}
@@ -165,6 +230,15 @@ export default function EquipoPage() {
                             Invitado por {inv.invitado_por_email} el {formatoFecha(inv.creado_en)}
                             {pendiente && ` -- vence el ${formatoFecha(inv.expira_en)}`}
                           </p>
+                          {inv.rol === "miembro" && (
+                            <p className="mt-0.5 text-xs text-slate-500">
+                              {inv.empresa_ids.length === 0
+                                ? "Sin empresas asignadas todavia"
+                                : `${inv.empresa_ids.length} empresa(s) asignada(s): ${inv.empresa_ids
+                                    .map((id) => empresas.find((e) => e.id === id)?.razon_social || id)
+                                    .join(", ")}`}
+                            </p>
+                          )}
                         </div>
                         {pendiente && (
                           <div className="flex shrink-0 items-center gap-1">

@@ -1024,9 +1024,15 @@ def generar_reporte_tributario_terceros(
 
     empresa = {"ruc": ruc, "usuario": usuario_sol, "clave": clave_sol, "razon_social": razon_social}
     navegador = SunatWebNavigator(empresa=empresa, headless=headless)
+    # Se activa justo antes del clic en "Enviar" (mas abajo) -- a partir de
+    # ahi SUNAT pudo haber procesado la solicitud (cuenta contra el limite
+    # de 3 por dia por empresa) aunque despues fallara algun paso cosmetico
+    # (ej. leer el mensaje de confirmacion). El llamador (jobs.py) usa esto
+    # para decidir si es seguro reintentar toda la funcion desde cero.
+    solicitud_pudo_haberse_enviado = False
     try:
         if not navegador.initialize_browser():
-            return {"ok": False, "error": "No se pudo iniciar el navegador"}
+            return {"ok": False, "error": "No se pudo iniciar el navegador", "solicitud_pudo_haberse_enviado": False}
 
         _reportar("iniciando_sesion")
         navegador.driver.get(config.URL_SUNAT)
@@ -1034,7 +1040,7 @@ def generar_reporte_tributario_terceros(
 
         _reportar("autenticando")
         if not navegador._hacer_clicks_sunat(empresa):
-            return {"ok": False, "error": "No se pudo iniciar sesion en SUNAT (revisa usuario/clave)"}
+            return {"ok": False, "error": "No se pudo iniciar sesion en SUNAT (revisa usuario/clave)", "solicitud_pudo_haberse_enviado": False}
 
         driver = navegador.driver
         ventana_original = driver.current_window_handle
@@ -1050,7 +1056,7 @@ def generar_reporte_tributario_terceros(
                 time.sleep(2)
                 logger.info(f"Reporte Tributario para Terceros: clic en {elid} hecho")
         except Exception as e:
-            return {"ok": False, "error": f"No se pudo abrir 'Reporte Tributario para Terceros' en el menu de SUNAT: {e}"}
+            return {"ok": False, "error": f"No se pudo abrir 'Reporte Tributario para Terceros' en el menu de SUNAT: {e}", "solicitud_pudo_haberse_enviado": False}
         # El clic en el 3er nivel del menu abre una pestaña nueva con el
         # aviso legal (informacion reservada, Art. 85) -- cambiarse a ella.
         # OJO (confirmado en produccion, 24/09): "cualquier ventana que no
@@ -1078,7 +1084,7 @@ def generar_reporte_tributario_terceros(
         checkbox_acepto = _buscar_en_algun_frame(driver, By.ID, "chkAceptar")
         if checkbox_acepto is None:
             logger.warning(f"Reporte Tributario para Terceros: no se encontro chkAceptar. Titulo actual: {driver.title!r}, URL: {driver.current_url!r}")
-            return {"ok": False, "error": "No aparecio el aviso legal ('Acepto') del Reporte Tributario para Terceros"}
+            return {"ok": False, "error": "No aparecio el aviso legal ('Acepto') del Reporte Tributario para Terceros", "solicitud_pudo_haberse_enviado": False}
         # El checkbox real de SUNAT en esta pantalla no acepta un clic
         # nativo (ElementNotInteractableException, confirmado en
         # produccion -- probablemente esta detras de un overlay/estilo
@@ -1094,13 +1100,13 @@ def generar_reporte_tributario_terceros(
             boton_acepto = driver.find_element(By.ID, "btnAceptar")
             driver.execute_script("arguments[0].click();", boton_acepto)
         except Exception as e:
-            return {"ok": False, "error": f"No se pudo continuar despues de aceptar el aviso legal: {e}"}
+            return {"ok": False, "error": f"No se pudo continuar despues de aceptar el aviso legal: {e}", "solicitud_pudo_haberse_enviado": False}
         time.sleep(4)
 
         _reportar("enviando_correo")
         campo_correo = _buscar_en_algun_frame(driver, By.ID, "txtCorreo")
         if campo_correo is None:
-            return {"ok": False, "error": "No aparecio el campo de correo del Reporte Tributario para Terceros"}
+            return {"ok": False, "error": "No aparecio el campo de correo del Reporte Tributario para Terceros", "solicitud_pudo_haberse_enviado": False}
         try:
             campo_correo.clear()
             campo_correo.send_keys(correo_destino)
@@ -1120,11 +1126,15 @@ def generar_reporte_tributario_terceros(
         time.sleep(1)
         boton_enviar = _buscar_en_algun_frame(driver, By.ID, "btnCorreo", timeout=10)
         if boton_enviar is None:
-            return {"ok": False, "error": "No se encontro el boton 'Enviar' del Reporte Tributario para Terceros"}
+            return {"ok": False, "error": "No se encontro el boton 'Enviar' del Reporte Tributario para Terceros", "solicitud_pudo_haberse_enviado": False}
         try:
             boton_enviar.click()
         except Exception:
             driver.execute_script("arguments[0].click();", boton_enviar)
+        # A partir de aca SUNAT pudo haber recibido y procesado la
+        # solicitud (cuenta contra el limite de 3/dia) aunque algo
+        # cosmetico falle despues (ej. leer el texto de confirmacion).
+        solicitud_pudo_haberse_enviado = True
         time.sleep(4)
 
         # SUNAT confirma con un mensaje reconocible (confirmado con una
@@ -1137,10 +1147,10 @@ def generar_reporte_tributario_terceros(
         logger.info(f"Reporte Tributario para Terceros solicitado para {ruc} -> {correo_destino} (confirmado={confirmado})")
         if not confirmado:
             logger.warning(f"No se encontro el mensaje de confirmacion esperado. Texto en pantalla: {texto_pantalla[:400]!r}")
-        return {"ok": True, "error": None}
+        return {"ok": True, "error": None, "solicitud_pudo_haberse_enviado": True}
 
     except Exception as e:
         logger.error(f"Error solicitando el Reporte Tributario para Terceros de {ruc}: {e}")
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": str(e), "solicitud_pudo_haberse_enviado": solicitud_pudo_haberse_enviado}
     finally:
         navegador.close_browser()

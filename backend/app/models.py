@@ -530,12 +530,37 @@ class InvitacionUsuario(Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     invitado_por_usuario_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=False)
+    # Rol con el que se creara el Usuario final al aceptar (ver
+    # aceptar_invitacion en routers/invitaciones.py) -- antes quedaba
+    # hardcodeado a "miembro", el admin que invita ahora lo elige.
+    rol: Mapped[str] = mapped_column(String(20), default="miembro", nullable=False)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
     expira_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     usado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancelado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     tenant: Mapped["Tenant"] = relationship()
+    empresas_asignadas: Mapped[list["InvitacionUsuarioEmpresa"]] = relationship(
+        cascade="all, delete-orphan"
+    )
+
+
+class InvitacionUsuarioEmpresa(Base):
+    """
+    Empresas que el admin elige para la cartera del invitado (solo aplica
+    si la invitacion es de rol "miembro" -- un "admin" ve todas las
+    empresas del tenant igual, ver acceso.py, asi que no hace falta
+    guardar nada aca para ese caso). Se aplican de una sola vez sobre
+    Empresa.asignado_a_usuario_id recien se acepta la invitacion (ver
+    aceptar_invitacion) -- hasta entonces son solo una intencion pendiente.
+    """
+    __tablename__ = "invitaciones_usuario_empresas"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    invitacion_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("invitaciones_usuario.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False)
 
 
 class ConfiguracionSistema(Base):

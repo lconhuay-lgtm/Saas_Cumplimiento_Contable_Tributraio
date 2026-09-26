@@ -24,6 +24,8 @@ import {
   MessageSquare,
   Settings,
   ShieldAlert,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import Sidebar from "../../../components/Sidebar";
 import { api, getToken } from "../../../lib/api";
@@ -64,6 +66,7 @@ export default function DetalleEmpresaPage() {
   // Llega desde las tarjetas/dashboard con ?filtro=pendientes|hoy para entrar
   // directo con ese recorte aplicado, ademas de las pestanas por tipo.
   const [filtroEspecial, setFiltroEspecial] = useState(searchParams.get("filtro"));
+  const [pagina, setPagina] = useState(1);
   const [seleccionado, setSeleccionado] = useState(null); // mensaje completo
   const [pdfUrl, setPdfUrl] = useState(null);
   const [cargandoPdf, setCargandoPdf] = useState(false);
@@ -279,6 +282,22 @@ export default function DetalleEmpresaPage() {
       return true;
     });
 
+  // Paginacion del lado del cliente -- a pedido: con muchos mensajes el
+  // scroll no debe irse "hasta abajo", se corta en paginas de 20. Se
+  // pagina sobre la lista ya filtrada (busqueda/pestanas se aplican
+  // primero, la pagina es sobre el resultado).
+  const POR_PAGINA = 20;
+  const totalPaginas = Math.max(1, Math.ceil(mensajesFiltrados.length / POR_PAGINA));
+  const paginaSegura = Math.min(pagina, totalPaginas);
+  const mensajesPagina = mensajesFiltrados.slice(
+    (paginaSegura - 1) * POR_PAGINA,
+    paginaSegura * POR_PAGINA
+  );
+
+  useEffect(() => {
+    setPagina(1);
+  }, [origenActivo, filtroTipo, filtroEspecial]);
+
   // Al entrar al buzon, abrir directo el primer mensaje con PDF/contenido
   // en vez de dejar el visor en "Selecciona un mensaje..." -- el usuario
   // tenia que hacer un clic de mas cada vez que entraba. Solo dispara una
@@ -461,7 +480,7 @@ export default function DetalleEmpresaPage() {
                       : "No hay mensajes en este filtro."}
                   </p>
                 ) : (
-                  mensajesFiltrados.map((m) => {
+                  mensajesPagina.map((m) => {
                     const esClickeable = m.tiene_documento || !!m.contenido_texto;
                     return (
                     <div
@@ -539,6 +558,30 @@ export default function DetalleEmpresaPage() {
                   })
                 )}
               </div>
+
+              {totalPaginas > 1 && (
+                <div className="mt-3 flex items-center justify-between gap-2 text-xs text-slate-500">
+                  <button
+                    onClick={() => setPagina((p) => Math.max(1, p - 1))}
+                    disabled={paginaSegura <= 1}
+                    className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 font-medium text-slate-600 hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <ChevronLeft size={13} strokeWidth={1.5} />
+                    Anterior
+                  </button>
+                  <span>
+                    Pagina {paginaSegura} de {totalPaginas} ({mensajesFiltrados.length} en total)
+                  </span>
+                  <button
+                    onClick={() => setPagina((p) => Math.min(totalPaginas, p + 1))}
+                    disabled={paginaSegura >= totalPaginas}
+                    className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 font-medium text-slate-600 hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Siguiente
+                    <ChevronRight size={13} strokeWidth={1.5} />
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Panel derecho: visor de PDF o de contenido de texto (Buzón

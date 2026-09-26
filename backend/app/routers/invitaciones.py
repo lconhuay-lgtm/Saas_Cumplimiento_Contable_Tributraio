@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Usuario, Tenant, InvitacionUsuario
+from app.models import Usuario, Tenant, InvitacionUsuario, InvitacionUsuarioEmpresa, Empresa
 from app.deps import get_admin_actual
 from app.security import hash_password, crear_token
 from app.email_utils import enviar_invitacion_equipo
@@ -46,10 +46,18 @@ def _link(token: str) -> str:
 
 def _a_respuesta(inv: InvitacionUsuario, db: Session) -> InvitacionResponse:
     invitador = db.query(Usuario).filter(Usuario.id == inv.invitado_por_usuario_id).first()
+    empresa_ids = [
+        fila[0]
+        for fila in db.query(InvitacionUsuarioEmpresa.empresa_id)
+        .filter(InvitacionUsuarioEmpresa.invitacion_id == inv.id)
+        .all()
+    ]
     return InvitacionResponse(
         id=inv.id,
         email=inv.email,
         invitado_por_email=invitador.email if invitador else "?",
+        rol=inv.rol,
+        empresa_ids=empresa_ids,
         link=_link(inv.token),
         creado_en=inv.creado_en,
         expira_en=inv.expira_en,
@@ -80,6 +88,26 @@ def crear_invitacion(
 ):
     email_normalizado = data.email.strip().lower()
 
+    if data.rol not in ("admin", "miembro"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rol invalido -- debe ser 'admin' o 'miembro'")
+
+    # Las empresas elegidas solo tienen sentido para "miembro" -- un admin
+    # ve todas las del tenant igual (ver acceso.py), asi que si llegan
+    # empresa_ids con rol="admin" se ignoran en silencio en vez de fallar.
+    empresa_ids_validos: list[str] = []
+    if data.rol == "miembro" and data.empresa_ids:
+        empresa_ids_validos = [
+            fila[0]
+            for fila in db.query(Empresa.id)
+            .filter(Empresa.id.in_(data.empresa_ids), Empresa.tenant_id == usuario.tenant_id)
+            .all()
+        ]
+        if len(empresa_ids_validos) != len(set(data.empresa_ids)):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Una o mas empresas no existen o no pertenecen a este tenant",
+            )
+
     ya_es_usuario = db.query(Usuario).filter(Usuario.email == email_normalizado).first()
     if ya_es_usuario:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ese email ya tiene una cuenta")
@@ -109,9 +137,13 @@ def crear_invitacion(
         email=email_normalizado,
         token=secrets.token_urlsafe(32),
         invitado_por_usuario_id=usuario.id,
+        rol=data.rol,
         expira_en=ahora + timedelta(days=DIAS_VALIDEZ_INVITACION),
     )
     db.add(invitacion)
+    db.flush()
+    for empresa_id in empresa_ids_validos:
+        db.add(InvitacionUsuarioEmpresa(invitacion_id=invitacion.id, empresa_id=empresa_id))
     db.commit()
     db.refresh(invitacion)
 
@@ -191,17 +223,31 @@ def aceptar_invitacion(token: str, data: InvitacionAceptarRequest, db: Session =
     if ya_es_usuario:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ese email ya tiene una cuenta")
 
-    # rol="miembro" (no "admin", a diferencia de /auth/registro): ve solo
-    # las empresas que el admin le asigne, y no puede reasignar carteras ni
-    # entrar a Salud del sistema / Mi equipo (ver app/acceso.py y
-    # app/deps.py:get_admin_actual).
+    # El rol lo elige el admin al crear la invitacion (ver crear_invitacion
+    # arriba) -- "miembro" ve solo las empresas asignadas (mas abajo) y no
+    # puede reasignar carteras ni entrar a Salud del sistema / Mi equipo
+    # (ver app/acceso.py y app/deps.py:get_admin_actual).
     nuevo_usuario = Usuario(
         tenant_id=invitacion.tenant_id,
         email=invitacion.email,
         password_hash=hash_password(data.password),
-        rol="miembro",
+        rol=invitacion.rol,
     )
     db.add(nuevo_usuario)
+    db.flush()
+
+    if invitacion.rol == "miembro":
+        empresa_ids = [
+            fila[0]
+            for fila in db.query(InvitacionUsuarioEmpresa.empresa_id)
+            .filter(InvitacionUsuarioEmpresa.invitacion_id == invitacion.id)
+            .all()
+        ]
+        if empresa_ids:
+            db.query(Empresa).filter(Empresa.id.in_(empresa_ids)).update(
+                {Empresa.asignado_a_usuario_id: nuevo_usuario.id}, synchronize_session=False
+            )
+
     invitacion.usado_en = datetime.now(timezone.utc)
     db.commit()
     db.refresh(nuevo_usuario)

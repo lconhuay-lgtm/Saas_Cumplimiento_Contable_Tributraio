@@ -579,15 +579,35 @@ def ejecutar_generar_reporte_tributario(job_id: str):
 
         adquirir_slot_global()
         try:
-            resultado = generar_reporte_tributario_terceros(
-                ruc=empresa.ruc,
-                usuario_sol=credencial.usuario_sol,
-                clave_sol=clave_en_claro,
-                correo_destino=job.correo_destino,
-                razon_social=empresa.razon_social,
-                headless=False,
-                on_progreso=_reportar_etapa,
-            )
+            resultado = None
+            for intento in range(1, MAX_INTENTOS + 1):
+                resultado = generar_reporte_tributario_terceros(
+                    ruc=empresa.ruc,
+                    usuario_sol=credencial.usuario_sol,
+                    clave_sol=clave_en_claro,
+                    correo_destino=job.correo_destino,
+                    razon_social=empresa.razon_social,
+                    headless=False,
+                    on_progreso=_reportar_etapa,
+                )
+                if resultado["ok"]:
+                    break
+                logger.warning(
+                    f"Intento {intento}/{MAX_INTENTOS} fallo para {empresa.ruc}: {resultado['error']}"
+                )
+                # A diferencia de ejecutar_consulta_buzon, aca no se reintenta a
+                # ciegas: SUNAT limita este reporte a 3 solicitudes por dia por
+                # empresa, y si la falla ocurrio despues del clic en "Enviar"
+                # (solicitud_pudo_haberse_enviado=True), reintentar podria gastar
+                # una solicitud valida en un reenvio innecesario.
+                if resultado.get("solicitud_pudo_haberse_enviado"):
+                    logger.warning(
+                        f"No se reintenta para {empresa.ruc}: la solicitud pudo haberse enviado ya "
+                        "(cuenta contra el limite diario de SUNAT)"
+                    )
+                    break
+                if intento < MAX_INTENTOS:
+                    time.sleep(ESPERA_ENTRE_INTENTOS_SEG * intento)
         finally:
             liberar_slot_global()
 

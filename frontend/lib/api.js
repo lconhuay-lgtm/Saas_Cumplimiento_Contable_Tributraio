@@ -72,7 +72,8 @@ export const api = {
   // Invitar un usuario adicional al MISMO tenant (equipo).
   listarInvitaciones: () => apiFetch("/invitaciones"),
 
-  crearInvitacion: (email) => apiFetch("/invitaciones", { method: "POST", body: JSON.stringify({ email }) }),
+  crearInvitacion: (email, rol, empresaIds) =>
+    apiFetch("/invitaciones", { method: "POST", body: JSON.stringify({ email, rol, empresa_ids: empresaIds }) }),
 
   cancelarInvitacion: (id) => apiFetch(`/invitaciones/${id}`, { method: "DELETE" }),
 

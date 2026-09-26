@@ -511,12 +511,20 @@ class DocumentoRecienteItem(BaseModel):
 
 class InvitacionCreate(BaseModel):
     email: EmailStr
+    # "admin" ve todas las empresas del tenant; "miembro" ve solo las de
+    # empresa_ids (ver acceso.py). Se valida en el router (no aca) contra
+    # el set exacto {"admin", "miembro"} y contra las empresas reales del
+    # tenant, mismo patron que el resto del proyecto (ver empresas.py).
+    rol: str = "miembro"
+    empresa_ids: list[str] = []
 
 
 class InvitacionResponse(BaseModel):
     id: str
     email: str
     invitado_por_email: str
+    rol: str
+    empresa_ids: list[str] = []
     link: str
     creado_en: datetime
     expira_en: datetime
