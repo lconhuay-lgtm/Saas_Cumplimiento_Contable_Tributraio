@@ -35,6 +35,14 @@ _SEGUNDOS_ENTRE_CONSULTAS_RUC_DEFAULT = int(os.environ.get("SUNAT_SEGUNDOS_ENTRE
 _ESPACIADO_CONSULTAS_SEG_DEFAULT = 45
 _LIMITE_MENSAJES_POR_CONSULTA_DEFAULT = 20
 
+# Punto 6 (horario configurable de chequeo automatico): mismos defaults que
+# siempre tenia scheduler_entry.py -- se usan solo si la fila "global"
+# todavia no existe o la base no responde, ver horarios_chequeo() abajo.
+_CHEQUEO1_HORA_UTC_DEFAULT = int(os.environ.get("CHEQUEO1_HORA_UTC", "16"))
+_CHEQUEO1_MINUTO_UTC_DEFAULT = int(os.environ.get("CHEQUEO1_MINUTO_UTC", "0"))
+_CHEQUEO2_HORA_UTC_DEFAULT = int(os.environ.get("CHEQUEO2_HORA_UTC", "0"))
+_CHEQUEO2_MINUTO_UTC_DEFAULT = int(os.environ.get("CHEQUEO2_MINUTO_UTC", "30"))
+
 _CLAVE_CONCURRENCIA = "sunat:consultas_en_curso"
 
 
@@ -101,6 +109,30 @@ def espaciado_consultas_seg() -> int:
 def limite_mensajes_por_consulta() -> int:
     config = _configuracion_actual()
     return config.limite_mensajes_por_consulta if config else _LIMITE_MENSAJES_POR_CONSULTA_DEFAULT
+
+
+def horarios_chequeo() -> dict:
+    """
+    Punto 6: hora UTC de los 2 chequeos automaticos diarios (consulta masiva
+    de todas las empresas activas), leida de ConfiguracionSistema en vez de
+    fija por variable de entorno. La llama scheduler_entry.py al arrancar y
+    despues cada pocos minutos, para reprogramar el cron job en caliente si
+    alguien la cambio desde el panel maestro -- sin reiniciar el contenedor.
+    """
+    config = _configuracion_actual()
+    if config is None:
+        return {
+            "chequeo1_hora": _CHEQUEO1_HORA_UTC_DEFAULT,
+            "chequeo1_minuto": _CHEQUEO1_MINUTO_UTC_DEFAULT,
+            "chequeo2_hora": _CHEQUEO2_HORA_UTC_DEFAULT,
+            "chequeo2_minuto": _CHEQUEO2_MINUTO_UTC_DEFAULT,
+        }
+    return {
+        "chequeo1_hora": config.chequeo1_hora,
+        "chequeo1_minuto": config.chequeo1_minuto,
+        "chequeo2_hora": config.chequeo2_hora,
+        "chequeo2_minuto": config.chequeo2_minuto,
+    }
 
 
 def verificar_limite_ruc(ruc: str) -> None:

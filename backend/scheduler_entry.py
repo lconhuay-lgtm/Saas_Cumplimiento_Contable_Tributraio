@@ -15,6 +15,17 @@ todo el ano (no tiene horario de verano), asi que por defecto:
   RESUMEN2_HORA_UTC=2,  RESUMEN2_MINUTO_UTC=30  -> 21:30 hora Peru (~2h despues)
 Ajustables por variable de entorno si hace falta.
 
+Punto 6 (panel maestro): CHEQUEO1_*/CHEQUEO2_* de arriba ahora son solo el
+FALLBACK de arranque -- la fuente de verdad real es ConfiguracionSistema
+(fila "global" en la base, editable en /configuracion sin redeploy, ver
+app.rate_limit.horarios_chequeo()). El job "recargar_horarios" relee esa
+fila cada RECARGA_HORARIOS_INTERVALO_MIN minutos (5 por defecto) y, si
+cambio, reprograma chequeo_1/chequeo_2 en caliente con reschedule_job --
+no hace falta reiniciar este contenedor para que un cambio de horario
+surta efecto. RESUMEN1_*/RESUMEN2_* siguen siendo fijos por variable de
+entorno (fuera del alcance del punto 6, que solo pidio la hora de la
+consulta masiva, no la del correo de resumen).
+
 Fase 3 (confiabilidad/observabilidad): ademas de los 4 jobs de arriba, este
 mismo proceso dispara el "chequeo canario" cada CANARIO_INTERVALO_MIN
 minutos (30 por defecto) -- un login de prueba contra una cuenta
@@ -46,17 +57,23 @@ from app.cronograma_sunat import asegurar_cronograma_vigente
 from app.cronograma_sire import asegurar_cronograma_sire_vigente
 from app.almacenamiento import limpiar_datos_antiguos
 from app.tareas import generar_tareas_mes
+from app.rate_limit import horarios_chequeo
 from app.models import Tenant
 
-CHEQUEO1_HORA_UTC = int(os.environ.get("CHEQUEO1_HORA_UTC", "16"))
-CHEQUEO1_MINUTO_UTC = int(os.environ.get("CHEQUEO1_MINUTO_UTC", "0"))
 RESUMEN1_HORA_UTC = int(os.environ.get("RESUMEN1_HORA_UTC", "18"))
 RESUMEN1_MINUTO_UTC = int(os.environ.get("RESUMEN1_MINUTO_UTC", "0"))
 
-CHEQUEO2_HORA_UTC = int(os.environ.get("CHEQUEO2_HORA_UTC", "0"))
-CHEQUEO2_MINUTO_UTC = int(os.environ.get("CHEQUEO2_MINUTO_UTC", "30"))
 RESUMEN2_HORA_UTC = int(os.environ.get("RESUMEN2_HORA_UTC", "2"))
 RESUMEN2_MINUTO_UTC = int(os.environ.get("RESUMEN2_MINUTO_UTC", "30"))
+
+# Punto 6: cada cuantos minutos se relee ConfiguracionSistema para detectar
+# un cambio de horario hecho desde el panel maestro (ver job_recargar_horarios).
+RECARGA_HORARIOS_INTERVALO_MIN = int(os.environ.get("RECARGA_HORARIOS_INTERVALO_MIN", "5"))
+
+# Ultimo horario aplicado a los jobs chequeo_1/chequeo_2 -- se compara contra
+# esto en cada recarga para saber si hace falta reschedule_job (evita
+# reprogramar de mas si no cambio nada).
+_horario_actual = {"chequeo1_hora": None, "chequeo1_minuto": None, "chequeo2_hora": None, "chequeo2_minuto": None}
 
 # Fase 3: cada cuantos minutos corre el chequeo canario. 30 min es un buen
 # equilibrio -- lo bastante seguido para enterarse rapido de un cambio en
@@ -90,6 +107,48 @@ def job_canario():
         logger.info(f"Chequeo canario: {resultado}")
     except Exception:
         logger.exception("Fallo el chequeo canario")
+
+
+def job_recargar_horarios(scheduler):
+    """
+    Punto 6: relee ConfiguracionSistema (panel maestro) y, si el horario de
+    chequeo_1 o chequeo_2 cambio desde la ultima vez, reprograma ese job en
+    caliente con reschedule_job -- sin esto, el proceso tendria que
+    reiniciarse para que un cambio guardado en /configuracion surta efecto.
+    """
+    try:
+        horarios = horarios_chequeo()
+    except Exception:
+        logger.exception("No se pudo releer el horario de chequeos, se mantiene el actual")
+        return
+
+    if (horarios["chequeo1_hora"], horarios["chequeo1_minuto"]) != (
+        _horario_actual["chequeo1_hora"],
+        _horario_actual["chequeo1_minuto"],
+    ):
+        scheduler.reschedule_job(
+            "chequeo_1",
+            trigger=CronTrigger(hour=horarios["chequeo1_hora"], minute=horarios["chequeo1_minuto"]),
+        )
+        logger.info(
+            f"Horario de chequeo_1 actualizado a {horarios['chequeo1_hora']:02d}:{horarios['chequeo1_minuto']:02d} UTC "
+            "(cambio hecho desde el panel maestro)"
+        )
+
+    if (horarios["chequeo2_hora"], horarios["chequeo2_minuto"]) != (
+        _horario_actual["chequeo2_hora"],
+        _horario_actual["chequeo2_minuto"],
+    ):
+        scheduler.reschedule_job(
+            "chequeo_2",
+            trigger=CronTrigger(hour=horarios["chequeo2_hora"], minute=horarios["chequeo2_minuto"]),
+        )
+        logger.info(
+            f"Horario de chequeo_2 actualizado a {horarios['chequeo2_hora']:02d}:{horarios['chequeo2_minuto']:02d} UTC "
+            "(cambio hecho desde el panel maestro)"
+        )
+
+    _horario_actual.update(horarios)
 
 
 def job_limpieza_diagnosticos():
@@ -157,9 +216,16 @@ def job_generar_tareas_mes():
 
 if __name__ == "__main__":
     scheduler = BlockingScheduler(timezone="UTC")
+
+    # Punto 6: horario inicial de chequeo_1/chequeo_2 sale de ConfiguracionSistema
+    # (con fallback a las variables de entorno CHEQUEO1_*/CHEQUEO2_* si la fila
+    # todavia no existe) -- ver horarios_chequeo() en app.rate_limit.
+    horarios_iniciales = horarios_chequeo()
+    _horario_actual.update(horarios_iniciales)
+
     scheduler.add_job(
-        lambda: job_chequeo("11:00 Peru"),
-        CronTrigger(hour=CHEQUEO1_HORA_UTC, minute=CHEQUEO1_MINUTO_UTC),
+        lambda: job_chequeo("chequeo_1"),
+        CronTrigger(hour=horarios_iniciales["chequeo1_hora"], minute=horarios_iniciales["chequeo1_minuto"]),
         id="chequeo_1",
     )
     scheduler.add_job(
@@ -168,8 +234,8 @@ if __name__ == "__main__":
         id="resumen_1",
     )
     scheduler.add_job(
-        lambda: job_chequeo("19:30 Peru"),
-        CronTrigger(hour=CHEQUEO2_HORA_UTC, minute=CHEQUEO2_MINUTO_UTC),
+        lambda: job_chequeo("chequeo_2"),
+        CronTrigger(hour=horarios_iniciales["chequeo2_hora"], minute=horarios_iniciales["chequeo2_minuto"]),
         id="chequeo_2",
     )
     scheduler.add_job(
@@ -181,6 +247,11 @@ if __name__ == "__main__":
         job_canario,
         IntervalTrigger(minutes=CANARIO_INTERVALO_MIN),
         id="canario",
+    )
+    scheduler.add_job(
+        lambda: job_recargar_horarios(scheduler),
+        IntervalTrigger(minutes=RECARGA_HORARIOS_INTERVALO_MIN),
+        id="recargar_horarios",
     )
     scheduler.add_job(
         job_cronograma,
@@ -199,10 +270,12 @@ if __name__ == "__main__":
     )
     logger.info(
         "Scheduler arrancado. Chequeos diarios a las "
-        f"{CHEQUEO1_HORA_UTC:02d}:{CHEQUEO1_MINUTO_UTC:02d} UTC (11:00 Peru) y "
-        f"{CHEQUEO2_HORA_UTC:02d}:{CHEQUEO2_MINUTO_UTC:02d} UTC (19:30 Peru), "
-        "con su resumen ~2h despues de cada uno. "
+        f"{horarios_iniciales['chequeo1_hora']:02d}:{horarios_iniciales['chequeo1_minuto']:02d} UTC y "
+        f"{horarios_iniciales['chequeo2_hora']:02d}:{horarios_iniciales['chequeo2_minuto']:02d} UTC "
+        "(editable sin redeploy en Panel maestro > horario de consulta masiva), "
+        "con su resumen ~2h despues de cada uno (horario fijo, no editable). "
         f"Chequeo canario cada {CANARIO_INTERVALO_MIN} minutos. "
+        f"Horario de chequeo recargado cada {RECARGA_HORARIOS_INTERVALO_MIN} minutos. "
         "Verificacion del cronograma SUNAT a las 05:00 UTC. "
         "Limpieza de datos de diagnostico a las 04:30 UTC. "
         "Generacion de tareas del mes (todos los tenants) a las 05:15 UTC. "

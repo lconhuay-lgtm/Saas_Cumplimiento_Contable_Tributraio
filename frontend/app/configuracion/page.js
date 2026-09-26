@@ -36,6 +36,19 @@ const CAMPOS = [
   },
 ];
 
+// Peru esta en UTC-5 todo el ano (sin horario de verano), asi que la
+// conversion es una resta fija -- no hace falta ninguna libreria de zonas
+// horarias para mostrar el equivalente al lado del campo en UTC.
+function horaPeru(horaUtc, minutoUtc) {
+  const hora = (Number(horaUtc) + 19) % 24; // (horaUtc - 5 + 24) % 24
+  return `${String(hora).padStart(2, "0")}:${String(Number(minutoUtc) || 0).padStart(2, "0")}`;
+}
+
+const CHEQUEOS = [
+  { id: 1, horaClave: "chequeo1_hora", minutoClave: "chequeo1_minuto", etiqueta: "Chequeo 1" },
+  { id: 2, horaClave: "chequeo2_hora", minutoClave: "chequeo2_minuto", etiqueta: "Chequeo 2" },
+];
+
 export default function ConfiguracionPage() {
   const router = useRouter();
   const [valores, setValores] = useState(null);
@@ -68,7 +81,10 @@ export default function ConfiguracionPage() {
     setError("");
     setGuardado(false);
     try {
-      const payload = Object.fromEntries(CAMPOS.map(({ clave }) => [clave, Number(valores[clave])]));
+      const clavesHorario = CHEQUEOS.flatMap(({ horaClave, minutoClave }) => [horaClave, minutoClave]);
+      const payload = Object.fromEntries(
+        [...CAMPOS.map(({ clave }) => clave), ...clavesHorario].map((clave) => [clave, Number(valores[clave])])
+      );
       const actualizado = await api.actualizarConfiguracionSistema(payload);
       setValores(actualizado);
       setGuardado(true);
@@ -124,6 +140,56 @@ export default function ConfiguracionPage() {
                 <p className="mt-1 text-xs text-slate-500">{ayuda}</p>
               </div>
             ))}
+
+            <div className="border-t border-slate-100 pt-5">
+              <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">
+                Horario de consulta masiva automatica (hora UTC del servidor)
+              </p>
+              <p className="mb-3 text-xs text-slate-500">
+                Dos chequeos automaticos al dia recorren todas las empresas activas de todos los tenants. El cambio
+                aplica solo con "Guardar cambios", sin redeploy (hasta 5 minutos de demora en tomar efecto).
+              </p>
+              <div className="space-y-4">
+                {CHEQUEOS.map(({ id, horaClave, minutoClave, etiqueta }) => (
+                  <div key={id} className="flex flex-wrap items-end gap-3">
+                    <span className="w-20 text-sm font-medium text-ink">{etiqueta}</span>
+                    <div>
+                      <label htmlFor={horaClave} className="mb-1 block text-[11px] text-slate-500">
+                        Hora (0-23)
+                      </label>
+                      <input
+                        id={horaClave}
+                        type="number"
+                        min={0}
+                        max={23}
+                        required
+                        value={valores[horaClave]}
+                        onChange={(e) => cambiarCampo(horaClave, e.target.value)}
+                        className="campo-input w-20"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor={minutoClave} className="mb-1 block text-[11px] text-slate-500">
+                        Minuto (0-59)
+                      </label>
+                      <input
+                        id={minutoClave}
+                        type="number"
+                        min={0}
+                        max={59}
+                        required
+                        value={valores[minutoClave]}
+                        onChange={(e) => cambiarCampo(minutoClave, e.target.value)}
+                        className="campo-input w-20"
+                      />
+                    </div>
+                    <span className="pb-2.5 text-xs text-slate-500">
+                      = {horaPeru(valores[horaClave], valores[minutoClave])} hora Peru
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
 
             <div className="flex items-center gap-3 border-t border-slate-100 pt-5">
               <button

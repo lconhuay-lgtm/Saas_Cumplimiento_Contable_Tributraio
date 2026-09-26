@@ -591,6 +591,14 @@ class ConfiguracionSistema(Base):
         pueden correr en paralelo en todo el sistema.
       - segundos_entre_consultas_mismo_ruc: minimo entre dos consultas de
         LA MISMA empresa (rate_limit.verificar_limite_ruc).
+
+    Punto 6 (horario de chequeo automatico, hora UTC): chequeo1_hora/minuto
+    y chequeo2_hora/minuto reemplazan a las variables de entorno
+    CHEQUEO1_HORA_UTC/CHEQUEO2_HORA_UTC como fuente de verdad -- ver
+    app.rate_limit.horarios_chequeo() y scheduler_entry.py, que relee esta
+    fila cada pocos minutos y reprograma el cron job en caliente sin
+    reiniciar el contenedor. Los defaults de abajo son los mismos horarios
+    que ya estaban hardcodeados (16:00 y 00:30 UTC = 11:00 y 19:30 Peru).
     """
     __tablename__ = "configuracion_sistema"
 
@@ -599,6 +607,10 @@ class ConfiguracionSistema(Base):
     espaciado_seg_entre_consultas: Mapped[int] = mapped_column(Integer, default=45, nullable=False)
     concurrencia_maxima: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
     segundos_entre_consultas_mismo_ruc: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+    chequeo1_hora: Mapped[int] = mapped_column(Integer, default=16, nullable=False)
+    chequeo1_minuto: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    chequeo2_hora: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    chequeo2_minuto: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
     actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
     actualizado_por_usuario_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True

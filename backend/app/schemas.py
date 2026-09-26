@@ -563,6 +563,10 @@ class ConfiguracionSistemaResponse(BaseModel):
     espaciado_seg_entre_consultas: int
     concurrencia_maxima: int
     segundos_entre_consultas_mismo_ruc: int
+    chequeo1_hora: int
+    chequeo1_minuto: int
+    chequeo2_hora: int
+    chequeo2_minuto: int
     actualizado_en: datetime
 
     class Config:
@@ -575,3 +579,7 @@ class ConfiguracionSistemaUpdate(BaseModel):
     espaciado_seg_entre_consultas: int | None = Field(default=None, ge=5, le=600)
     concurrencia_maxima: int | None = Field(default=None, ge=1, le=20)
     segundos_entre_consultas_mismo_ruc: int | None = Field(default=None, ge=5, le=3600)
+    chequeo1_hora: int | None = Field(default=None, ge=0, le=23)
+    chequeo1_minuto: int | None = Field(default=None, ge=0, le=59)
+    chequeo2_hora: int | None = Field(default=None, ge=0, le=23)
+    chequeo2_minuto: int | None = Field(default=None, ge=0, le=59)
