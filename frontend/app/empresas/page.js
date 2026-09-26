@@ -26,6 +26,7 @@ import { api, getToken, API_URL } from "../../lib/api";
 import { colorBadgeTipo } from "../../lib/tiposMensaje";
 import BotonConsultarTodas, { formatoDuracionEstimada, formatoResumenFinal } from "../../components/BotonConsultarTodas";
 import ConfirmDialog from "../../components/ConfirmDialog";
+import InfoDialog from "../../components/InfoDialog";
 import { infoEtapaConsulta, infoEtapaFichaRuc, infoEtapaReporteTributario } from "../../lib/etapasTrabajos";
 import { useTrabajos, progresoPorTipo } from "../../contexts/TrabajosContext";
 
@@ -100,6 +101,10 @@ function EmpresasPageContenido() {
   const [entrandoDeclaraciones, setEntrandoDeclaraciones] = useState({}); // { [empresaId]: boolean }
   const [marcandoTodoLeido, setMarcandoTodoLeido] = useState(false);
   const enCursoAnteriorRef = useRef(false);
+  // Reemplazan los alert() nativos que solo avisaban un resultado (no
+  // pedian confirmacion) -- ver InfoDialog. {titulo, mensaje, variante} | null
+  const [resultadoConsulta, setResultadoConsulta] = useState(null);
+  const [resumenMasivo, setResumenMasivo] = useState(null);
 
   useEffect(() => {
     if (!getToken()) {
@@ -144,7 +149,11 @@ function EmpresasPageContenido() {
   // de que ese detalle desaparezca junto con la nube de progreso.
   useEffect(() => {
     if (enCursoAnteriorRef.current && estadoConsultas && !estadoConsultas.en_curso) {
-      alert(formatoResumenFinal(estadoConsultas));
+      setResumenMasivo({
+        titulo: "Consulta masiva terminada",
+        mensaje: formatoResumenFinal(estadoConsultas),
+        variante: estadoConsultas.con_error > 0 ? "error" : "ok",
+      });
       cargar();
     }
     if (estadoConsultas) enCursoAnteriorRef.current = estadoConsultas.en_curso;
@@ -174,15 +183,27 @@ function EmpresasPageContenido() {
       // servidor).
       const jobFinal = await iniciarTrabajo("consulta", empresaId, empresaNombre, job.id);
       if (jobFinal.estado === "error") {
-        alert(`La consulta fallo: ${jobFinal.error || "error desconocido"}`);
+        setResultadoConsulta({
+          titulo: "La consulta fallo",
+          mensaje: jobFinal.error || "error desconocido",
+          variante: "error",
+        });
       } else if (jobFinal.mensajes_nuevos > 0) {
-        alert(`Listo: ${jobFinal.mensajes_nuevos} mensaje(s) nuevo(s) encontrados.`);
+        setResultadoConsulta({
+          titulo: "Consulta completada",
+          mensaje: `${jobFinal.mensajes_nuevos} mensaje(s) nuevo(s) encontrados.`,
+          variante: "ok",
+        });
       } else {
-        alert("Listo: no hay mensajes nuevos.");
+        setResultadoConsulta({
+          titulo: "Consulta completada",
+          mensaje: "No hay mensajes nuevos.",
+          variante: "info",
+        });
       }
       await cargar();
     } catch (err) {
-      alert(err.message);
+      setResultadoConsulta({ titulo: "La consulta fallo", mensaje: err.message, variante: "error" });
     } finally {
       quitar("consulta", empresaId);
     }
@@ -592,6 +613,22 @@ function EmpresasPageContenido() {
         )}
       </main>
 
+      {resultadoConsulta && (
+        <InfoDialog
+          titulo={resultadoConsulta.titulo}
+          mensaje={resultadoConsulta.mensaje}
+          variante={resultadoConsulta.variante}
+          onCerrar={() => setResultadoConsulta(null)}
+        />
+      )}
+      {resumenMasivo && (
+        <InfoDialog
+          titulo={resumenMasivo.titulo}
+          mensaje={resumenMasivo.mensaje}
+          variante={resumenMasivo.variante}
+          onCerrar={() => setResumenMasivo(null)}
+        />
+      )}
       {pdfRapido && <ModalPdfRapido info={pdfRapido} onClose={() => setPdfRapido(null)} />}
       {eligiendoTipoFicha && (
         <ModalElegirTipoFichaRuc

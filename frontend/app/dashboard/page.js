@@ -19,6 +19,7 @@ import {
 import Sidebar from "../../components/Sidebar";
 import { api, getToken } from "../../lib/api";
 import BotonConsultarTodas, { formatoDuracionEstimada, formatoResumenFinal } from "../../components/BotonConsultarTodas";
+import InfoDialog from "../../components/InfoDialog";
 
 function formatoRelativoCorto(fechaIso) {
   if (!fechaIso) return "--";
@@ -41,6 +42,9 @@ export default function DashboardPage() {
   const [consultandoTodas, setConsultandoTodas] = useState(false);
   const [estadoConsultas, setEstadoConsultas] = useState(null);
   const enCursoAnteriorRef = useRef(false);
+  // Reemplaza el alert() nativo del resumen final -- ver InfoDialog.
+  // {titulo, mensaje, variante} | null
+  const [resumenMasivo, setResumenMasivo] = useState(null);
 
   useEffect(() => {
     if (!getToken()) {
@@ -80,7 +84,11 @@ export default function DashboardPage() {
   // pagina no hacia ninguna de las dos cosas al terminar.
   useEffect(() => {
     if (enCursoAnteriorRef.current && estadoConsultas && !estadoConsultas.en_curso) {
-      alert(formatoResumenFinal(estadoConsultas));
+      setResumenMasivo({
+        titulo: "Consulta masiva terminada",
+        mensaje: formatoResumenFinal(estadoConsultas),
+        variante: estadoConsultas.con_error > 0 ? "error" : "ok",
+      });
       cargar();
     }
     if (estadoConsultas) enCursoAnteriorRef.current = estadoConsultas.en_curso;
@@ -234,6 +242,15 @@ export default function DashboardPage() {
           </>
         )}
       </main>
+
+      {resumenMasivo && (
+        <InfoDialog
+          titulo={resumenMasivo.titulo}
+          mensaje={resumenMasivo.mensaje}
+          variante={resumenMasivo.variante}
+          onCerrar={() => setResumenMasivo(null)}
+        />
+      )}
     </div>
   );
 }

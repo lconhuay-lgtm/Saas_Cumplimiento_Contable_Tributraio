@@ -14,16 +14,17 @@ export function formatoDuracionEstimada(cantidadEmpresas, espaciadoSeg = 45) {
   return `~${horas}h${minutosRestantes > 0 ? ` ${minutosRestantes}min` : ""}`;
 }
 
-// A pedido: antes, al terminar una tanda de "Consultar todas", la nube de
+// A pedido: antes, al terminar una tanda de "Consulta masiva", la nube de
 // progreso desaparecia sola (esta gateada en {enCurso && ...} mas abajo) y
 // no quedaba ningun resumen -- ni cuantas salieron bien, ni cuales fallaron
 // ni por que. Arma el texto de ese resumen final a partir del mismo
-// GET /consultas/estado que ya se estaba polleando, para usarlo en un
-// alert() desde la pagina que detecte la transicion en_curso true -> false
-// (ver empresas/page.js y dashboard/page.js).
+// GET /consultas/estado que ya se estaba polleando, para mostrarlo en un
+// InfoDialog desde la pagina que detecte la transicion en_curso true ->
+// false (ver empresas/page.js y dashboard/page.js). El titulo "Consulta
+// masiva terminada" ya lo pone el InfoDialog, por eso no se repite aca.
 export function formatoResumenFinal(estado) {
   if (!estado || estado.total === 0) return "";
-  const lineas = [`Consulta masiva terminada: ${estado.completados} de ${estado.total} completada(s).`];
+  const lineas = [`${estado.completados} de ${estado.total} completada(s).`];
   if (estado.mensajes_nuevos_total > 0) {
     lineas.push(`${estado.mensajes_nuevos_total} mensaje(s) nuevo(s) encontrados en total.`);
   }
@@ -89,7 +90,7 @@ export default function BotonConsultarTodas({ onClick, consultando, estado, disa
               : `Consultando ${estado.completados}/${estado.total}`
             : consultando
             ? "Encolando..."
-            : "Consultar todas"}
+            : "Consulta masiva"}
         </span>
       </button>
 
