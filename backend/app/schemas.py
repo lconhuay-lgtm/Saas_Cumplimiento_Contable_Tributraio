@@ -278,6 +278,16 @@ class EmpresaEnProgresoItem(BaseModel):
     etapa: str | None = None
 
 
+class EmpresaConErrorItem(BaseModel):
+    """A pedido: el boton "Consultar todas" solo mostraba el CONTEO de errores
+    mientras la tanda estaba en curso, y ese detalle desaparecia por completo
+    al terminar -- sin decir nunca cual empresa fallo ni por que."""
+    empresa_id: str
+    empresa_ruc: str
+    empresa_razon_social: str
+    error: str | None = None
+
+
 class EstadoConsultasResponse(BaseModel):
     en_curso: bool
     total: int = 0
@@ -285,8 +295,12 @@ class EstadoConsultasResponse(BaseModel):
     en_progreso: int = 0
     pendientes: int = 0
     con_error: int = 0
+    # Suma de mensajes_nuevos de los jobs completados de esta tanda -- para
+    # el resumen final ("se encontraron N mensajes nuevos en total").
+    mensajes_nuevos_total: int = 0
     iniciado_en: datetime | None = None
     empresas_en_progreso: list[EmpresaEnProgresoItem] = []
+    empresas_con_error: list[EmpresaConErrorItem] = []
 
 
 class EmpresaImportadaItem(BaseModel):

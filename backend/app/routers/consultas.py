@@ -13,6 +13,7 @@ from app.schemas import (
     MarcarLeidosResponse,
     EstadoConsultasResponse,
     EmpresaEnProgresoItem,
+    EmpresaConErrorItem,
 )
 from app.deps import get_usuario_actual
 from app.queue_conn import cola_consultas
@@ -147,6 +148,25 @@ def estado_consultas(
         if job.estado == "en_progreso"
     ]
 
+    # A pedido: mismo criterio que empresas_en_progreso, pero para las que
+    # terminaron con error -- antes esto solo se sabia contando (con_error),
+    # sin decir nunca cual empresa fallo ni por que, ni durante la tanda ni
+    # en un resumen al terminar (no existia ningun resumen final).
+    empresas_con_error = [
+        EmpresaConErrorItem(
+            empresa_id=empresa.id,
+            empresa_ruc=empresa.ruc,
+            empresa_razon_social=empresa.razon_social,
+            error=job.error,
+        )
+        for job, empresa in filas_recientes
+        if job.estado == "error"
+    ]
+
+    mensajes_nuevos_total = sum(
+        j.mensajes_nuevos or 0 for j in jobs_recientes if j.estado == "completado"
+    )
+
     return EstadoConsultasResponse(
         en_curso=(pendientes + en_progreso) > 0,
         total=len(jobs_recientes),
@@ -154,8 +174,10 @@ def estado_consultas(
         en_progreso=en_progreso,
         pendientes=pendientes,
         con_error=con_error,
+        mensajes_nuevos_total=mensajes_nuevos_total,
         iniciado_en=min(j.creado_en for j in jobs_recientes),
         empresas_en_progreso=empresas_en_progreso,
+        empresas_con_error=empresas_con_error,
     )
 
 

@@ -105,6 +105,14 @@ class Empresa(Base):
     estado_contribuyente: Mapped[str | None] = mapped_column(String(30), nullable=True)
     estado_contribuyente_anterior: Mapped[str | None] = mapped_column(String(30), nullable=True)
     estado_contribuyente_actualizado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Cuando se INTENTO leer el estado del contribuyente por ultima vez (haya
+    # cambiado o no el valor) -- a diferencia de estado_contribuyente_actualizado_en
+    # (que solo se toca si el valor cambio), este campo se actualiza en TODA
+    # lectura exitosa, y es lo que usa jobs.py para saltarse el paso de la
+    # Ficha RUC (~8-10s extra, ver deteccion_estado._leer_estado_contribuyente)
+    # en consultas repetidas dentro de la misma ventana de ~20h -- se vuelve
+    # a leer solo una vez por dia en vez de en cada consulta individual.
+    estado_contribuyente_verificado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Referencia (formato identico a MensajeBuzon.documento_ref, mismo
     # modulo de almacenamiento) al PDF de la Ficha RUC generado mas
     # recientemente -- se sobreescribe cada vez que se vuelve a generar,

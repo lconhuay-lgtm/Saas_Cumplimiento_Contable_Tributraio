@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
 import { api, getToken } from "../../lib/api";
-import BotonConsultarTodas, { formatoDuracionEstimada } from "../../components/BotonConsultarTodas";
+import BotonConsultarTodas, { formatoDuracionEstimada, formatoResumenFinal } from "../../components/BotonConsultarTodas";
 
 function formatoRelativoCorto(fechaIso) {
   if (!fechaIso) return "--";
@@ -40,6 +40,7 @@ export default function DashboardPage() {
   const [error, setError] = useState("");
   const [consultandoTodas, setConsultandoTodas] = useState(false);
   const [estadoConsultas, setEstadoConsultas] = useState(null);
+  const enCursoAnteriorRef = useRef(false);
 
   useEffect(() => {
     if (!getToken()) {
@@ -72,6 +73,19 @@ export default function DashboardPage() {
       clearInterval(intervalo);
     };
   }, []);
+
+  // Mismo patron que /empresas: al terminar una tanda que estaba en curso,
+  // muestra el resumen final (completadas, mensajes nuevos, cuales
+  // fallaron y por que) y refresca el resumen del dashboard -- antes esta
+  // pagina no hacia ninguna de las dos cosas al terminar.
+  useEffect(() => {
+    if (enCursoAnteriorRef.current && estadoConsultas && !estadoConsultas.en_curso) {
+      alert(formatoResumenFinal(estadoConsultas));
+      cargar();
+    }
+    if (estadoConsultas) enCursoAnteriorRef.current = estadoConsultas.en_curso;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [estadoConsultas]);
 
   async function cargar() {
     setCargando(true);

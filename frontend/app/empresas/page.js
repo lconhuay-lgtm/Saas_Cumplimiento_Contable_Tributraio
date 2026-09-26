@@ -24,7 +24,7 @@ import {
 import Sidebar from "../../components/Sidebar";
 import { api, getToken, API_URL } from "../../lib/api";
 import { colorBadgeTipo } from "../../lib/tiposMensaje";
-import BotonConsultarTodas, { formatoDuracionEstimada } from "../../components/BotonConsultarTodas";
+import BotonConsultarTodas, { formatoDuracionEstimada, formatoResumenFinal } from "../../components/BotonConsultarTodas";
 import { infoEtapaConsulta, infoEtapaFichaRuc, infoEtapaReporteTributario } from "../../lib/etapasTrabajos";
 import { useTrabajos, progresoPorTipo } from "../../contexts/TrabajosContext";
 
@@ -138,9 +138,12 @@ function EmpresasPageContenido() {
 
   // Cuando una tanda que estaba en curso termina, refresca la lista sola
   // para que los nuevos pendientes/mensajes aparezcan sin que el usuario
-  // tenga que recargar la pagina a mano.
+  // tenga que recargar la pagina a mano -- y muestra un resumen final
+  // (cuantas completadas, mensajes nuevos, cuales fallaron y por que) antes
+  // de que ese detalle desaparezca junto con la nube de progreso.
   useEffect(() => {
     if (enCursoAnteriorRef.current && estadoConsultas && !estadoConsultas.en_curso) {
+      alert(formatoResumenFinal(estadoConsultas));
       cargar();
     }
     if (estadoConsultas) enCursoAnteriorRef.current = estadoConsultas.en_curso;

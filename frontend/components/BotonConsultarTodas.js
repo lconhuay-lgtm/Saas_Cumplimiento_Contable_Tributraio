@@ -14,6 +14,28 @@ export function formatoDuracionEstimada(cantidadEmpresas, espaciadoSeg = 45) {
   return `~${horas}h${minutosRestantes > 0 ? ` ${minutosRestantes}min` : ""}`;
 }
 
+// A pedido: antes, al terminar una tanda de "Consultar todas", la nube de
+// progreso desaparecia sola (esta gateada en {enCurso && ...} mas abajo) y
+// no quedaba ningun resumen -- ni cuantas salieron bien, ni cuales fallaron
+// ni por que. Arma el texto de ese resumen final a partir del mismo
+// GET /consultas/estado que ya se estaba polleando, para usarlo en un
+// alert() desde la pagina que detecte la transicion en_curso true -> false
+// (ver empresas/page.js y dashboard/page.js).
+export function formatoResumenFinal(estado) {
+  if (!estado || estado.total === 0) return "";
+  const lineas = [`Consulta masiva terminada: ${estado.completados} de ${estado.total} completada(s).`];
+  if (estado.mensajes_nuevos_total > 0) {
+    lineas.push(`${estado.mensajes_nuevos_total} mensaje(s) nuevo(s) encontrados en total.`);
+  }
+  if (estado.con_error > 0) {
+    lineas.push(`${estado.con_error} con error:`);
+    for (const e of estado.empresas_con_error || []) {
+      lineas.push(`- ${e.empresa_razon_social}: ${e.error || "error desconocido"}`);
+    }
+  }
+  return lineas.join("\n");
+}
+
 // Mismo patron que ETAPAS_FICHA_RUC (ver empresas/page.js), para la
 // consulta manual de una sola empresa -- ver core_scraper/adapter.py y
 // app/jobs.py.

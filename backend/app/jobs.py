@@ -6,7 +6,7 @@ import hashlib
 import logging
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.database import SessionLocal
 from app.models import ConsultaJob, FichaRucJob, ReporteTributarioJob, Empresa, CredencialSol, MensajeBuzon
@@ -17,6 +17,20 @@ from app.clasificacion import clasificar_tipo
 
 MAX_INTENTOS = 2
 ESPERA_ENTRE_INTENTOS_SEG = 15
+
+# A pedido: leer el "Estado del Contribuyente" cuesta ~8-10s extra por
+# consulta (navega a la Ficha RUC, ver deteccion_estado._leer_estado_contribuyente)
+# porque a diferencia de la condicion de domicilio no vive en el navbar
+# normal. Con muchas empresas y consultas frecuentes (chequeo automatico
+# 11am/7:30pm + "Consultar todas" + consultas manuales) ese costo se repetia
+# en CADA corrida sin necesidad real -- el dato rara vez cambia varias veces
+# al dia. Se re-verifica como maximo una vez cada VENTANA_ESTADO_CONTRIBUYENTE_HORAS,
+# sea cual sea la consulta que dispare el chequeo (no hace falta un cron
+# aparte: el primer chequeo automatico del dia, o la primera consulta manual,
+# ya lo renueva solo). 20h en vez de 24h a proposito, para tolerar que el
+# chequeo automatico de las 11am de un dia y el de las 7:30pm del dia
+# anterior no calcen exactos cada 24h.
+VENTANA_ESTADO_CONTRIBUYENTE_HORAS = 20
 
 logger = logging.getLogger("app.jobs")
 
@@ -164,6 +178,15 @@ def ejecutar_consulta_buzon(job_id: str):
             .all()
         }
 
+        # Ver VENTANA_ESTADO_CONTRIBUYENTE_HORAS arriba -- solo se paga el
+        # costo extra de entrar a la Ficha RUC si nunca se verifico, o si la
+        # ultima verificacion ya paso esa ventana.
+        necesita_verificar_estado = (
+            empresa.estado_contribuyente_verificado_en is None
+            or datetime.now(timezone.utc) - empresa.estado_contribuyente_verificado_en
+            >= timedelta(hours=VENTANA_ESTADO_CONTRIBUYENTE_HORAS)
+        )
+
         adquirir_slot_global()
         try:
             resultado = None
@@ -177,6 +200,7 @@ def ejecutar_consulta_buzon(job_id: str):
                     limite_mensajes=limite_mensajes_por_consulta(),
                     ids_conocidos=ids_conocidos,
                     ids_conocidos_buzon_mensajes=ids_conocidos_buzon_mensajes,
+                    leer_estado_contribuyente=necesita_verificar_estado,
                     on_progreso=_reportar_etapa,
                 )
                 if resultado["ok"]:
@@ -254,6 +278,13 @@ def ejecutar_consulta_buzon(job_id: str):
                 empresa.estado_contribuyente_anterior = empresa.estado_contribuyente
                 empresa.estado_contribuyente_actualizado_en = datetime.now(timezone.utc)
             empresa.estado_contribuyente = estado_contribuyente
+
+        # Se actualiza SIEMPRE que esta corrida haya intentado leerlo (haya
+        # cambiado el valor o no) -- es lo que decide si la PROXIMA consulta
+        # se salta este paso. Distinto de estado_contribuyente_actualizado_en,
+        # que solo se toca cuando el valor cambia.
+        if resultado.get("estado_contribuyente_verificado"):
+            empresa.estado_contribuyente_verificado_en = datetime.now(timezone.utc)
 
         if not resultado["ok"]:
             job.estado = "error"

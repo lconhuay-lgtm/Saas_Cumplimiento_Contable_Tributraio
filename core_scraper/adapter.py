@@ -61,6 +61,7 @@ def consultar_buzon(
     descargar_documentos: bool = True,
     leer_buzon_mensajes: bool = True,
     ids_conocidos_buzon_mensajes: set | None = None,
+    leer_estado_contribuyente: bool = True,
     on_progreso=None,
 ) -> dict:
     """
@@ -75,11 +76,18 @@ def consultar_buzon(
     "Estado del Contribuyente" (Activo / Baja de Oficio / etc.), que a
     diferencia de la razon social y la condicion de domicilio NO aparece
     en el navbar normal del Menu SOL (confirmado con un diagnostico real).
-    Se hace en TODAS las consultas (incluido el chequeo automatico de las
-    11am/7:30pm) para que el aviso de cambios en el Dashboard funcione
-    para cualquier empresa, no solo las que alguien genere una Ficha RUC a
-    mano -- decision del usuario del producto, dado el impacto de una baja
-    de oficio en la declaracion de impuestos.
+    Antes se hacia en TODAS las consultas -- ahora el llamador (jobs.py)
+    decide con leer_estado_contribuyente segun cuando se leyo por ultima
+    vez (empresa.estado_contribuyente_verificado_en), para pagar ese costo
+    extra solo una vez por dia en vez de en cada consulta individual. La
+    condicion de domicilio NO tiene este costo (se lee del navbar que ya
+    esta en pantalla justo despues del login, sin navegacion extra), asi
+    que esa siempre se sigue leyendo en cada consulta.
+
+    leer_estado_contribuyente: si es False, se salta el paso de la Ficha
+    RUC por completo (resultado["estado_contribuyente"] queda en None,
+    jobs.py interpreta eso como "sin cambios" y mantiene el valor guardado
+    -- ver el chequeo `if estado_contribuyente and ...` en jobs.py).
 
     Si leer_buzon_mensajes=True (default), tambien entra a "Buzón
     Mensajes" -- bandeja SEPARADA de Notificaciones dentro del mismo
@@ -108,6 +116,7 @@ def consultar_buzon(
             "razon_social_sunat": str | None,  # nombre real segun SUNAT
             "condicion_domicilio": str | None,  # Habido / No Habido / No Hallado
             "estado_contribuyente": str | None,  # Activo / Baja de Oficio / etc.
+            "estado_contribuyente_verificado": bool,  # True si esta corrida SI intento leerlo (ver leer_estado_contribuyente)
             "flujo_detectado": str | None,  # "flujo1" / "flujo2" / "sin_flujo" (Fase 3)
             "error": str | None,
         }
@@ -125,7 +134,7 @@ def consultar_buzon(
     navegador = SunatWebNavigator(empresa=empresa, headless=headless)
     try:
         if not navegador.initialize_browser():
-            return {"ok": False, "mensajes": [], "documentos": {}, "mensajes_bandeja": [], "razon_social_sunat": None, "condicion_domicilio": None, "estado_contribuyente": None, "flujo_detectado": None, "error": "No se pudo iniciar el navegador"}
+            return {"ok": False, "mensajes": [], "documentos": {}, "mensajes_bandeja": [], "razon_social_sunat": None, "condicion_domicilio": None, "estado_contribuyente": None, "estado_contribuyente_verificado": False, "flujo_detectado": None, "error": "No se pudo iniciar el navegador"}
 
         _reportar("iniciando_sesion")
         navegador.driver.get(config.URL_SUNAT)
@@ -133,20 +142,24 @@ def consultar_buzon(
 
         _reportar("autenticando")
         if not navegador._hacer_clicks_sunat(empresa):
-            return {"ok": False, "mensajes": [], "documentos": {}, "mensajes_bandeja": [], "razon_social_sunat": navegador.razon_social_detectada, "condicion_domicilio": navegador.condicion_domicilio_detectada, "estado_contribuyente": None, "flujo_detectado": navegador.flujo_detectado, "error": "No se pudo iniciar sesion en SUNAT (revisa usuario/clave)"}
+            return {"ok": False, "mensajes": [], "documentos": {}, "mensajes_bandeja": [], "razon_social_sunat": navegador.razon_social_detectada, "condicion_domicilio": navegador.condicion_domicilio_detectada, "estado_contribuyente": None, "estado_contribuyente_verificado": False, "flujo_detectado": navegador.flujo_detectado, "error": "No se pudo iniciar sesion en SUNAT (revisa usuario/clave)"}
 
         # Se hace ANTES de navegar al Buzon (no despues) porque el
         # desplegable del nombre y el boton "Ver Ficha Ruc" viven en esta
         # misma pantalla del Menu SOL -- entrar al Buzon primero implicaria
         # tener que volver aca despues, mas navegacion y mas riesgo de
         # fallo. Un fallo leyendo esto NUNCA debe tumbar el resto de la
-        # consulta (ver _leer_estado_contribuyente).
+        # consulta (ver _leer_estado_contribuyente). Se salta por completo
+        # si leer_estado_contribuyente=False (ya se verifico hoy, ver
+        # jobs.py) -- ese es el ahorro real de los ~8-10s extra, la
+        # condicion de domicilio de arriba no tiene este costo.
         _reportar("leyendo_estado")
-        navegador.estado_contribuyente_detectado = navegador._leer_estado_contribuyente()
+        if leer_estado_contribuyente:
+            navegador.estado_contribuyente_detectado = navegador._leer_estado_contribuyente()
 
         _reportar("abriendo_buzon")
         if not navegador._navegar_a_buzon_notificaciones():
-            return {"ok": False, "mensajes": [], "documentos": {}, "mensajes_bandeja": [], "razon_social_sunat": navegador.razon_social_detectada, "condicion_domicilio": navegador.condicion_domicilio_detectada, "estado_contribuyente": navegador.estado_contribuyente_detectado, "flujo_detectado": navegador.flujo_detectado, "error": "Se inicio sesion pero no se pudo abrir el Buzon Electronico"}
+            return {"ok": False, "mensajes": [], "documentos": {}, "mensajes_bandeja": [], "razon_social_sunat": navegador.razon_social_detectada, "condicion_domicilio": navegador.condicion_domicilio_detectada, "estado_contribuyente": navegador.estado_contribuyente_detectado, "estado_contribuyente_verificado": leer_estado_contribuyente, "flujo_detectado": navegador.flujo_detectado, "error": "Se inicio sesion pero no se pudo abrir el Buzon Electronico"}
 
         _reportar("leyendo_mensajes")
         mensajes = _leer_lista_mensajes(navegador, limite_mensajes)
@@ -185,13 +198,14 @@ def consultar_buzon(
             "razon_social_sunat": navegador.razon_social_detectada,
             "condicion_domicilio": navegador.condicion_domicilio_detectada,
             "estado_contribuyente": navegador.estado_contribuyente_detectado,
+            "estado_contribuyente_verificado": leer_estado_contribuyente,
             "flujo_detectado": navegador.flujo_detectado,
             "error": None,
         }
 
     except Exception as e:
         logger.error(f"Error consultando buzon de {ruc}: {e}")
-        return {"ok": False, "mensajes": [], "documentos": {}, "mensajes_bandeja": [], "razon_social_sunat": None, "condicion_domicilio": None, "estado_contribuyente": None, "flujo_detectado": None, "error": str(e)}
+        return {"ok": False, "mensajes": [], "documentos": {}, "mensajes_bandeja": [], "razon_social_sunat": None, "condicion_domicilio": None, "estado_contribuyente": None, "estado_contribuyente_verificado": False, "flujo_detectado": None, "error": str(e)}
     finally:
         navegador.close_browser()
 
