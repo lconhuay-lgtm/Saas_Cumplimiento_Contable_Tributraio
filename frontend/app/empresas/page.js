@@ -378,6 +378,13 @@ function EmpresasPageContenido() {
     () => Array.from(new Set(empresas.map((e) => e.condicion_domicilio).filter(Boolean))).sort(),
     [empresas]
   );
+  // Igual que los dos filtros de arriba: solo se listan los digitos que de
+  // verdad tiene alguna empresa registrada, para no mostrar "Termina en 5"
+  // si ninguna termina en 5.
+  const opcionesUltimoDigito = useMemo(
+    () => Array.from(new Set(empresas.map((e) => e.ruc.slice(-1)))).sort(),
+    [empresas]
+  );
 
   const textoBusqueda = busqueda.trim().toLowerCase();
   const empresasFiltradas = empresas.filter((e) => {
@@ -537,7 +544,7 @@ function EmpresasPageContenido() {
                 className="shrink-0 rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-600 outline-none focus:border-accent"
               >
                 <option value="">Ultimo digito: todos</option>
-                {["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
+                {opcionesUltimoDigito.map((d) => (
                   <option key={d} value={d}>
                     Termina en {d}
                   </option>

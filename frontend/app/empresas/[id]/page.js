@@ -193,6 +193,22 @@ export default function DetalleEmpresaPage() {
     }
   }
 
+  // Ver (abrir el PDF o el contenido de texto) es lo que cuenta como
+  // "leido" -- antes solo el boton manual lo marcaba, y el usuario podia
+  // leer un mensaje entero sin que nunca se marcara como tal. Se hace en
+  // segundo plano (no bloquea el visor) y en silencio: un fallo de red al
+  // marcar no debe interrumpir la lectura.
+  async function marcarLeidoAlAbrir(mensaje) {
+    if (mensaje.leido) return;
+    try {
+      await api.marcarLeido(id, mensaje.id, true);
+      setMensajes((prev) => prev.map((m) => (m.id === mensaje.id ? { ...m, leido: true } : m)));
+      setSeleccionado((prev) => (prev && prev.id === mensaje.id ? { ...prev, leido: true } : prev));
+    } catch {
+      // silencioso -- no interrumpir la lectura por esto
+    }
+  }
+
   async function verPdf(mensaje) {
     setSeleccionado(mensaje);
     setErrorPdf("");
@@ -206,6 +222,7 @@ export default function DetalleEmpresaPage() {
     } finally {
       setCargandoPdf(false);
     }
+    marcarLeidoAlAbrir(mensaje);
   }
 
   // Buzón Mensajes (origen="mensajes"): no tiene PDF, el contenido
@@ -217,6 +234,7 @@ export default function DetalleEmpresaPage() {
     setErrorPdf("");
     setPdfUrl(null);
     setCargandoPdf(false);
+    marcarLeidoAlAbrir(mensaje);
   }
 
   const hayPendientes = mensajes.some((m) => !m.leido);
@@ -260,6 +278,19 @@ export default function DetalleEmpresaPage() {
       if (filtroEspecial === "hoy") return new Date(m.descubierto_en) >= inicioDeHoy;
       return true;
     });
+
+  // Al entrar al buzon, abrir directo el primer mensaje con PDF/contenido
+  // en vez de dejar el visor en "Selecciona un mensaje..." -- el usuario
+  // tenia que hacer un clic de mas cada vez que entraba. Solo dispara una
+  // vez por carga (se detiene en cuanto hay algo seleccionado).
+  useEffect(() => {
+    if (cargando || seleccionado) return;
+    const primero = mensajesFiltrados.find((m) => m.tiene_documento || m.contenido_texto);
+    if (!primero) return;
+    if (primero.tiene_documento) verPdf(primero);
+    else verMensaje(primero);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cargando, mensajesFiltrados, seleccionado]);
 
   return (
     <div className="flex min-h-screen bg-surface">
