@@ -1,5 +1,6 @@
 import { Dosis, Open_Sans } from "next/font/google";
 import "./globals.css";
+import { TrabajosProvider } from "../contexts/TrabajosContext";
 
 // Misma pareja tipografica que usa novodivisas.com (confirmado inspeccionando
 // su CSS real): Dosis para titulos/marca -- da el aire "elegante corporativo"
@@ -29,7 +30,9 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="es" className={`${dosis.variable} ${openSans.variable}`}>
-      <body>{children}</body>
+      <body>
+        <TrabajosProvider>{children}</TrabajosProvider>
+      </body>
     </html>
   );
 }

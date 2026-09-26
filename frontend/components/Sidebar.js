@@ -16,6 +16,8 @@ import {
   Loader2,
 } from "lucide-react";
 import { api, clearToken } from "../lib/api";
+import { useTrabajos } from "../contexts/TrabajosContext";
+import { infoEtapa, TITULO_TIPO_TRABAJO } from "../lib/etapasTrabajos";
 
 const ENLACES = [
   { href: "/dashboard", label: "Dashboard", Icon: LayoutDashboard },
@@ -33,6 +35,7 @@ export default function Sidebar() {
   const [usuario, setUsuario] = useState(null);
   const [reenviando, setReenviando] = useState(false);
   const [reenviado, setReenviado] = useState(false);
+  const { trabajosActivos } = useTrabajos();
 
   useEffect(() => {
     api.me().then(setUsuario).catch(() => {});
@@ -91,6 +94,42 @@ export default function Sidebar() {
           );
         })}
       </nav>
+
+      {/* Trabajos en curso (consulta al buzon, Ficha RUC, Reporte
+          Tributario) -- vive de TrabajosContext (montado en app/layout.js,
+          nunca se desmonta al navegar), asi que sigue visible aunque el
+          usuario haya salido de la pantalla donde disparo la accion. Antes
+          esto se perdia al cambiar de modulo aunque el trabajo siguiera
+          corriendo en el servidor (reportado en produccion, 25/09). */}
+      {trabajosActivos.length > 0 && (
+        <div className="mx-3 mb-3 space-y-2.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            {trabajosActivos.length} trabajo{trabajosActivos.length === 1 ? "" : "s"} en curso
+          </p>
+          {trabajosActivos.map((t) => {
+            const { etiqueta, porcentaje } = infoEtapa(t.tipo, t.etapa);
+            return (
+              <div key={`${t.tipo}:${t.empresaId}`} className="space-y-1">
+                <div className="flex items-center gap-1.5 text-[11px] text-slate-300">
+                  <Loader2 size={11} strokeWidth={2} className="shrink-0 animate-spin" />
+                  <span className="truncate" title={t.empresaNombre}>
+                    {t.empresaNombre || "Empresa"}
+                  </span>
+                </div>
+                <p className="truncate text-[10px] text-slate-500" title={etiqueta}>
+                  {TITULO_TIPO_TRABAJO[t.tipo]} &middot; {etiqueta}
+                </p>
+                <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-accent transition-all duration-500"
+                    style={{ width: `${porcentaje}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {usuario && !usuario.email_verificado && (
         <div className="mx-3 mb-3 rounded-lg border border-amber-400/20 bg-amber-400/10 px-3 py-2.5">

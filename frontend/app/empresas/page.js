@@ -25,6 +25,8 @@ import Sidebar from "../../components/Sidebar";
 import { api, getToken, API_URL } from "../../lib/api";
 import { colorBadgeTipo } from "../../lib/tiposMensaje";
 import BotonConsultarTodas, { formatoDuracionEstimada } from "../../components/BotonConsultarTodas";
+import { infoEtapaConsulta, infoEtapaFichaRuc, infoEtapaReporteTributario } from "../../lib/etapasTrabajos";
+import { useTrabajos, progresoPorTipo } from "../../contexts/TrabajosContext";
 
 // Menu SOL generico -- YA NO es el boton principal de "Op. en Linea" (eso
 // ahora hace login automatico, ver entrarDirectoASunat), pero se deja como
@@ -36,59 +38,6 @@ import BotonConsultarTodas, { formatoDuracionEstimada } from "../../components/B
 // "*" son literales). Si no tiene sesion abierta, SUNAT pide usuario/clave
 // como siempre. Nunca pasamos ninguna credencial por esta URL.
 const URL_SUNAT_MENU = "https://e-menu.sunat.gob.pe/cl-ti-itmenu/MenuInternet.htm?pestana=*&agrupacion=*";
-
-// Etapas que reporta el backend mientras se genera la Ficha RUC (ver
-// core_scraper/adapter.py::generar_ficha_ruc_pdf y app/jobs.py) -- el
-// porcentaje es una estimacion fija por etapa (no hay forma de medir
-// tiempo real dentro de una sesion de Selenium), pero le da al usuario una
-// idea de cuanto falta en vez de un spinner sin contexto. null = todavia
-// no llego el primer reporte del adaptador (recien encolado / arrancando
-// el navegador).
-const ETAPAS_FICHA_RUC = {
-  null: { porcentaje: 8, etiqueta: "Iniciando..." },
-  iniciando_sesion: { porcentaje: 20, etiqueta: "Abriendo SUNAT..." },
-  autenticando: { porcentaje: 40, etiqueta: "Iniciando sesion..." },
-  abriendo_ficha: { porcentaje: 60, etiqueta: "Abriendo la Ficha RUC..." },
-  generando_pdf: { porcentaje: 85, etiqueta: "Generando el PDF..." },
-  guardando: { porcentaje: 95, etiqueta: "Guardando..." },
-};
-
-function infoEtapaFichaRuc(etapa) {
-  return ETAPAS_FICHA_RUC[etapa || "null"] || ETAPAS_FICHA_RUC.null;
-}
-
-// Mismo patron que ETAPAS_FICHA_RUC -- ver
-// core_scraper/adapter.py::generar_reporte_tributario_terceros.
-const ETAPAS_REPORTE_TRIBUTARIO = {
-  null: { porcentaje: 8, etiqueta: "Iniciando..." },
-  iniciando_sesion: { porcentaje: 20, etiqueta: "Abriendo SUNAT..." },
-  autenticando: { porcentaje: 35, etiqueta: "Iniciando sesion..." },
-  abriendo_reporte: { porcentaje: 55, etiqueta: "Abriendo el Reporte Tributario..." },
-  aceptando_aviso: { porcentaje: 70, etiqueta: "Aceptando el aviso legal..." },
-  enviando_correo: { porcentaje: 90, etiqueta: "Enviando la solicitud..." },
-};
-
-function infoEtapaReporteTributario(etapa) {
-  return ETAPAS_REPORTE_TRIBUTARIO[etapa || "null"] || ETAPAS_REPORTE_TRIBUTARIO.null;
-}
-
-// Mismo patron que ETAPAS_FICHA_RUC, para la consulta manual de una sola
-// empresa (boton "Consultar" de cada tarjeta) -- ver
-// core_scraper/adapter.py::consultar_buzon y app/jobs.py.
-const ETAPAS_CONSULTA = {
-  null: { porcentaje: 5, etiqueta: "Iniciando..." },
-  iniciando_sesion: { porcentaje: 15, etiqueta: "Abriendo SUNAT..." },
-  autenticando: { porcentaje: 30, etiqueta: "Iniciando sesion..." },
-  leyendo_estado: { porcentaje: 50, etiqueta: "Leyendo estado del contribuyente..." },
-  abriendo_buzon: { porcentaje: 65, etiqueta: "Abriendo el buzon..." },
-  leyendo_mensajes: { porcentaje: 75, etiqueta: "Leyendo mensajes..." },
-  descargando_documentos: { porcentaje: 85, etiqueta: "Descargando documentos nuevos..." },
-  leyendo_buzon_mensajes: { porcentaje: 95, etiqueta: "Leyendo Buzón Mensajes..." },
-};
-
-function infoEtapaConsulta(etapa) {
-  return ETAPAS_CONSULTA[etapa || "null"] || ETAPAS_CONSULTA.null;
-}
 
 // Texto relativo simple ("hace 5 min", "hace 2h", "hace 3d") -- sin
 // libreria externa, solo para que el usuario vea de un vistazo si la
@@ -123,8 +72,12 @@ function EmpresasPageContenido() {
   const [empresas, setEmpresas] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
-  const [consultando, setConsultando] = useState({});
-  const [progresoConsulta, setProgresoConsulta] = useState({}); // { [empresaId]: {estado, etapa} }
+  // Trabajos en curso (consulta, ficha RUC, reporte tributario) viven en
+  // TrabajosContext -- no en estado local -- para que el progreso sobreviva
+  // la navegacion a otra pantalla (ver contexts/TrabajosContext.js).
+  const { trabajos, iniciarTrabajo, quitar } = useTrabajos();
+  const consultando = useMemo(() => progresoPorTipo(trabajos, "consulta"), [trabajos]);
+  const progresoConsulta = consultando;
   const [consultandoTodas, setConsultandoTodas] = useState(false);
   const [mostrarForm, setMostrarForm] = useState(false);
   const [mostrarImportar, setMostrarImportar] = useState(false);
@@ -136,12 +89,12 @@ function EmpresasPageContenido() {
   const [filtroUltimoDigito, setFiltroUltimoDigito] = useState("");
   const [pdfRapido, setPdfRapido] = useState(null); // {empresaId, mensaje} | null
   const [estadoConsultas, setEstadoConsultas] = useState(null);
-  const [generandoFicha, setGenerandoFicha] = useState({});
-  const [progresoFicha, setProgresoFicha] = useState({}); // { [empresaId]: {estado, etapa} }
+  const generandoFicha = useMemo(() => progresoPorTipo(trabajos, "ficha"), [trabajos]);
+  const progresoFicha = generandoFicha;
   const [eligiendoTipoFicha, setEligiendoTipoFicha] = useState(null); // {empresa, forzarRegenerar} | null
   const [pidiendoReporteTributario, setPidiendoReporteTributario] = useState(null); // {empresa} | null
-  const [solicitandoReporte, setSolicitandoReporte] = useState({}); // { [empresaId]: boolean }
-  const [progresoReporte, setProgresoReporte] = useState({}); // { [empresaId]: {estado, etapa} }
+  const solicitandoReporte = useMemo(() => progresoPorTipo(trabajos, "reporte"), [trabajos]);
+  const progresoReporte = solicitandoReporte;
   const [entrandoDirecto, setEntrandoDirecto] = useState({}); // { [empresaId]: boolean }
   const [entrandoDeclaraciones, setEntrandoDeclaraciones] = useState({}); // { [empresaId]: boolean }
   const [marcandoTodoLeido, setMarcandoTodoLeido] = useState(false);
@@ -207,33 +160,15 @@ function EmpresasPageContenido() {
     }
   }
 
-  // Polea el job de la consulta cada 2s y va guardando la etapa reportada
-  // en progresoConsulta -- mismo patron que esperarJobFichaRuc, para que
-  // el boton "Consultar" de la tarjeta muestre una barra de progreso real
-  // en vez de un spinner sin perspectiva de tiempo.
-  async function esperarJob(empresaId, jobId) {
-    // 200 intentos x 3s = 10 min, igual al job_timeout del lado del
-    // servidor -- 90 x 2s (3 min) se quedaba corto cuando el job tardaba
-    // en arrancar por cola (el worker ocupado con otras consultas), asi
-    // que el frontend avisaba "fallo" aunque el backend terminara bien
-    // poco despues (confirmado en produccion, 24/09).
-    for (let i = 0; i < 200; i++) {
-      const job = await api.obtenerJob(jobId);
-      setProgresoConsulta((prev) => ({ ...prev, [empresaId]: { estado: job.estado, etapa: job.etapa } }));
-      if (job.estado === "completado" || job.estado === "error") {
-        return job;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-    }
-    throw new Error("La consulta esta tardando mas de lo esperado. Revisa el historial mas tarde.");
-  }
-
   async function consultarAhora(empresaId) {
-    setConsultando((prev) => ({ ...prev, [empresaId]: true }));
-    setProgresoConsulta((prev) => ({ ...prev, [empresaId]: { estado: "pendiente", etapa: null } }));
+    const empresaNombre = empresas.find((x) => x.id === empresaId)?.razon_social;
     try {
       const job = await api.consultarEmpresa(empresaId);
-      const jobFinal = await esperarJob(empresaId, job.id);
+      // El polling real vive en TrabajosContext (sobrevive si el usuario
+      // navega a otra pantalla mientras espera) -- ver esa funcion para el
+      // detalle de reintentos (200 x 3s = 10 min, igual al job_timeout del
+      // servidor).
+      const jobFinal = await iniciarTrabajo("consulta", empresaId, empresaNombre, job.id);
       if (jobFinal.estado === "error") {
         alert(`La consulta fallo: ${jobFinal.error || "error desconocido"}`);
       } else if (jobFinal.mensajes_nuevos > 0) {
@@ -245,12 +180,7 @@ function EmpresasPageContenido() {
     } catch (err) {
       alert(err.message);
     } finally {
-      setConsultando((prev) => ({ ...prev, [empresaId]: false }));
-      setProgresoConsulta((prev) => {
-        const copia = { ...prev };
-        delete copia[empresaId];
-        return copia;
-      });
+      quitar("consulta", empresaId);
     }
   }
 
@@ -308,23 +238,6 @@ function EmpresasPageContenido() {
     }
   }
 
-  // Polea el job de Ficha RUC cada 2s y va guardando la etapa reportada en
-  // progresoFicha -- asi el boton de la tarjeta puede mostrar una barra de
-  // progreso real (con etiqueta de la etapa actual) en vez de un spinner
-  // opaco sin perspectiva de cuanto falta.
-  async function esperarJobFichaRuc(empresaId, jobId) {
-    // Ver comentario de esperarJob -- mismo fix, 200 x 3s = 10 min.
-    for (let i = 0; i < 200; i++) {
-      const job = await api.obtenerJobFichaRuc(empresaId, jobId);
-      setProgresoFicha((prev) => ({ ...prev, [empresaId]: { estado: job.estado, etapa: job.etapa } }));
-      if (job.estado === "completado" || job.estado === "error") {
-        return job;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-    }
-    throw new Error("La generacion de la Ficha RUC esta tardando mas de lo esperado. Intenta de nuevo en un momento.");
-  }
-
   // Muestra primero la eleccion Con QR / Sin QR (a pedido: el "Reporte de
   // Ficha RUC" con QR es un documento distinto al de siempre, y SUNAT lo
   // limita a 3 generaciones por dia por empresa) -- recien con la
@@ -342,13 +255,13 @@ function EmpresasPageContenido() {
   // mostrarla dentro de la app (mas simple, y el archivo queda listo para
   // archivar/reenviar, que es el uso real que le da un estudio contable).
   async function verFichaRuc(empresa, forzarRegenerar = false, conQr = false) {
-    setGenerandoFicha((prev) => ({ ...prev, [empresa.id]: true }));
-    setProgresoFicha((prev) => ({ ...prev, [empresa.id]: { estado: "pendiente", etapa: null } }));
     try {
       const yaGeneradaEn = conQr ? empresa.ficha_ruc_qr_generada_en : empresa.ficha_ruc_generada_en;
       if (forzarRegenerar || !yaGeneradaEn) {
         const job = await api.generarFichaRuc(empresa.id, conQr);
-        const jobFinal = await esperarJobFichaRuc(empresa.id, job.id);
+        // El polling real vive en TrabajosContext -- sobrevive si el
+        // usuario navega a otra pantalla mientras la Ficha RUC se genera.
+        const jobFinal = await iniciarTrabajo("ficha", empresa.id, empresa.razon_social, job.id);
         if (jobFinal.estado === "error") {
           alert(`No se pudo generar la Ficha RUC: ${jobFinal.error || "error desconocido"}`);
           return;
@@ -367,12 +280,7 @@ function EmpresasPageContenido() {
     } catch (err) {
       alert(err.message);
     } finally {
-      setGenerandoFicha((prev) => ({ ...prev, [empresa.id]: false }));
-      setProgresoFicha((prev) => {
-        const copia = { ...prev };
-        delete copia[empresa.id];
-        return copia;
-      });
+      quitar("ficha", empresa.id);
     }
   }
 
@@ -386,37 +294,20 @@ function EmpresasPageContenido() {
   // esta app descargue ni muestre, solo se dispara la solicitud y se
   // confirma que SUNAT la recibio.
   async function solicitarReporteTributario(empresa, correo) {
-    setSolicitandoReporte((prev) => ({ ...prev, [empresa.id]: true }));
-    setProgresoReporte((prev) => ({ ...prev, [empresa.id]: { estado: "pendiente", etapa: null } }));
     try {
       const job = await api.generarReporteTributario(empresa.id, correo);
-      // Ver comentario de esperarJob -- mismo fix, 200 x 3s = 10 min (el
-      // job puede tardar varios minutos en arrancar si el worker esta
-      // ocupado con otras consultas, no solo en lo que tarda una vez que
-      // arranca).
-      for (let i = 0; i < 200; i++) {
-        const jobActual = await api.obtenerJobReporteTributario(empresa.id, job.id);
-        setProgresoReporte((prev) => ({ ...prev, [empresa.id]: { estado: jobActual.estado, etapa: jobActual.etapa } }));
-        if (jobActual.estado === "completado") {
-          alert(`Reporte Tributario solicitado correctamente. SUNAT lo enviara a ${correo} en los proximos minutos.`);
-          return;
-        }
-        if (jobActual.estado === "error") {
-          alert(`No se pudo solicitar el Reporte Tributario: ${jobActual.error || "error desconocido"}`);
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 3000));
+      // El polling real vive en TrabajosContext -- sobrevive si el usuario
+      // navega a otra pantalla mientras SUNAT procesa la solicitud.
+      const jobFinal = await iniciarTrabajo("reporte", empresa.id, empresa.razon_social, job.id);
+      if (jobFinal.estado === "completado") {
+        alert(`Reporte Tributario solicitado correctamente. SUNAT lo enviara a ${correo} en los proximos minutos.`);
+      } else if (jobFinal.estado === "error") {
+        alert(`No se pudo solicitar el Reporte Tributario: ${jobFinal.error || "error desconocido"}`);
       }
-      alert("La solicitud del Reporte Tributario esta tardando mas de lo esperado. Revisa mas tarde si te llego el correo -- puede haber terminado igual en segundo plano.");
     } catch (err) {
       alert(err.message);
     } finally {
-      setSolicitandoReporte((prev) => ({ ...prev, [empresa.id]: false }));
-      setProgresoReporte((prev) => {
-        const copia = { ...prev };
-        delete copia[empresa.id];
-        return copia;
-      });
+      quitar("reporte", empresa.id);
     }
   }
 
