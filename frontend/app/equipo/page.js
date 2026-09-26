@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Users, UserPlus, Copy, X, Loader2, Mail, CheckCircle2, Ban } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
+import ConfirmDialog from "../../components/ConfirmDialog";
 import { api, getToken } from "../../lib/api";
 
 function formatoFecha(fechaIso) {
@@ -28,6 +29,7 @@ export default function EquipoPage() {
   const [empresaIdsNuevo, setEmpresaIdsNuevo] = useState([]);
   const [invitando, setInvitando] = useState(false);
   const [copiadoId, setCopiadoId] = useState(null);
+  const [invitacionACancelar, setInvitacionACancelar] = useState(null);
 
   useEffect(() => {
     if (!getToken()) {
@@ -86,7 +88,7 @@ export default function EquipoPage() {
   }
 
   async function cancelar(inv) {
-    if (!confirm(`Cancelar la invitacion a ${inv.email}?`)) return;
+    setInvitacionACancelar(null);
     try {
       await api.cancelarInvitacion(inv.id);
       cargar();
@@ -251,7 +253,7 @@ export default function EquipoPage() {
                               {copiadoId === inv.id ? "Copiado" : "Copiar link"}
                             </button>
                             <button
-                              onClick={() => cancelar(inv)}
+                              onClick={() => setInvitacionACancelar(inv)}
                               className="flex items-center justify-center rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
                               aria-label="Cancelar invitacion"
                             >
@@ -268,6 +270,16 @@ export default function EquipoPage() {
           </>
         )}
       </main>
+
+      {invitacionACancelar && (
+        <ConfirmDialog
+          titulo={`Cancelar la invitacion a ${invitacionACancelar.email}?`}
+          textoConfirmar="Si, cancelar"
+          peligroso
+          onConfirmar={() => cancelar(invitacionACancelar)}
+          onCancelar={() => setInvitacionACancelar(null)}
+        />
+      )}
     </div>
   );
 }

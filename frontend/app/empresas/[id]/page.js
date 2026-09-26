@@ -1040,6 +1040,7 @@ function SeccionObligaciones({ empresaId }) {
   const [obligaciones, setObligaciones] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [mostrarForm, setMostrarForm] = useState(false);
+  const [obligacionAEliminar, setObligacionAEliminar] = useState(null);
 
   useEffect(() => {
     cargar();
@@ -1068,7 +1069,7 @@ function SeccionObligaciones({ empresaId }) {
   }
 
   async function eliminar(ob) {
-    if (!confirm(`Eliminar la obligacion "${ob.nombre}"? Las tareas ya generadas no se borran.`)) return;
+    setObligacionAEliminar(null);
     try {
       await api.eliminarObligacion(ob.id);
       cargar();
@@ -1142,7 +1143,7 @@ function SeccionObligaciones({ empresaId }) {
                   {ob.activa ? "Desactivar" : "Activar"}
                 </button>
                 <button
-                  onClick={() => eliminar(ob)}
+                  onClick={() => setObligacionAEliminar(ob)}
                   className="flex items-center justify-center rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
                   aria-label="Eliminar"
                 >
@@ -1161,6 +1162,17 @@ function SeccionObligaciones({ empresaId }) {
             setMostrarForm(false);
             cargar();
           }}
+        />
+      )}
+
+      {obligacionAEliminar && (
+        <ConfirmDialog
+          titulo={`Eliminar la obligacion "${obligacionAEliminar.nombre}"?`}
+          mensaje="Las tareas ya generadas no se borran."
+          textoConfirmar="Si, eliminar"
+          peligroso
+          onConfirmar={() => eliminar(obligacionAEliminar)}
+          onCancelar={() => setObligacionAEliminar(null)}
         />
       )}
     </div>

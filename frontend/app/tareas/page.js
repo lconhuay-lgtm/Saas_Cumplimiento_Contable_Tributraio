@@ -15,6 +15,7 @@ import {
   Clock,
 } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
+import ConfirmDialog from "../../components/ConfirmDialog";
 import { api, getToken } from "../../lib/api";
 
 const ETIQUETAS_TIPO = {
@@ -461,6 +462,7 @@ function ModalEditarTarea({ tarea, onClose, onGuardada }) {
   const [observaciones, setObservaciones] = useState(tarea.observaciones || "");
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState("");
+  const [mostrarConfirmarEliminar, setMostrarConfirmarEliminar] = useState(false);
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -482,7 +484,7 @@ function ModalEditarTarea({ tarea, onClose, onGuardada }) {
   }
 
   async function eliminar() {
-    if (!confirm("Eliminar esta tarea?")) return;
+    setMostrarConfirmarEliminar(false);
     setGuardando(true);
     try {
       await api.eliminarTarea(tarea.id);
@@ -494,6 +496,7 @@ function ModalEditarTarea({ tarea, onClose, onGuardada }) {
   }
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-6" onClick={onClose}>
       <form
         onSubmit={onSubmit}
@@ -563,7 +566,7 @@ function ModalEditarTarea({ tarea, onClose, onGuardada }) {
         <div className="mt-5 flex items-center justify-between gap-2">
           <button
             type="button"
-            onClick={eliminar}
+            onClick={() => setMostrarConfirmarEliminar(true)}
             disabled={guardando}
             className="text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
           >
@@ -580,5 +583,16 @@ function ModalEditarTarea({ tarea, onClose, onGuardada }) {
         </div>
       </form>
     </div>
+
+    {mostrarConfirmarEliminar && (
+      <ConfirmDialog
+        titulo="Eliminar esta tarea?"
+        textoConfirmar="Si, eliminar"
+        peligroso
+        onConfirmar={eliminar}
+        onCancelar={() => setMostrarConfirmarEliminar(false)}
+      />
+    )}
+    </>
   );
 }
