@@ -17,6 +17,13 @@ COPY package.json ./
 RUN npm install
 
 COPY . .
+# NEXT_PUBLIC_* se "hornea" en el bundle JS durante "next build" -- no
+# alcanza con environment: en docker-compose.yml (eso solo afecta el
+# contenedor ya corriendo, el build ya termino para entonces). Por eso
+# viaja como build ARG, no solo como variable de entorno del servicio (ver
+# docker-compose.yml, seccion frontend.build.args).
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 RUN npm run build
 
 FROM node:20-alpine AS runner

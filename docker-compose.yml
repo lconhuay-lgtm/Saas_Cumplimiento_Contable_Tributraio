@@ -117,14 +117,19 @@ services:
   # Tablero web. Build de produccion real (next build + next start, fix
   # Fase R4) -- el modo dev (next dev, hot-reload) vive en
   # docker-compose.override.yml. NEXT_PUBLIC_API_URL apunta a localhost:8000
-  # porque el codigo que la usa corre en el NAVEGADOR del usuario (fuera de
-  # Docker), no dentro del contenedor -- ahi "backend" (el nombre del
-  # servicio) no resolveria a nada. En produccion real, cambiar esto al
-  # dominio publico del backend.
+  # por defecto porque el codigo que la usa corre en el NAVEGADOR del
+  # usuario (fuera de Docker), no dentro del contenedor -- ahi "backend" (el
+  # nombre del servicio) no resolveria a nada. En produccion, .env trae el
+  # dominio/IP publica real -- viaja como build ARG (no solo environment:)
+  # porque Next.js "hornea" las variables NEXT_PUBLIC_* dentro del bundle JS
+  # durante "next build", que ya termino para cuando el contenedor arranca
+  # (ver frontend/Dockerfile).
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
