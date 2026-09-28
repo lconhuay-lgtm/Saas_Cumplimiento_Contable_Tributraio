@@ -22,6 +22,7 @@ leyendo la configuracion NUNCA debe bloquear una consulta real.
 """
 import os
 import time
+import uuid
 import logging
 
 from app.queue_conn import redis_conn
@@ -44,6 +45,14 @@ _CHEQUEO2_HORA_UTC_DEFAULT = int(os.environ.get("CHEQUEO2_HORA_UTC", "0"))
 _CHEQUEO2_MINUTO_UTC_DEFAULT = int(os.environ.get("CHEQUEO2_MINUTO_UTC", "30"))
 
 _CLAVE_CONCURRENCIA = "sunat:consultas_en_curso"
+
+# Techo de seguridad por cupo: ningun trabajo real (con sus reintentos)
+# deberia tardar mas que esto. Se deja bien por encima del job_timeout="10m"
+# que RQ le pone a cada job (ver el enqueue() en routers/consultas.py,
+# empresas.py, ficha_ruc.py, reporte_tributario.py y scheduler_job.py) -- si
+# un job se pasa de esos 10 minutos, RQ mata el proceso a la fuerza (SIGKILL)
+# y el "finally: liberar_slot_global()" que le tocaba nunca llega a correr.
+_DURACION_MAXIMA_SLOT_SEG = 15 * 60
 
 
 class LimiteExcedido(Exception):
@@ -161,27 +170,55 @@ def verificar_limite_ruc(ruc: str) -> None:
         )
 
 
-def adquirir_slot_global(espera_maxima_seg: int = 240, intervalo_seg: int = 3) -> None:
+def adquirir_slot_global(espera_maxima_seg: int = 240, intervalo_seg: int = 3) -> str:
     """
     Bloquea (con timeout) hasta que haya cupo para una sesion mas de Selenium
     contra SUNAT, respetando max_concurrentes() en todo el sistema. Se usa
     dentro del worker, antes de abrir el navegador.
+
+    Devuelve un token que hay que guardar y pasarle despues a
+    liberar_slot_global(token) -- por eso el llamador SIEMPRE debe envolver
+    el trabajo real en un try/finally (todos los puntos de uso actuales ya
+    lo hacen asi).
+
+    Bug real en produccion (28/09): antes esto era un simple contador
+    (INCR/DECR) en Redis. Si RQ mataba un job a la fuerza por pasarse del
+    job_timeout="10m" (ver el enqueue() en routers/consultas.py, empresas.py,
+    ficha_ruc.py, reporte_tributario.py y scheduler_job.py), el proceso
+    recibia un SIGKILL en medio del trabajo y el "finally:
+    liberar_slot_global()" que le tocaba nunca llegaba a ejecutarse -- el
+    contador quedaba pegado en el maximo para siempre, y TODA consulta
+    nueva (de cualquier empresa) fallaba desde entonces. La reconciliacion
+    de worker_entry.py:_reconciliar_al_arrancar() no alcanzaba a arreglarlo
+    porque solo corre cuando el PROCESO completo del worker se reinicia, no
+    cuando RQ mata nada mas que el job individual.
+
+    Ahora cada cupo ocupado vive como un elemento en un ZSET de Redis con su
+    propio vencimiento (_DURACION_MAXIMA_SLOT_SEG): aunque el finally nunca
+    llegue a correr, ese cupo se autolimpia solo pasado ese tiempo, en vez
+    de quedar trabado para siempre.
     """
     limite = max_concurrentes()
     inicio = time.time()
+    token = uuid.uuid4().hex
     while True:
-        actual = redis_conn.incr(_CLAVE_CONCURRENCIA)
-        if actual <= limite:
-            return
-        redis_conn.decr(_CLAVE_CONCURRENCIA)
+        ahora = time.time()
+        # Antes de contar, se purgan los cupos ya vencidos -- esto es lo que
+        # hace que el semaforo se autolimpie solo, sin depender de que nadie
+        # reinicie nada.
+        redis_conn.zremrangebyscore(_CLAVE_CONCURRENCIA, "-inf", ahora)
+        ocupados = redis_conn.zcard(_CLAVE_CONCURRENCIA)
+        if ocupados < limite:
+            redis_conn.zadd(_CLAVE_CONCURRENCIA, {token: ahora + _DURACION_MAXIMA_SLOT_SEG})
+            return token
         if time.time() - inicio > espera_maxima_seg:
             raise LimiteExcedido(
                 f"No hay cupo para consultar SUNAT ahora mismo (maximo {limite} en paralelo). "
                 "Intenta de nuevo en unos minutos."
             )
-        logger.info(f"Esperando cupo para consultar SUNAT ({actual}/{limite} ocupados)...")
+        logger.info(f"Esperando cupo para consultar SUNAT ({ocupados}/{limite} ocupados)...")
         time.sleep(intervalo_seg)
 
 
-def liberar_slot_global() -> None:
-    redis_conn.decr(_CLAVE_CONCURRENCIA)
+def liberar_slot_global(token: str) -> None:
+    redis_conn.zrem(_CLAVE_CONCURRENCIA, token)

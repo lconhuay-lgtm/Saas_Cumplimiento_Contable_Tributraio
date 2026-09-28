@@ -85,11 +85,11 @@ def prewarm_ingreso_directo_job() -> None:
     from adapter import preparar_ingreso_directo
     from app.rate_limit import adquirir_slot_global, liberar_slot_global
 
-    adquirir_slot_global()
+    token_slot = adquirir_slot_global()
     try:
         resultado = preparar_ingreso_directo()
     finally:
-        liberar_slot_global()
+        liberar_slot_global(token_slot)
 
     if resultado.get("ok"):
         guardar_ticket(resultado)

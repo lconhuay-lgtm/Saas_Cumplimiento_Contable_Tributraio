@@ -58,12 +58,15 @@ def _reconciliar_al_arrancar():
 
     Al arrancar un worker fresco, cualquier job que siga "en_progreso" es
     por definicion huerfano -- este proceso todavia no proceso nada.
-    Simplificacion aceptada para la topologia actual (un solo worker, sin
-    replicas, confirmado en docker-compose.yml): resetear el contador
-    global a 0 asume que este worker es el unico dueño real de esos cupos.
-    Si en el futuro corre mas de un worker a la vez, esto se deberia
-    reemplazar por un esquema de tokens con TTL en vez de un contador
-    simple -- anotado, no bloqueante para el lanzamiento inicial.
+
+    Update (28/09): rate_limit.py paso de un contador simple (INCR/DECR) a
+    un ZSET con vencimiento por cupo (cada cupo se autolimpia solo aunque
+    nadie reinicie nada -- ver el docstring de adquirir_slot_global), asi
+    que esta reconciliacion ya no es la UNICA red de seguridad, pero se
+    deja igual: sigue sirviendo para arrancar siempre con el semaforo en
+    cero apenas el worker es nuevo, sin esperar a que venzan cupos viejos.
+    Se borra la clave entera en vez de "setearla a 0" porque ahora es un
+    ZSET, no un contador.
     """
     from datetime import datetime, timezone
     from app.database import SessionLocal
@@ -83,8 +86,8 @@ def _reconciliar_al_arrancar():
     finally:
         db.close()
 
-    redis_conn.set(_CLAVE_CONCURRENCIA, 0)
-    logger.info("Reconciliacion al arrancar: contador de concurrencia SUNAT reseteado a 0.")
+    redis_conn.delete(_CLAVE_CONCURRENCIA)
+    logger.info("Reconciliacion al arrancar: semaforo de concurrencia SUNAT reseteado a 0.")
 
 
 if __name__ == "__main__":

@@ -740,7 +740,7 @@ def ingreso_directo(empresa_id: str, token: str, db: Session = Depends(get_db)):
             # momento, no a un job de fondo. Mejor fallar rapido con un
             # mensaje claro (y sugerir el boton manual) que dejarlo
             # colgado hasta 4 minutos.
-            adquirir_slot_global(espera_maxima_seg=45)
+            token_slot = adquirir_slot_global(espera_maxima_seg=45)
         except LimiteExcedido as e:
             if display is not None:
                 display.stop()
@@ -754,7 +754,7 @@ def ingreso_directo(empresa_id: str, token: str, db: Session = Depends(get_db)):
             from adapter import preparar_ingreso_directo
             resultado = preparar_ingreso_directo(ruc=empresa.ruc)
         finally:
-            liberar_slot_global()
+            liberar_slot_global(token_slot)
             if display is not None:
                 display.stop()
 
@@ -827,7 +827,7 @@ def ingreso_directo_declaraciones(empresa_id: str, token: str, db: Session = Dep
         display.start()
 
     try:
-        adquirir_slot_global(espera_maxima_seg=45)
+        token_slot = adquirir_slot_global(espera_maxima_seg=45)
     except LimiteExcedido as e:
         if display is not None:
             display.stop()
@@ -841,7 +841,7 @@ def ingreso_directo_declaraciones(empresa_id: str, token: str, db: Session = Dep
         from adapter import preparar_ingreso_directo_declaraciones
         resultado = preparar_ingreso_directo_declaraciones(ruc=empresa.ruc)
     finally:
-        liberar_slot_global()
+        liberar_slot_global(token_slot)
         if display is not None:
             display.stop()
 

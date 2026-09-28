@@ -234,7 +234,7 @@ def ejecutar_chequeo_canario() -> dict:
                 clave_en_claro = descifrar_clave_sol(credencial.clave_cifrada, credencial.dek_cifrada)
 
                 inicio = time.time()
-                adquirir_slot_global()
+                token_slot = adquirir_slot_global()
                 try:
                     resultado = consultar_buzon(
                         ruc=empresa.ruc,
@@ -246,7 +246,7 @@ def ejecutar_chequeo_canario() -> dict:
                         leer_buzon_mensajes=False,  # idem -- solo medir el login, no leer Buzón Mensajes
                     )
                 finally:
-                    liberar_slot_global()
+                    liberar_slot_global(token_slot)
                 duracion_seg = round(time.time() - inicio, 2)
 
                 check = CanarioCheck(

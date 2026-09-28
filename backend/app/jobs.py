@@ -224,7 +224,7 @@ def ejecutar_consulta_buzon(job_id: str):
             >= timedelta(hours=VENTANA_ESTADO_CONTRIBUYENTE_HORAS)
         )
 
-        adquirir_slot_global()
+        token_slot = adquirir_slot_global()
         try:
             resultado = None
             for intento in range(1, MAX_INTENTOS + 1):
@@ -248,7 +248,7 @@ def ejecutar_consulta_buzon(job_id: str):
                 if intento < MAX_INTENTOS:
                     time.sleep(ESPERA_ENTRE_INTENTOS_SEG * intento)
         finally:
-            liberar_slot_global()
+            liberar_slot_global(token_slot)
 
         # SUNAT es la fuente de verdad del nombre de la empresa -- lo que
         # haya en la base (tipeado a mano o traido de un Excel importado) se
@@ -509,7 +509,7 @@ def ejecutar_generar_ficha_ruc(job_id: str):
 
         from adapter import generar_ficha_ruc_pdf
 
-        adquirir_slot_global()
+        token_slot = adquirir_slot_global()
         try:
             resultado = generar_ficha_ruc_pdf(
                 ruc=empresa.ruc,
@@ -521,7 +521,7 @@ def ejecutar_generar_ficha_ruc(job_id: str):
                 con_qr=job.con_qr,
             )
         finally:
-            liberar_slot_global()
+            liberar_slot_global(token_slot)
 
         if not resultado["ok"]:
             job.estado = "error"
@@ -622,7 +622,7 @@ def ejecutar_generar_reporte_tributario(job_id: str):
 
         from adapter import generar_reporte_tributario_terceros
 
-        adquirir_slot_global()
+        token_slot = adquirir_slot_global()
         try:
             resultado = None
             for intento in range(1, MAX_INTENTOS + 1):
@@ -654,7 +654,7 @@ def ejecutar_generar_reporte_tributario(job_id: str):
                 if intento < MAX_INTENTOS:
                     time.sleep(ESPERA_ENTRE_INTENTOS_SEG * intento)
         finally:
-            liberar_slot_global()
+            liberar_slot_global(token_slot)
 
         if not resultado["ok"]:
             job.estado = "error"
