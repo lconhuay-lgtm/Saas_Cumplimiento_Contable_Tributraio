@@ -25,6 +25,8 @@ import time
 import uuid
 import logging
 
+import redis
+
 from app.queue_conn import redis_conn
 from app.database import SessionLocal
 from app.models import ConfiguracionSistema
@@ -170,6 +172,29 @@ def verificar_limite_ruc(ruc: str) -> None:
         )
 
 
+def _asegurar_tipo_zset() -> None:
+    """
+    Red de seguridad (hallazgo real, 28/09 -- escalando a varios workers en
+    paralelo): la clave del semaforo aparecio con un tipo que no era ZSET
+    (probablemente un resabio de la version anterior de este modulo, que
+    usaba INCR/DECR sobre un STRING, de antes de la migracion a ZSET), y
+    cada zremrangebyscore/zadd/zcard fallaba con "WRONGTYPE Operation
+    against a key holding the wrong kind of value" -- toda consulta nueva
+    fallaba al instante, en los 3 workers a la vez. Si el tipo no es ZSET
+    (ni "none", o sea que no existe todavia), se borra para que el
+    siguiente zadd la recree limpia. Esto nunca puede perder un cupo
+    legitimo: si el tipo esta mal, por definicion no puede haber ningun
+    cupo valido guardado ahi adentro.
+    """
+    tipo = redis_conn.type(_CLAVE_CONCURRENCIA)
+    tipo = tipo.decode() if isinstance(tipo, bytes) else tipo
+    if tipo not in ("zset", "none"):
+        logger.warning(
+            f"Semaforo de concurrencia SUNAT tenia un tipo invalido en Redis ({tipo}) -- se resetea."
+        )
+        redis_conn.delete(_CLAVE_CONCURRENCIA)
+
+
 def adquirir_slot_global(espera_maxima_seg: int = 240, intervalo_seg: int = 3) -> str:
     """
     Bloquea (con timeout) hasta que haya cupo para una sesion mas de Selenium
@@ -198,6 +223,7 @@ def adquirir_slot_global(espera_maxima_seg: int = 240, intervalo_seg: int = 3) -
     llegue a correr, ese cupo se autolimpia solo pasado ese tiempo, en vez
     de quedar trabado para siempre.
     """
+    _asegurar_tipo_zset()
     limite = max_concurrentes()
     inicio = time.time()
     token = uuid.uuid4().hex
@@ -221,4 +247,11 @@ def adquirir_slot_global(espera_maxima_seg: int = 240, intervalo_seg: int = 3) -
 
 
 def liberar_slot_global(token: str) -> None:
-    redis_conn.zrem(_CLAVE_CONCURRENCIA, token)
+    try:
+        redis_conn.zrem(_CLAVE_CONCURRENCIA, token)
+    except redis.exceptions.ResponseError:
+        # Mismo caso que _asegurar_tipo_zset(): si la clave quedo con un
+        # tipo invalido, no hay nada legitimo que liberar ahi -- no se deja
+        # que esto tumbe el "finally" del llamador (ver jobs.py), la
+        # proxima adquirir_slot_global() ya se encarga de resetearla.
+        logger.warning("No se pudo liberar el cupo (la clave tenia un tipo invalido en Redis) -- se ignora.")
