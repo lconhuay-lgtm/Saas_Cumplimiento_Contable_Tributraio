@@ -51,7 +51,10 @@ def generar_ficha_ruc(
     db.commit()
     db.refresh(job)
 
-    cola_consultas.enqueue(ejecutar_generar_ficha_ruc, job.id, job_timeout="10m")
+    # at_front=True: ver el comentario en routers/consultas.py -- misma
+    # cola compartida que "Consulta masiva", asi que sin esto una tanda
+    # larga podia dejar una Ficha RUC pedida a mano esperando su turno.
+    cola_consultas.enqueue(ejecutar_generar_ficha_ruc, job.id, job_timeout="10m", at_front=True)
 
     return job
 

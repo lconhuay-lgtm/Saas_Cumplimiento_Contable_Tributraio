@@ -57,7 +57,9 @@ def generar_reporte_tributario(
     db.commit()
     db.refresh(job)
 
-    cola_consultas.enqueue(ejecutar_generar_reporte_tributario, job.id, job_timeout="10m")
+    # at_front=True: ver el comentario en routers/consultas.py -- misma
+    # cola compartida que "Consulta masiva".
+    cola_consultas.enqueue(ejecutar_generar_reporte_tributario, job.id, job_timeout="10m", at_front=True)
 
     return job
 

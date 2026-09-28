@@ -7,8 +7,10 @@
 // (reportado en produccion, 25/09). Este Provider vive en app/layout.js,
 // que Next.js NUNCA desmonta durante la navegacion entre paginas -- el
 // polling y su resultado sobreviven el cambio de pantalla.
-import { createContext, useCallback, useContext, useRef, useState } from "react";
-import { api } from "../lib/api";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { api, getToken } from "../lib/api";
+import { formatoResumenFinal } from "../components/BotonConsultarTodas";
+import InfoDialog from "../components/InfoDialog";
 
 const TrabajosContext = createContext(null);
 
@@ -28,6 +30,49 @@ export function TrabajosProvider({ children }) {
   // Evita arrancar dos pollers para el mismo trabajo si el usuario dispara
   // la misma accion dos veces seguidas.
   const enCursoRef = useRef({});
+
+  // Seguimiento de la tanda de "Consulta masiva" -- vivia antes como
+  // estado local de /empresas y /dashboard (cada una con su propio poll de
+  // GET /consultas/estado), asi que apenas el usuario navegaba a OTRA
+  // pantalla, o cerraba esa pestana, perdia todo rastro de si la tanda
+  // seguia corriendo o ya habia terminado (reportado en produccion, 28/09:
+  // "las consultas masivas corren en silencio, se cierran sin saber si ya
+  // terminaron"). Se mueve aca, al Provider que vive en app/layout.js y
+  // nunca se desmonta, con el mismo criterio que ya se usaba para
+  // consulta/ficha/reporte individuales.
+  const [estadoMasiva, setEstadoMasiva] = useState(null);
+  const [resumenMasivo, setResumenMasivo] = useState(null);
+  const masivaEnCursoAnteriorRef = useRef(false);
+
+  useEffect(() => {
+    if (!getToken()) return;
+    let cancelado = false;
+    async function poll() {
+      try {
+        const data = await api.estadoConsultas();
+        if (!cancelado) setEstadoMasiva(data);
+      } catch (err) {
+        // silencioso -- un poll fallido no debe interrumpir la app
+      }
+    }
+    poll();
+    const intervalo = setInterval(poll, 5000);
+    return () => {
+      cancelado = true;
+      clearInterval(intervalo);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (masivaEnCursoAnteriorRef.current && estadoMasiva && !estadoMasiva.en_curso) {
+      setResumenMasivo({
+        titulo: "Consulta masiva terminada",
+        mensaje: formatoResumenFinal(estadoMasiva),
+        variante: estadoMasiva.con_error > 0 ? "error" : "ok",
+      });
+    }
+    if (estadoMasiva) masivaEnCursoAnteriorRef.current = estadoMasiva.en_curso;
+  }, [estadoMasiva]);
 
   const actualizar = useCallback((tipo, empresaId, datos) => {
     setTrabajos((prev) => ({ ...prev, [clave(tipo, empresaId)]: { tipo, empresaId, ...datos } }));
@@ -80,8 +125,19 @@ export function TrabajosProvider({ children }) {
   );
 
   return (
-    <TrabajosContext.Provider value={{ trabajos, trabajosActivos, iniciarTrabajo, quitar }}>
+    <TrabajosContext.Provider value={{ trabajos, trabajosActivos, iniciarTrabajo, quitar, estadoMasiva }}>
       {children}
+      {/* Vive aca (no en empresas/page.js ni dashboard/page.js) para que se
+          vea sin importar en que pantalla este el usuario cuando la tanda
+          termina -- ver el comentario de estadoMasiva mas arriba. */}
+      {resumenMasivo && (
+        <InfoDialog
+          titulo={resumenMasivo.titulo}
+          mensaje={resumenMasivo.mensaje}
+          variante={resumenMasivo.variante}
+          onCerrar={() => setResumenMasivo(null)}
+        />
+      )}
     </TrabajosContext.Provider>
   );
 }

@@ -40,7 +40,7 @@ export default function Sidebar() {
   const [reenviado, setReenviado] = useState(false);
   const [comprobando, setComprobando] = useState(false);
   const [notificaciones, setNotificaciones] = useState([]);
-  const { trabajosActivos } = useTrabajos();
+  const { trabajosActivos, estadoMasiva } = useTrabajos();
 
   useEffect(() => {
     api.me().then(setUsuario).catch(() => {});
@@ -149,6 +149,31 @@ export default function Sidebar() {
           );
         })}
       </nav>
+
+      {/* Consulta masiva en curso -- mismo motivo que el bloque de abajo:
+          antes este avance solo se veia en /empresas o /dashboard y
+          desaparecia del todo al navegar a otra pantalla (reportado en
+          produccion, 28/09). Ahora sale de TrabajosContext, visible en
+          cualquier modulo. */}
+      {estadoMasiva?.en_curso && (
+        <div className="mx-3 mb-3 space-y-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2.5">
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            <Loader2 size={11} strokeWidth={2} className="shrink-0 animate-spin" />
+            Consulta masiva: {estadoMasiva.completados}/{estadoMasiva.total}
+          </div>
+          {estadoMasiva.empresas_en_progreso?.[0] && (
+            <p className="truncate text-[10px] text-slate-500" title={estadoMasiva.empresas_en_progreso[0].empresa_razon_social}>
+              {estadoMasiva.empresas_en_progreso[0].empresa_razon_social}
+            </p>
+          )}
+          <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-full rounded-full bg-accent transition-all duration-500"
+              style={{ width: `${estadoMasiva.total > 0 ? Math.round((estadoMasiva.completados / estadoMasiva.total) * 100) : 0}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Trabajos en curso (consulta al buzon, Ficha RUC, Reporte
           Tributario) -- vive de TrabajosContext (montado en app/layout.js,

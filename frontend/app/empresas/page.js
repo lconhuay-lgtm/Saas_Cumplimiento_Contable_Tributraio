@@ -24,7 +24,7 @@ import {
 import Sidebar from "../../components/Sidebar";
 import { api, getToken, API_URL } from "../../lib/api";
 import { colorBadgeTipo } from "../../lib/tiposMensaje";
-import BotonConsultarTodas, { formatoDuracionEstimada, formatoResumenFinal } from "../../components/BotonConsultarTodas";
+import BotonConsultarTodas, { formatoDuracionEstimada } from "../../components/BotonConsultarTodas";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import InfoDialog from "../../components/InfoDialog";
 import { infoEtapaConsulta, infoEtapaFichaRuc, infoEtapaReporteTributario } from "../../lib/etapasTrabajos";
@@ -77,7 +77,7 @@ function EmpresasPageContenido() {
   // Trabajos en curso (consulta, ficha RUC, reporte tributario) viven en
   // TrabajosContext -- no en estado local -- para que el progreso sobreviva
   // la navegacion a otra pantalla (ver contexts/TrabajosContext.js).
-  const { trabajos, iniciarTrabajo, quitar } = useTrabajos();
+  const { trabajos, iniciarTrabajo, quitar, estadoMasiva } = useTrabajos();
   const consultando = useMemo(() => progresoPorTipo(trabajos, "consulta"), [trabajos]);
   const progresoConsulta = consultando;
   const [consultandoTodas, setConsultandoTodas] = useState(false);
@@ -90,7 +90,6 @@ function EmpresasPageContenido() {
   const [filtroCondicionDomicilio, setFiltroCondicionDomicilio] = useState("");
   const [filtroUltimoDigito, setFiltroUltimoDigito] = useState("");
   const [pdfRapido, setPdfRapido] = useState(null); // {empresaId, mensaje} | null
-  const [estadoConsultas, setEstadoConsultas] = useState(null);
   const generandoFicha = useMemo(() => progresoPorTipo(trabajos, "ficha"), [trabajos]);
   const progresoFicha = generandoFicha;
   const [eligiendoTipoFicha, setEligiendoTipoFicha] = useState(null); // {empresa, forzarRegenerar} | null
@@ -100,11 +99,10 @@ function EmpresasPageContenido() {
   const [entrandoDirecto, setEntrandoDirecto] = useState({}); // { [empresaId]: boolean }
   const [entrandoDeclaraciones, setEntrandoDeclaraciones] = useState({}); // { [empresaId]: boolean }
   const [marcandoTodoLeido, setMarcandoTodoLeido] = useState(false);
-  const enCursoAnteriorRef = useRef(false);
+  const masivaEnCursoAnteriorRef = useRef(false);
   // Reemplazan los alert() nativos que solo avisaban un resultado (no
   // pedian confirmacion) -- ver InfoDialog. {titulo, mensaje, variante} | null
   const [resultadoConsulta, setResultadoConsulta] = useState(null);
-  const [resumenMasivo, setResumenMasivo] = useState(null);
 
   useEffect(() => {
     if (!getToken()) {
@@ -120,45 +118,19 @@ function EmpresasPageContenido() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Poll del progreso de la tanda de consultas actual -- refleja tanto lo
-  // que dispara este mismo boton como lo que dispare el chequeo automatico
-  // (11am/7:30pm) si el usuario tiene esta pagina abierta en ese momento.
+  // El poll de GET /consultas/estado y el dialogo de resumen final ahora
+  // viven en TrabajosContext (persisten aunque el usuario navegue a otra
+  // pantalla o cierre esta pestana -- ver ese archivo). Aca solo queda
+  // refrescar la lista propia de esta pantalla cuando una tanda que estaba
+  // en curso termina, para que los nuevos pendientes/mensajes aparezcan
+  // sin que el usuario tenga que recargar a mano.
   useEffect(() => {
-    if (!getToken()) return;
-    let cancelado = false;
-    async function poll() {
-      try {
-        const data = await api.estadoConsultas();
-        if (!cancelado) setEstadoConsultas(data);
-      } catch (err) {
-        // silencioso -- un poll fallido no debe interrumpir la pagina
-      }
-    }
-    poll();
-    const intervalo = setInterval(poll, 5000);
-    return () => {
-      cancelado = true;
-      clearInterval(intervalo);
-    };
-  }, []);
-
-  // Cuando una tanda que estaba en curso termina, refresca la lista sola
-  // para que los nuevos pendientes/mensajes aparezcan sin que el usuario
-  // tenga que recargar la pagina a mano -- y muestra un resumen final
-  // (cuantas completadas, mensajes nuevos, cuales fallaron y por que) antes
-  // de que ese detalle desaparezca junto con la nube de progreso.
-  useEffect(() => {
-    if (enCursoAnteriorRef.current && estadoConsultas && !estadoConsultas.en_curso) {
-      setResumenMasivo({
-        titulo: "Consulta masiva terminada",
-        mensaje: formatoResumenFinal(estadoConsultas),
-        variante: estadoConsultas.con_error > 0 ? "error" : "ok",
-      });
+    if (masivaEnCursoAnteriorRef.current && estadoMasiva && !estadoMasiva.en_curso) {
       cargar();
     }
-    if (estadoConsultas) enCursoAnteriorRef.current = estadoConsultas.en_curso;
+    if (estadoMasiva) masivaEnCursoAnteriorRef.current = estadoMasiva.en_curso;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [estadoConsultas]);
+  }, [estadoMasiva]);
 
   async function cargar() {
     setCargando(true);
@@ -443,7 +415,7 @@ function EmpresasPageContenido() {
             <BotonConsultarTodas
               onClick={consultarTodas}
               consultando={consultandoTodas}
-              estado={estadoConsultas}
+              estado={estadoMasiva}
               disabled={empresas.length === 0}
             />
             <button
@@ -623,14 +595,6 @@ function EmpresasPageContenido() {
           mensaje={resultadoConsulta.mensaje}
           variante={resultadoConsulta.variante}
           onCerrar={() => setResultadoConsulta(null)}
-        />
-      )}
-      {resumenMasivo && (
-        <InfoDialog
-          titulo={resumenMasivo.titulo}
-          mensaje={resumenMasivo.mensaje}
-          variante={resumenMasivo.variante}
-          onCerrar={() => setResumenMasivo(null)}
         />
       )}
       {pdfRapido && <ModalPdfRapido info={pdfRapido} onClose={() => setPdfRapido(null)} />}

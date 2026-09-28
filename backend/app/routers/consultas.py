@@ -52,7 +52,13 @@ def consultar_empresa(
     db.commit()
     db.refresh(job)
 
-    cola_consultas.enqueue(ejecutar_consulta_buzon, job.id, job_timeout="10m")
+    # at_front=True: un clic manual de un usuario esperando en pantalla no
+    # deberia hacer cola detras de una Consulta masiva en curso -- con un
+    # solo worker (ver worker_entry.py) y decenas de empresas espaciadas
+    # 45s pero tardando 1-3 min cada una, esa cola puede crecer sin parar
+    # y "tragarse" cualquier consulta individual nueva (reportado en
+    # produccion, 28/09: "las consultas manuales no corren").
+    cola_consultas.enqueue(ejecutar_consulta_buzon, job.id, job_timeout="10m", at_front=True)
 
     return job
 

@@ -305,7 +305,11 @@ def _encolar_consulta_automatica(empresa: Empresa, usuario: Usuario, db: Session
     db.add(job)
     db.commit()
     db.refresh(job)
-    cola_consultas.enqueue(ejecutar_consulta_buzon, job.id, job_timeout="10m")
+    # at_front=True: ver el comentario en routers/consultas.py -- el
+    # usuario esta mirando la pantalla esperando los primeros datos de la
+    # empresa que recien creo, no deberia hacer cola detras de una
+    # Consulta masiva en curso.
+    cola_consultas.enqueue(ejecutar_consulta_buzon, job.id, job_timeout="10m", at_front=True)
 
 
 def _limpiar_ruc(valor) -> str:

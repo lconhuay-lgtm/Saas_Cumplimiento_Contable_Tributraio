@@ -18,8 +18,8 @@ import {
 } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
 import { api, getToken } from "../../lib/api";
-import BotonConsultarTodas, { formatoDuracionEstimada, formatoResumenFinal } from "../../components/BotonConsultarTodas";
-import InfoDialog from "../../components/InfoDialog";
+import BotonConsultarTodas, { formatoDuracionEstimada } from "../../components/BotonConsultarTodas";
+import { useTrabajos } from "../../contexts/TrabajosContext";
 
 function formatoRelativoCorto(fechaIso) {
   if (!fechaIso) return "--";
@@ -40,11 +40,8 @@ export default function DashboardPage() {
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
   const [consultandoTodas, setConsultandoTodas] = useState(false);
-  const [estadoConsultas, setEstadoConsultas] = useState(null);
-  const enCursoAnteriorRef = useRef(false);
-  // Reemplaza el alert() nativo del resumen final -- ver InfoDialog.
-  // {titulo, mensaje, variante} | null
-  const [resumenMasivo, setResumenMasivo] = useState(null);
+  const { estadoMasiva } = useTrabajos();
+  const masivaEnCursoAnteriorRef = useRef(false);
 
   useEffect(() => {
     if (!getToken()) {
@@ -55,45 +52,18 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Mismo patron de polling que /empresas -- refleja tanto lo que dispara
-  // este boton como lo que dispare el chequeo automatico (11am/7:30pm) o
-  // el mismo boton desde /empresas, si el usuario tiene esta pagina
-  // abierta en ese momento.
+  // El poll de GET /consultas/estado y el dialogo de resumen final ahora
+  // viven en TrabajosContext (persisten aunque el usuario navegue a otra
+  // pantalla o cierre esta pestana -- ver ese archivo). Aca solo queda
+  // refrescar el resumen del dashboard cuando una tanda que estaba en
+  // curso termina.
   useEffect(() => {
-    if (!getToken()) return;
-    let cancelado = false;
-    async function poll() {
-      try {
-        const data = await api.estadoConsultas();
-        if (!cancelado) setEstadoConsultas(data);
-      } catch (err) {
-        // silencioso -- un poll fallido no debe interrumpir la pagina
-      }
-    }
-    poll();
-    const intervalo = setInterval(poll, 5000);
-    return () => {
-      cancelado = true;
-      clearInterval(intervalo);
-    };
-  }, []);
-
-  // Mismo patron que /empresas: al terminar una tanda que estaba en curso,
-  // muestra el resumen final (completadas, mensajes nuevos, cuales
-  // fallaron y por que) y refresca el resumen del dashboard -- antes esta
-  // pagina no hacia ninguna de las dos cosas al terminar.
-  useEffect(() => {
-    if (enCursoAnteriorRef.current && estadoConsultas && !estadoConsultas.en_curso) {
-      setResumenMasivo({
-        titulo: "Consulta masiva terminada",
-        mensaje: formatoResumenFinal(estadoConsultas),
-        variante: estadoConsultas.con_error > 0 ? "error" : "ok",
-      });
+    if (masivaEnCursoAnteriorRef.current && estadoMasiva && !estadoMasiva.en_curso) {
       cargar();
     }
-    if (estadoConsultas) enCursoAnteriorRef.current = estadoConsultas.en_curso;
+    if (estadoMasiva) masivaEnCursoAnteriorRef.current = estadoMasiva.en_curso;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [estadoConsultas]);
+  }, [estadoMasiva]);
 
   async function cargar() {
     setCargando(true);
@@ -156,7 +126,7 @@ export default function DashboardPage() {
           <BotonConsultarTodas
             onClick={consultarTodas}
             consultando={consultandoTodas}
-            estado={estadoConsultas}
+            estado={estadoMasiva}
             disabled={!resumen || resumen.empresas_totales === 0}
           />
         </div>
@@ -242,15 +212,6 @@ export default function DashboardPage() {
           </>
         )}
       </main>
-
-      {resumenMasivo && (
-        <InfoDialog
-          titulo={resumenMasivo.titulo}
-          mensaje={resumenMasivo.mensaje}
-          variante={resumenMasivo.variante}
-          onCerrar={() => setResumenMasivo(null)}
-        />
-      )}
     </div>
   );
 }
