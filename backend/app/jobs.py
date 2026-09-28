@@ -4,19 +4,24 @@ mensajes nuevos en la base de datos.
 """
 import hashlib
 import logging
+import os
 import re
 import time
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import or_
+
 from app.database import SessionLocal
-from app.models import ConsultaJob, FichaRucJob, ReporteTributarioJob, Empresa, CredencialSol, MensajeBuzon
+from app.models import ConsultaJob, FichaRucJob, ReporteTributarioJob, Empresa, CredencialSol, MensajeBuzon, Usuario
 from app.security import descifrar_clave_sol
 from app.rate_limit import adquirir_slot_global, liberar_slot_global, limite_mensajes_por_consulta
 from app.almacenamiento import guardar_documento, guardar_documento_bytes, AlmacenamientoError
 from app.clasificacion import clasificar_tipo
+from app.email_utils import enviar_notificacion_mensajes_nuevos
 
 MAX_INTENTOS = 2
 ESPERA_ENTRE_INTENTOS_SEG = 15
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 
 # A pedido: leer el "Estado del Contribuyente" cuesta ~8-10s extra por
 # consulta (navega a la Ficha RUC, ver deteccion_estado._leer_estado_contribuyente)
@@ -97,6 +102,38 @@ def _es_probable_truncamiento(nombre_actual: str, nombre_sunat: str) -> bool:
     if diferencia > 8:
         return False
     return actual.startswith(sunat)
+
+
+def _notificar_mensajes_nuevos(db, empresa: Empresa, asuntos: list[str]) -> None:
+    """
+    Correo INMEDIATO por mensajes nuevos (distinto del resumen diario de
+    scheduler_job.py, que sigue igual) -- solo se llama cuando la consulta
+    que los encontro NO es la de alta inicial de la empresa (ver
+    ConsultaJob.es_alta_inicial). Mismo criterio de visibilidad que
+    acceso.filtrar_empresas_visibles pero invertido (dada una empresa,
+    quien puede verla): todos los admin del tenant, mas el unico miembro
+    (si hay) que tiene esta empresa asignada. No se importa acceso.py aca
+    porque esa funcion trabaja sobre una Query ya armada con Empresa en el
+    FROM -- este es un proceso de worker, no un endpoint.
+
+    Nunca debe tumbar el job de consulta si algo sale mal aca (mismo
+    criterio que el resto de los envios de correo del sistema).
+    """
+    try:
+        usuarios = (
+            db.query(Usuario)
+            .filter(Usuario.tenant_id == empresa.tenant_id)
+            .filter(Usuario.forma_notificacion == "correo")
+            .filter(or_(Usuario.rol == "admin", Usuario.id == empresa.asignado_a_usuario_id))
+            .all()
+        )
+        if not usuarios:
+            return
+        link_empresa = f"{FRONTEND_URL}/empresas/{empresa.id}"
+        for usuario in usuarios:
+            enviar_notificacion_mensajes_nuevos(usuario.email, empresa.razon_social, empresa.ruc, asuntos, link_empresa)
+    except Exception:
+        logger.exception(f"No se pudo notificar mensajes nuevos por correo para {empresa.ruc}")
 
 
 def ejecutar_consulta_buzon(job_id: str):
@@ -296,6 +333,7 @@ def ejecutar_consulta_buzon(job_id: str):
             return
 
         nuevos = 0
+        asuntos_nuevos = []
         documentos_descargados = resultado.get("documentos", {}) or {}
         vistos_en_esta_corrida = set()
         for msg in resultado["mensajes"]:
@@ -337,8 +375,10 @@ def ejecutar_consulta_buzon(job_id: str):
                 asunto=msg["asunto"],
                 tipo=clasificar_tipo(msg["asunto"]),
                 documento_ref=documento_ref,
+                notificado_popup=job.es_alta_inicial,
             ))
             nuevos += 1
+            asuntos_nuevos.append(msg["asunto"])
 
         # Buzón Mensajes (bandeja separada de Notificaciones, sin PDF en
         # general -- ver adapter._leer_mensajes_buzon_mensajes). Mismo
@@ -372,8 +412,10 @@ def ejecutar_consulta_buzon(job_id: str):
                 leido=msg.get("leido", False),
                 origen="mensajes",
                 contenido_texto=msg.get("contenido_texto"),
+                notificado_popup=job.es_alta_inicial,
             ))
             nuevos += 1
+            asuntos_nuevos.append(msg["asunto"])
 
         empresa.ultima_consulta_en = datetime.now(timezone.utc)
         job.estado = "completado"
@@ -382,6 +424,9 @@ def ejecutar_consulta_buzon(job_id: str):
         db.commit()
         _reportar_etapa(None)
         logger.info(f"Job {job_id} completado: {nuevos} mensajes nuevos para {empresa.ruc}")
+
+        if nuevos > 0 and not job.es_alta_inicial:
+            _notificar_mensajes_nuevos(db, empresa, asuntos_nuevos)
 
     except Exception as e:
         logger.exception(f"Error ejecutando job {job_id}")

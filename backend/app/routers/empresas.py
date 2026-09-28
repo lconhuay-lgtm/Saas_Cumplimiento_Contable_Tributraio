@@ -301,7 +301,7 @@ def _encolar_consulta_automatica(empresa: Empresa, usuario: Usuario, db: Session
         logger.info(f"Consulta automatica omitida para {empresa.ruc} (limite por RUC, caso raro para una empresa nueva)")
         return
 
-    job = ConsultaJob(empresa_id=empresa.id, solicitado_por=usuario.id, estado="pendiente")
+    job = ConsultaJob(empresa_id=empresa.id, solicitado_por=usuario.id, estado="pendiente", es_alta_inicial=True)
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -465,7 +465,13 @@ async def importar_empresas(
             # creada bien, el usuario siempre puede apretar "Consultar" a
             # mano despues si esto no llegara a dispararse.
             try:
-                job = ConsultaJob(empresa_id=empresa.id, solicitado_por=usuario.id, estado="pendiente", origen="masiva")
+                job = ConsultaJob(
+                    empresa_id=empresa.id,
+                    solicitado_por=usuario.id,
+                    estado="pendiente",
+                    origen="masiva",
+                    es_alta_inicial=True,
+                )
                 db.add(job)
                 db.commit()
                 db.refresh(job)

@@ -232,6 +232,12 @@ def aceptar_invitacion(token: str, data: InvitacionAceptarRequest, db: Session =
         email=invitacion.email,
         password_hash=hash_password(data.password),
         rol=invitacion.rol,
+        # Aceptar la invitacion ya prueba que controla esa casilla (recibio
+        # el link unico por correo y lo abrio) -- pedirle una verificacion
+        # aparte seria redundante para alguien invitado por un admin de
+        # confianza (a diferencia de /auth/registro, donde nadie mas
+        # respondio por ese email).
+        email_verificado=True,
     )
     db.add(nuevo_usuario)
     db.flush()

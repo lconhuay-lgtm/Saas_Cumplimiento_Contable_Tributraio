@@ -192,6 +192,44 @@ def enviar_verificacion_email(destinatario: str, link: str) -> None:
     logger.info(f"Correo de verificacion enviado a {destinatario}")
 
 
+def enviar_notificacion_mensajes_nuevos(
+    destinatario: str, razon_social: str, ruc: str, asuntos: list[str], link_empresa: str
+) -> None:
+    """
+    Aviso INMEDIATO (a diferencia de enviar_resumen_diario, que es el
+    resumen agrupado de fin de dia -- este se manda apenas termina una
+    consulta con mensajes nuevos, ver jobs.py:ejecutar_consulta_buzon).
+    Solo se llama para consultas POSTERIORES al alta inicial de la empresa
+    (ConsultaJob.es_alta_inicial=False) -- el backlog historico del primer
+    escaneo nunca deberia generar este correo. Mismo doble modo y misma
+    politica de nunca lanzar excepcion que enviar_resumen_diario, porque
+    esto se dispara desde dentro del worker de consultas -- un problema de
+    correo no debe tumbar el resto del job.
+    """
+    if not asuntos:
+        return
+
+    asunto = f"Anzen Sol -- {len(asuntos)} mensaje(s) nuevo(s) en {razon_social}"
+    lineas = [
+        f"Se encontraron {len(asuntos)} mensaje(s) nuevo(s) en el buzon de {razon_social} ({ruc}):",
+        "",
+    ]
+    lineas.extend(f"  - {a}" for a in asuntos)
+    lineas.append("")
+    lineas.append(f"Ver el detalle en el tablero:\n{link_empresa}")
+    cuerpo = "\n".join(lineas)
+
+    if _modo_prueba_activo():
+        _guardar_modo_prueba(destinatario, asunto, cuerpo)
+        return
+
+    try:
+        _enviar_smtp(destinatario, asunto, cuerpo)
+        logger.info(f"Correo de mensajes nuevos enviado a {destinatario} ({razon_social}, {len(asuntos)} mensaje(s))")
+    except Exception as e:
+        logger.error(f"No se pudo enviar el correo de mensajes nuevos a {destinatario}: {e}")
+
+
 def _enviar_smtp(destinatario: str, asunto: str, cuerpo: str) -> None:
     mensaje = MIMEMultipart()
     mensaje["From"] = SMTP_FROM

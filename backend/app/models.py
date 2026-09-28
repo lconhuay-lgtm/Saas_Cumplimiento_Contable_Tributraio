@@ -235,6 +235,13 @@ class MensajeBuzon(Base):
     documento_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
     origen: Mapped[str] = mapped_column(String(20), default="notificaciones", nullable=False)
     contenido_texto: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Distinto de "leido" (el usuario abrio este mensaje en el buzon): esto
+    # marca si ya se mostro en la ventana emergente de "mensajes nuevos" al
+    # entrar a la app (ver routers/notificaciones.py). Nace en True cuando
+    # el mensaje viene de la consulta de ALTA INICIAL de una empresa (es
+    # backlog historico, no una novedad real -- ver jobs.py), en False para
+    # cualquier consulta posterior.
+    notificado_popup: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="mensajes")
 
@@ -271,6 +278,13 @@ class ConsultaJob(Base):
     mensajes_nuevos: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     notificado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # True solo en la consulta automatica que se dispara al crear una
+    # empresa (individual o por import de Excel) -- ver
+    # _encolar_consulta_automatica en routers/empresas.py. Sirve para que
+    # jobs.py sepa que los mensajes de ESTA corrida son backlog historico
+    # (no deben disparar la notificacion de "mensajes nuevos", ver
+    # notificado_popup en MensajeBuzon) y no una novedad real.
+    es_alta_inicial: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="jobs")
 

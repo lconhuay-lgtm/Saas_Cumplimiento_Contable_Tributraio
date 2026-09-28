@@ -1,12 +1,24 @@
 "use client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ShieldCheck, Loader2 } from "lucide-react";
+import { ShieldCheck, Loader2, CheckCircle2 } from "lucide-react";
 import { api, setToken } from "../../lib/api";
 
+// useSearchParams() exige un limite de Suspense en el build de produccion
+// (next build) -- mismo fix que empresas/page.js y tareas/page.js (Fase R4).
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginPageContenido />
+    </Suspense>
+  );
+}
+
+function LoginPageContenido() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const recienVerificado = searchParams.get("verificado") === "1";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -42,6 +54,13 @@ export default function LoginPage() {
 
         <h1 className="text-2xl font-extrabold tracking-tight text-ink">Inicia sesion</h1>
         <p className="mt-1 text-sm text-slate-600">Entra a tu cuenta para ver el tablero</p>
+
+        {recienVerificado && !error && (
+          <div className="mt-6 flex items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-700">
+            <CheckCircle2 size={15} strokeWidth={1.75} className="shrink-0" />
+            Correo verificado. Ingresa tu contrasena para continuar.
+          </div>
+        )}
 
         {error && (
           <div className="mt-6 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">

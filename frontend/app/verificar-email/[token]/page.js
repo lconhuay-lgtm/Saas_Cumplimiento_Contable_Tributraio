@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ShieldCheck, CheckCircle2, XCircle } from "lucide-react";
-import { api, getToken } from "../../../lib/api";
+import { api, getToken, clearToken } from "../../../lib/api";
 
 export default function VerificarEmailPage() {
   const { token } = useParams();
@@ -12,7 +12,14 @@ export default function VerificarEmailPage() {
   useEffect(() => {
     api
       .verificarEmail(token)
-      .then((data) => setResultado({ ok: true, mensaje: data.mensaje }))
+      .then((data) => {
+        // Verificar el correo no debe dejar a nadie adentro con la sesion
+        // que ya tenia abierta -- se cierra esa sesion para que tenga que
+        // volver a escribir su contrasena (pedido explicito, evita entrar
+        // "de arrastre" solo por haber hecho clic en el link).
+        clearToken();
+        setResultado({ ok: true, mensaje: data.mensaje });
+      })
       .catch((err) => setResultado({ ok: false, mensaje: err.message }));
   }, [token]);
 
@@ -49,10 +56,10 @@ export default function VerificarEmailPage() {
         )}
 
         <Link
-          href={yaLogueado ? "/dashboard" : "/login"}
+          href={resultado?.ok ? "/login?verificado=1" : yaLogueado ? "/dashboard" : "/login"}
           className="mt-6 inline-block text-sm font-medium text-accent hover:underline"
         >
-          {yaLogueado ? "Ir al tablero" : "Ir al inicio de sesion"}
+          {resultado?.ok ? "Ir a iniciar sesion" : yaLogueado ? "Ir al tablero" : "Ir al inicio de sesion"}
         </Link>
       </div>
     </div>

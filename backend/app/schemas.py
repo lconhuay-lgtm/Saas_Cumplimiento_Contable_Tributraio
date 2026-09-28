@@ -230,6 +230,27 @@ class MarcarLeidosResponse(BaseModel):
     actualizados: int
 
 
+class MensajeNotificacionItem(BaseModel):
+    id: str
+    asunto: str
+    fecha_publicacion: datetime
+
+
+class NotificacionEmpresaGrupo(BaseModel):
+    empresa_id: str
+    ruc: str
+    razon_social: str
+    mensajes: list[MensajeNotificacionItem]
+
+
+class MarcarVistasRequest(BaseModel):
+    mensaje_ids: list[str] = Field(..., min_length=1)
+
+
+class MarcarVistasResponse(BaseModel):
+    actualizados: int
+
+
 class EmpresaPendienteResumen(BaseModel):
     id: str
     ruc: str

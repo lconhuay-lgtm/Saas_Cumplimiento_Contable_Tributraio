@@ -145,6 +145,16 @@ export const api = {
    */
   marcarTodosLeidosGlobal: () => apiFetch("/empresas/marcar-todos-leidos", { method: "POST" }),
 
+  // Ventana emergente de "mensajes nuevos" al entrar a la app -- distinto
+  // de listarMensajes/marcarLeido de arriba (esos son el buzon de una
+  // empresa puntual, esto es un aviso global agrupado por empresa).
+  listarNotificacionesNuevas: () => apiFetch("/notificaciones/nuevas"),
+  marcarNotificacionesVistas: (mensajeIds) =>
+    apiFetch("/notificaciones/marcar-vistas", {
+      method: "POST",
+      body: JSON.stringify({ mensaje_ids: mensajeIds }),
+    }),
+
   dashboardResumen: () => apiFetch("/dashboard/resumen"),
   // (sin cambios -- el endpoint ya devuelve cambios_domicilio_recientes)
 
