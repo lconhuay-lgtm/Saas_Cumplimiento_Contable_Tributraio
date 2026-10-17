@@ -203,7 +203,7 @@ export default function DashboardPage() {
               // Grid de 2 columnas con las 4 tarjetas al mismo nivel (no
               // anidadas en columnas independientes) -- a pedido: cada
               // tarjeta tiene su propia altura FIJA con scroll interno (ver
-              // el div "h-[420px]" de cada Seccion*), asi que con grid
+              // el div "h-[340px]" de cada Seccion*), asi que con grid
               // las 4 miden exactamente lo mismo sin importar cuantos items
               // traiga cada una ni cuantas de las 4 esten presentes esta
               // vez -- eso es lo que antes se rompia (una columna con 2
@@ -420,8 +420,14 @@ function SeccionCambiosEstadoContribuyente({ cambios }) {
           pedido: esta tarjeta y las otras 3 de la misma fila (Estado del
           contribuyente, Proximos vencimientos, Tareas completadas) deben
           medir exactamente lo mismo sin importar cuantos items traiga cada
-          una, para mantener un orden visual prolijo en el grid. */}
-      <div className="mt-3 h-[420px] divide-y divide-red-100 overflow-y-auto">
+          una, para mantener un orden visual prolijo en el grid.
+          overflow-x-hidden evita una barra horizontal fantasma (las filas
+          de abajo usan -mx-2 para que el hover llegue hasta el borde de la
+          tarjeta, y ese margen negativo cuenta como "contenido" que se
+          desborda para el scroll si no se corta en seco aca). scroll-fino
+          (definida en globals.css) reemplaza la barra de scroll nativa
+          (gruesa, con flechitas) por una delgada y discreta. */}
+      <div className="mt-3 h-[340px] divide-y divide-red-100 overflow-x-hidden overflow-y-auto scroll-fino">
         {itemsPagina.map((c) => (
           <Link
             key={c.empresa_id}
@@ -466,7 +472,7 @@ function SeccionCambiosDomicilio({ cambios }) {
       <p className="mt-1 text-xs text-red-600/80">
         Puede afectar la declaracion de impuestos -- revisa estas empresas.
       </p>
-      <div className="mt-3 h-[420px] divide-y divide-red-100 overflow-y-auto">
+      <div className="mt-3 h-[340px] divide-y divide-red-100 overflow-x-hidden overflow-y-auto scroll-fino">
         {itemsPagina.map((c) => (
           <Link
             key={c.empresa_id}
@@ -520,7 +526,7 @@ function SeccionTareasCompletadas({ tareas }) {
       <p className="mt-1 text-xs text-emerald-600/80">
         Las ultimas obligaciones marcadas como completadas, de cualquier periodo.
       </p>
-      <div className="mt-3 h-[420px] divide-y divide-emerald-100 overflow-y-auto">
+      <div className="mt-3 h-[340px] divide-y divide-emerald-100 overflow-x-hidden overflow-y-auto scroll-fino">
         {itemsPagina.map((t) => (
           <Link
             key={t.id}
@@ -609,7 +615,7 @@ function SeccionProximosVencimientos({ vencimientos }) {
       <p className="mt-1 text-xs text-amber-600/80">
         Segun el cronograma oficial de SUNAT (IGV-Renta/PLAME) -- ver el modulo Cronograma para el calendario completo.
       </p>
-      <div className="mt-3 h-[420px] divide-y divide-amber-100 overflow-y-auto">
+      <div className="mt-3 h-[340px] divide-y divide-amber-100 overflow-x-hidden overflow-y-auto scroll-fino">
         {itemsPagina.map((v) => (
           <Link
             key={`${v.empresa_id}-${v.periodo_tributario}`}

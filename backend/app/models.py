@@ -532,11 +532,23 @@ class TareaObligacion(Base):
     tipo: Mapped[str] = mapped_column(String(30), nullable=False)  # planilla|afp|sbs|otro|manual|notificacion
     periodo: Mapped[str | None] = mapped_column(String(7), nullable=True)  # "2026-08", None si no aplica
     fecha_vencimiento: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    # Fecha de vencimiento tal como se creo la tarea (calculada por el
+    # cronograma, o la que se cargo a mano la primera vez) -- se setea UNA
+    # SOLA VEZ al crear y nunca se vuelve a tocar, para poder detectar que
+    # una tarea fue "aplazada" comparandola contra fecha_vencimiento (que
+    # si cambia cuando se edita). None en tareas de regla "manual" sin
+    # fecha inicial.
+    fecha_vencimiento_original: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     estado: Mapped[str] = mapped_column(String(20), default="pendiente", nullable=False, index=True)  # pendiente|completado|no_aplica
     prioridad: Mapped[str] = mapped_column(String(20), default="media", nullable=False)  # baja|media|alta|urgente
     proceso: Mapped[str] = mapped_column(String(20), default="manual", nullable=False)  # automatica|manual
     fecha_completado: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     observaciones: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    # Cuando se le mando el correo de "vence pronto" -- None todavia no se
+    # envio. Evita reenviar el mismo aviso cada dia mientras siga pendiente
+    # dentro de la ventana de recordatorio (ver
+    # scheduler_job.enviar_recordatorios_vencimiento).
+    recordatorio_enviado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="tareas")

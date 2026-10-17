@@ -16,6 +16,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CheckCheck,
+  History,
 } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
 import ConfirmDialog from "../../components/ConfirmDialog";
@@ -53,6 +54,7 @@ const COLOR_PRIORIDAD = {
 const ETIQUETAS_FILTRO = [
   { valor: "pendiente", etiqueta: "Pendientes" },
   { valor: "vencida", etiqueta: "Vencidas" },
+  { valor: "aplazada", etiqueta: "Aplazadas" },
   { valor: "completado", etiqueta: "Completadas" },
   { valor: "no_aplica", etiqueta: "No aplica" },
   { valor: "", etiqueta: "Todas" },
@@ -451,6 +453,15 @@ function TareasPageContenido() {
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${COLOR_PRIORIDAD[t.prioridad] || COLOR_PRIORIDAD.media}`}>
                         {t.prioridad}
                       </span>
+                      {t.aplazada && (
+                        <span
+                          title={`Vencimiento original: ${formatoFecha(t.fecha_vencimiento_original)}`}
+                          className="flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-700"
+                        >
+                          <History size={10} strokeWidth={2} />
+                          Aplazada
+                        </span>
+                      )}
                     </div>
                     <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
                       <Building2 size={12} strokeWidth={1.5} className="shrink-0" />

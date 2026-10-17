@@ -17,6 +17,7 @@ from app.scheduler_job import (
     encolar_chequeo_nocturno,
     enviar_resumenes_diarios,
     ejecutar_chequeo_canario,
+    enviar_recordatorios_vencimiento,
     redis_conn,
     _CLAVE_REDIS_CANARIO_EN_ALERTA,
 )
@@ -61,6 +62,15 @@ def disparar_resumenes(
     usuario: Usuario = Depends(get_staff_actual),
 ):
     return enviar_resumenes_diarios(horas_atras=horas_atras)
+
+
+@router.post("/enviar-recordatorios-tareas")
+def disparar_recordatorios_tareas(
+    dias_antes: int | None = None,
+    usuario: Usuario = Depends(get_staff_actual),
+):
+    kwargs = {} if dias_antes is None else {"dias_antes": dias_antes}
+    return enviar_recordatorios_vencimiento(**kwargs)
 
 
 @router.post("/reclasificar-mensajes")

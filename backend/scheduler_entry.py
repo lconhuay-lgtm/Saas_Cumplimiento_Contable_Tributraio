@@ -51,7 +51,9 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from app.scheduler_job import encolar_chequeo_nocturno, enviar_resumenes_diarios, ejecutar_chequeo_canario
+from app.scheduler_job import (
+    encolar_chequeo_nocturno, enviar_resumenes_diarios, ejecutar_chequeo_canario, enviar_recordatorios_vencimiento,
+)
 from app.database import SessionLocal
 from app.cronograma_sunat import asegurar_cronograma_vigente
 from app.cronograma_sire import asegurar_cronograma_sire_vigente
@@ -214,6 +216,22 @@ def job_generar_tareas_mes():
         db.close()
 
 
+def job_recordatorio_tareas():
+    """
+    Modulo de Tareas/Agenda: recordatorio diario por correo de tareas que
+    vencen pronto (ver app.scheduler_job.enviar_recordatorios_vencimiento).
+    Corre despues de job_generar_tareas_mes (05:15 UTC) a proposito, para
+    que las tareas recien generadas del dia tambien entren en el barrido de
+    hoy mismo si ya caen dentro de la ventana de aviso.
+    """
+    logger.info("Enviando recordatorios de tareas por vencer...")
+    try:
+        resultado = enviar_recordatorios_vencimiento()
+        logger.info(f"Recordatorios de tareas: {resultado}")
+    except Exception:
+        logger.exception("Fallo el envio de recordatorios de tareas")
+
+
 if __name__ == "__main__":
     scheduler = BlockingScheduler(timezone="UTC")
 
@@ -268,6 +286,11 @@ if __name__ == "__main__":
         CronTrigger(hour=5, minute=15),
         id="generar_tareas_mes",
     )
+    scheduler.add_job(
+        job_recordatorio_tareas,
+        CronTrigger(hour=6, minute=0),
+        id="recordatorio_tareas",
+    )
     logger.info(
         "Scheduler arrancado. Chequeos diarios a las "
         f"{horarios_iniciales['chequeo1_hora']:02d}:{horarios_iniciales['chequeo1_minuto']:02d} UTC y "
@@ -279,6 +302,7 @@ if __name__ == "__main__":
         "Verificacion del cronograma SUNAT a las 05:00 UTC. "
         "Limpieza de datos de diagnostico a las 04:30 UTC. "
         "Generacion de tareas del mes (todos los tenants) a las 05:15 UTC. "
+        "Recordatorio por correo de tareas por vencer a las 06:00 UTC. "
         "(para probar sin esperar, usa los endpoints /admin/chequeo-nocturno, "
         "/admin/enviar-resumenes, /admin/canario/ejecutar, /admin/limpieza-diagnosticos "
         "y POST /cronograma/sincronizar; para tareas, POST /tareas/generar)"

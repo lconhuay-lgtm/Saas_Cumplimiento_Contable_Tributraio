@@ -509,6 +509,8 @@ class TareaObligacionResponse(BaseModel):
     tipo: str
     periodo: str | None
     fecha_vencimiento: datetime | None
+    fecha_vencimiento_original: datetime | None = None
+    aplazada: bool = False
     estado: str
     prioridad: str
     proceso: str

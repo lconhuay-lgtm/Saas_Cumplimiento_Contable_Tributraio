@@ -26,4 +26,26 @@
   .campo-input {
     @apply w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-ink outline-none transition-all duration-300 ease-out focus:border-accent focus:ring-4 focus:ring-accent-light;
   }
+
+  /* Barra de scroll delgada y discreta para los recuadros de altura fija
+     del Dashboard -- la barra nativa del navegador (gruesa, con flechitas
+     en los extremos) se veia tosca ahi. */
+  .scroll-fino {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+  .scroll-fino::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scroll-fino::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scroll-fino::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1;
+    border-radius: 9999px;
+  }
+  .scroll-fino::-webkit-scrollbar-thumb:hover {
+    background-color: #94a3b8;
+  }
 }

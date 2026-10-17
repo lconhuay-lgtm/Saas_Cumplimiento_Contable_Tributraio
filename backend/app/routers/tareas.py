@@ -67,6 +67,14 @@ def _a_respuesta_tarea(tarea: TareaObligacion, empresa: Empresa) -> TareaObligac
         tipo=tarea.tipo,
         periodo=tarea.periodo,
         fecha_vencimiento=tarea.fecha_vencimiento,
+        fecha_vencimiento_original=tarea.fecha_vencimiento_original,
+        # Aplazada: tenia una fecha original conocida y la fecha actual es
+        # distinta (para cualquier lado -- adelantada o atrasada, aunque en
+        # la practica casi siempre es "se corrio para despues").
+        aplazada=(
+            tarea.fecha_vencimiento_original is not None
+            and tarea.fecha_vencimiento != tarea.fecha_vencimiento_original
+        ),
         estado=tarea.estado,
         prioridad=tarea.prioridad,
         proceso=tarea.proceso,
@@ -214,6 +222,18 @@ def listar_tareas_endpoint(
             TareaObligacion.estado == "pendiente",
             TareaObligacion.fecha_vencimiento < datetime.now(timezone.utc),
         )
+    elif estado == "aplazada":
+        # Tampoco es un valor real de estado -- mismo criterio que
+        # "vencida" arriba, pero para tareas cuya fecha de vencimiento se
+        # corrio respecto a la que tenia al crearse (ver
+        # TareaObligacion.fecha_vencimiento_original). Solo pendientes:
+        # una completada que en su momento se aplazo ya no necesita
+        # seguimiento aparte.
+        query = query.filter(
+            TareaObligacion.estado == "pendiente",
+            TareaObligacion.fecha_vencimiento_original.isnot(None),
+            TareaObligacion.fecha_vencimiento != TareaObligacion.fecha_vencimiento_original,
+        )
     elif estado:
         query = query.filter(TareaObligacion.estado == estado)
     if empresa_id:
@@ -263,6 +283,7 @@ def crear_tarea_manual(
         titulo=data.titulo,
         tipo=data.tipo,
         fecha_vencimiento=data.fecha_vencimiento,
+        fecha_vencimiento_original=data.fecha_vencimiento,
         prioridad=data.prioridad,
         observaciones=data.observaciones,
         mensaje_buzon_id=data.mensaje_buzon_id,

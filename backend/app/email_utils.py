@@ -230,6 +230,45 @@ def enviar_notificacion_mensajes_nuevos(
         logger.error(f"No se pudo enviar el correo de mensajes nuevos a {destinatario}: {e}")
 
 
+def enviar_recordatorio_tareas(destinatario: str, nombre_tenant: str, tareas: list[dict], dias_antes: int) -> None:
+    """
+    Recordatorio de tareas (IGV-Renta/Planilla/AFP/etc.) que vencen dentro
+    de `dias_antes` dias -- se manda UNA vez por tarea (ver
+    TareaObligacion.recordatorio_enviado_en en
+    scheduler_job.enviar_recordatorios_vencimiento, que marca la tarea
+    para no repetir el aviso dia a dia mientras siga pendiente). Mismo
+    doble modo y misma politica de nunca lanzar excepcion que
+    enviar_resumen_diario.
+
+    tareas: lista de {"titulo": str, "empresa_ruc": str,
+    "empresa_razon_social": str, "fecha_vencimiento": datetime}
+    """
+    if not tareas:
+        return
+
+    asunto = f"Anzen Sol -- {len(tareas)} tarea(s) por vencer en los proximos {dias_antes} dias"
+    lineas = [
+        f"Recordatorio de obligaciones para {nombre_tenant}:",
+        "",
+    ]
+    for t in sorted(tareas, key=lambda x: x["fecha_vencimiento"]):
+        fecha = t["fecha_vencimiento"].strftime("%d/%m/%Y")
+        lineas.append(f"  - {fecha} -- {t['titulo']} ({t['empresa_razon_social']}, {t['empresa_ruc']})")
+    lineas.append("")
+    lineas.append("Ingresa al tablero (modulo Tareas) para ver el detalle o aplazarlas si corresponde.")
+    cuerpo = "\n".join(lineas)
+
+    if _modo_prueba_activo():
+        _guardar_modo_prueba(destinatario, asunto, cuerpo)
+        return
+
+    try:
+        _enviar_smtp(destinatario, asunto, cuerpo)
+        logger.info(f"Correo de recordatorio de tareas enviado a {destinatario} ({len(tareas)} tarea(s))")
+    except Exception as e:
+        logger.error(f"No se pudo enviar el correo de recordatorio de tareas a {destinatario}: {e}")
+
+
 def _enviar_smtp(destinatario: str, asunto: str, cuerpo: str) -> None:
     mensaje = MIMEMultipart()
     mensaje["From"] = SMTP_FROM

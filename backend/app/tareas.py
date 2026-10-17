@@ -176,6 +176,7 @@ def generar_tareas_mes(db: Session, tenant_id: str, anio: int, mes: int) -> dict
                 tipo=ob.tipo,
                 periodo=periodo,
                 fecha_vencimiento=fecha_vencimiento,
+                fecha_vencimiento_original=fecha_vencimiento,
                 proceso=proceso,
                 prioridad=ob.prioridad,
             )

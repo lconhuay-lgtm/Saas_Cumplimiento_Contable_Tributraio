@@ -20,13 +20,18 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from app.database import SessionLocal
-from app.models import Empresa, Tenant, CredencialSol, ConsultaJob, CanarioCheck
+from app.models import Empresa, Tenant, CredencialSol, ConsultaJob, CanarioCheck, TareaObligacion
 from app.models import Usuario
 from app.queue_conn import cola_consultas, redis_conn
 from app.jobs import ejecutar_consulta_buzon
-from app.email_utils import enviar_resumen_diario, enviar_alerta_canario
+from app.email_utils import enviar_resumen_diario, enviar_alerta_canario, enviar_recordatorio_tareas
 from app.rate_limit import adquirir_slot_global, liberar_slot_global, espaciado_consultas_seg
 from app.security import descifrar_clave_sol
+
+# Modulo de Tareas/Agenda: con cuantos dias de anticipacion se manda el
+# recordatorio por correo de una tarea pendiente -- ver
+# enviar_recordatorios_vencimiento.
+DIAS_RECORDATORIO_TAREAS = int(os.environ.get("DIAS_RECORDATORIO_TAREAS", 3))
 
 logger = logging.getLogger("app.scheduler_job")
 
@@ -172,6 +177,82 @@ def enviar_resumenes_diarios(horas_atras: int = 12) -> dict:
             f"Resumen diario: {len(por_tenant)} tenant(s) con novedades, {correos_enviados} correo(s) enviado(s)"
         )
         return {"tenants_notificados": len(por_tenant), "correos_enviados": correos_enviados}
+    finally:
+        db.close()
+
+
+def enviar_recordatorios_vencimiento(dias_antes: int = DIAS_RECORDATORIO_TAREAS) -> dict:
+    """
+    Modulo de Tareas/Agenda: recordatorio por correo de las tareas
+    pendientes que vencen dentro de `dias_antes` dias -- se manda UNA sola
+    vez por tarea (se marca TareaObligacion.recordatorio_enviado_en apenas
+    se manda, asi que corre esto todos los dias no reenvia el mismo aviso
+    mientras la tarea siga pendiente dentro de la ventana). Si alguien
+    aplaza la tarea mas alla de la ventana y despues vuelve a entrar en
+    ella, se vuelve a avisar (recordatorio_enviado_en no se toca al
+    aplazar, pero el filtro de fecha de abajo la vuelve a encontrar solo si
+    sigue sin recordatorio_enviado_en -- en la practica, una vez avisada no
+    se vuelve a avisar aunque se aplace, a proposito: evita mandar un
+    correo nuevo cada vez que alguien mueve la fecha).
+
+    Se agrupa por tenant (mismo criterio que enviar_resumenes_diarios): un
+    solo correo por tenant con todas las tareas, a cada usuario del tenant.
+    """
+    db = SessionLocal()
+    try:
+        ahora = datetime.now(timezone.utc)
+        limite = ahora + timedelta(days=dias_antes)
+
+        tareas_por_avisar = (
+            db.query(TareaObligacion, Empresa)
+            .join(Empresa, Empresa.id == TareaObligacion.empresa_id)
+            .filter(
+                TareaObligacion.estado == "pendiente",
+                TareaObligacion.fecha_vencimiento.isnot(None),
+                TareaObligacion.fecha_vencimiento >= ahora,
+                TareaObligacion.fecha_vencimiento <= limite,
+                TareaObligacion.recordatorio_enviado_en.is_(None),
+                Empresa.activo.is_(True),
+            )
+            .all()
+        )
+
+        por_tenant: dict[str, list[tuple[TareaObligacion, Empresa]]] = {}
+        for tarea, empresa in tareas_por_avisar:
+            por_tenant.setdefault(empresa.tenant_id, []).append((tarea, empresa))
+
+        correos_enviados = 0
+        for tenant_id, pares in por_tenant.items():
+            tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+            if not tenant:
+                continue
+            usuarios_tenant = db.query(Usuario).filter(Usuario.tenant_id == tenant_id).all()
+            tareas_resumen = [
+                {
+                    "titulo": tarea.titulo,
+                    "empresa_ruc": empresa.ruc,
+                    "empresa_razon_social": empresa.razon_social,
+                    "fecha_vencimiento": tarea.fecha_vencimiento,
+                }
+                for tarea, empresa in pares
+            ]
+            for usuario in usuarios_tenant:
+                enviar_recordatorio_tareas(usuario.email, tenant.nombre, tareas_resumen, dias_antes)
+                correos_enviados += 1
+
+            for tarea, _ in pares:
+                tarea.recordatorio_enviado_en = ahora
+
+        db.commit()
+        logger.info(
+            f"Recordatorio de tareas: {len(por_tenant)} tenant(s) con tareas por vencer, "
+            f"{len(tareas_por_avisar)} tarea(s), {correos_enviados} correo(s) enviado(s)"
+        )
+        return {
+            "tenants_notificados": len(por_tenant),
+            "tareas_avisadas": len(tareas_por_avisar),
+            "correos_enviados": correos_enviados,
+        }
     finally:
         db.close()
 
