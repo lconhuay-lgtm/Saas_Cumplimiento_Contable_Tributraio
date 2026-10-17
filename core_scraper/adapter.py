@@ -174,10 +174,11 @@ def consultar_buzon(
         mensajes = _leer_lista_mensajes(navegador, limite_mensajes)
 
         documentos = {}
+        contenidos_texto_notificaciones = {}
         if descargar_documentos and ids_conocidos is not None:
             _reportar("descargando_documentos")
             try:
-                documentos = _descargar_documentos_nuevos(navegador, ids_conocidos, limite_mensajes)
+                documentos, contenidos_texto_notificaciones = _descargar_documentos_nuevos(navegador, ids_conocidos, limite_mensajes)
             except Exception as e:
                 # Un fallo descargando documentos NUNCA debe tumbar la
                 # consulta completa -- los mensajes ya se leyeron bien, eso
@@ -203,6 +204,7 @@ def consultar_buzon(
             "ok": True,
             "mensajes": mensajes,
             "documentos": documentos,
+            "contenidos_texto_notificaciones": contenidos_texto_notificaciones,
             "mensajes_bandeja": mensajes_bandeja,
             "razon_social_sunat": navegador.razon_social_detectada,
             "condicion_domicilio": navegador.condicion_domicilio_detectada,
@@ -628,7 +630,7 @@ def _leer_mensajes_buzon_mensajes(navegador, limite, ids_conocidos: set) -> list
     return resultado
 
 
-def _descargar_documentos_nuevos(navegador, ids_conocidos: set, limite: int) -> dict:
+def _descargar_documentos_nuevos(navegador, ids_conocidos: set, limite: int) -> tuple[dict, dict]:
     """
     Descarga el documento (PDF) de cada mensaje que no este en
     ids_conocidos, reutilizando _descargar_documento_constancia() -- el
@@ -640,10 +642,27 @@ def _descargar_documentos_nuevos(navegador, ids_conocidos: set, limite: int) -> 
     DOM que Selenium ya tenia -- es un poco mas lento pero mucho mas
     confiable que tratar de "refrescar" las referencias viejas.
 
+    Respaldo de texto (confirmado en produccion, 2026-09-25): no TODOS los
+    mensajes de Buzón Notificaciones traen un PDF -- algunos tipos (ej.
+    "NOTIFICACION DE LA DECLARACION") solo traen un enlace generico de
+    contacto dentro del iframe "contenedorMensaje", sin ningun link
+    constancia_/goArchivoDescarga. Antes, esos mensajes quedaban guardados
+    sin PDF Y sin ninguna otra forma de verlos -- invisibles para siempre
+    en el tablero, reintentados sin exito en cada consulta futura. Como
+    _descargar_documento_constancia() siempre deja al driver en
+    default_content antes de volver (exito o no), es seguro usar el mismo
+    _leer_contenido_texto_mensaje() que ya usa Buzón Mensajes como
+    respaldo cuando no aparecio ningun PDF -- mismo iframe, confirmado con
+    el log real de esa corrida.
+
     Returns:
-        dict: {mensaje_id: ruta_local_del_pdf_descargado}
+        tuple[dict, dict]:
+          - {mensaje_id: ruta_local_del_pdf_descargado}
+          - {mensaje_id: contenido_texto_de_respaldo} (solo para mensajes
+            sin PDF donde se pudo leer el iframe igual)
     """
     descargados = {}
+    contenidos_texto_respaldo = {}
     intentados = set()
     descargas_exitosas = 0
     # Acumulativo desde ANTES de la primera descarga de esta corrida, no
@@ -702,6 +721,15 @@ def _descargar_documentos_nuevos(navegador, ids_conocidos: set, limite: int) -> 
                     )
             else:
                 logger.warning(f"No se pudo descargar el documento de '{msg['asunto']}'")
+
+            if mid not in descargados:
+                try:
+                    texto_respaldo = _leer_contenido_texto_mensaje(navegador)
+                    if texto_respaldo:
+                        contenidos_texto_respaldo[mid] = texto_respaldo
+                        logger.info(f"Contenido de texto de respaldo capturado (sin PDF) para '{msg['asunto']}'")
+                except Exception as e:
+                    logger.warning(f"No se pudo leer contenido de texto de respaldo para '{msg['asunto']}': {e}")
         except Exception as e:
             logger.error(f"Error descargando documento de '{msg['asunto']}': {e}")
         finally:
@@ -718,7 +746,7 @@ def _descargar_documentos_nuevos(navegador, ids_conocidos: set, limite: int) -> 
             "(quedan para la proxima consulta, el mensaje en si igual se guarda)."
         )
 
-    return descargados
+    return descargados, contenidos_texto_respaldo
 
 
 def generar_ficha_ruc_pdf(
@@ -1151,11 +1179,30 @@ def generar_reporte_tributario_terceros(
         # procesando. Terminada dicha accion el mismo estara en la
         # bandeja de correo ingresada." -- se busca ese texto para
         # devolver un "ok" con confianza real, no solo "no revento".
+        #
+        # Bug real (reportado por el usuario, 2026-10-16): esta funcion
+        # calculaba "confirmado" y lo logueaba, pero el return de abajo
+        # SIEMPRE devolvia ok=True sin mirarlo -- el job quedaba marcado
+        # "completado" en el tablero aunque SUNAT nunca hubiera mostrado el
+        # mensaje de confirmacion (y el correo real nunca llegara). Ahora
+        # "ok" refleja "confirmado" de verdad; si no se confirma, se marca
+        # como error explicito (solicitud_pudo_haberse_enviado=True evita
+        # que jobs.py reintente a ciegas y gaste otra de las 3 solicitudes
+        # diarias que permite SUNAT).
         texto_pantalla = driver.find_element(By.TAG_NAME, "body").text
         confirmado = "se está procesando" in texto_pantalla or "se esta procesando" in texto_pantalla
         logger.info(f"Reporte Tributario para Terceros solicitado para {ruc} -> {correo_destino} (confirmado={confirmado})")
         if not confirmado:
             logger.warning(f"No se encontro el mensaje de confirmacion esperado. Texto en pantalla: {texto_pantalla[:400]!r}")
+            return {
+                "ok": False,
+                "error": (
+                    "Se envio la solicitud pero SUNAT no mostro el mensaje de confirmacion esperado "
+                    "-- es posible que el reporte NO llegue al correo indicado. Revisa el correo de "
+                    "destino antes de reintentar (cada intento cuenta contra el limite de 3 por dia)."
+                ),
+                "solicitud_pudo_haberse_enviado": True,
+            }
         return {"ok": True, "error": None, "solicitud_pudo_haberse_enviado": True}
 
     except Exception as e:

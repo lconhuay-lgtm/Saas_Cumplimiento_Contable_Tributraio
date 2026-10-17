@@ -335,6 +335,13 @@ def ejecutar_consulta_buzon(job_id: str):
         nuevos = 0
         asuntos_nuevos = []
         documentos_descargados = resultado.get("documentos", {}) or {}
+        # Respaldo para mensajes de Buzón Notificaciones que NO traen PDF
+        # (confirmado en produccion: algunos tipos, ej. "NOTIFICACION DE LA
+        # DECLARACION", solo traen un enlace generico de contacto dentro del
+        # mensaje, sin constancia_/goArchivoDescarga) -- sin esto quedaban
+        # guardados sin PDF y sin ninguna otra forma de verlos en el
+        # tablero. Ver _descargar_documentos_nuevos en core_scraper/adapter.py.
+        contenidos_texto_notif = resultado.get("contenidos_texto_notificaciones", {}) or {}
         vistos_en_esta_corrida = set()
         for msg in resultado["mensajes"]:
             mid = _mensaje_id(msg["fecha"], msg["asunto"])
@@ -358,6 +365,10 @@ def ejecutar_consulta_buzon(job_id: str):
                             existe.documento_ref = guardar_documento(ruta_local_pdf, empresa.id, mid)
                         except AlmacenamientoError as e:
                             logger.error(f"No se pudo guardar el documento del mensaje '{msg['asunto']}': {e}")
+                    elif existe.contenido_texto is None:
+                        texto_respaldo = contenidos_texto_notif.get(mid)
+                        if texto_respaldo:
+                            existe.contenido_texto = texto_respaldo
                 continue
 
             documento_ref = None
@@ -375,6 +386,7 @@ def ejecutar_consulta_buzon(job_id: str):
                 asunto=msg["asunto"],
                 tipo=clasificar_tipo(msg["asunto"]),
                 documento_ref=documento_ref,
+                contenido_texto=contenidos_texto_notif.get(mid) if documento_ref is None else None,
                 notificado_popup=job.es_alta_inicial,
             ))
             nuevos += 1

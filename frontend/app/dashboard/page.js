@@ -15,6 +15,8 @@ import {
   ListChecks,
   RefreshCw,
   AlarmClock,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
 import { api, getToken } from "../../lib/api";
@@ -452,7 +454,57 @@ function SeccionCambiosDomicilio({ cambios }) {
   );
 }
 
+// Paginacion del lado del cliente -- a pedido: estas listas pueden crecer
+// mucho (muchas empresas, muchos vencimientos proximos, mucha actividad) y
+// antes se mostraban completas, empujando el resto de la pantalla hacia
+// abajo sin limite. Se cortan en paginas de 15 (mismo patron en las 3
+// secciones del Dashboard y en la paginacion de mensajes de
+// empresas/[id]/page.js). El backend ya manda la lista completa (ordenada
+// segun corresponda a cada seccion -- ver routers/dashboard.py), asi que
+// alcanza con recortarla aca, no hace falta pedirle paginas al backend.
+const POR_PAGINA_PENDIENTES = 15;
+const POR_PAGINA_VENCIMIENTOS = 15;
+const POR_PAGINA_ACTIVIDAD = 15;
+
+// Hook compartido por las 3 secciones paginadas del Dashboard -- evita
+// repetir el mismo calculo de pagina/totalPaginas/slice en cada una.
+function usePaginacion(lista, porPagina) {
+  const [pagina, setPagina] = useState(1);
+  const totalPaginas = Math.max(1, Math.ceil(lista.length / porPagina));
+  const paginaSegura = Math.min(pagina, totalPaginas);
+  const itemsPagina = lista.slice((paginaSegura - 1) * porPagina, paginaSegura * porPagina);
+  return { paginaSegura, totalPaginas, itemsPagina, setPagina };
+}
+
+function ControlesPaginacion({ paginaSegura, totalPaginas, total, setPagina }) {
+  if (totalPaginas <= 1) return null;
+  return (
+    <div className="mt-3 flex items-center justify-between gap-2 text-xs text-slate-500">
+      <button
+        onClick={() => setPagina((p) => Math.max(1, p - 1))}
+        disabled={paginaSegura <= 1}
+        className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 font-medium text-slate-600 hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <ChevronLeft size={13} strokeWidth={1.5} />
+        Anterior
+      </button>
+      <span>
+        Pagina {paginaSegura} de {totalPaginas} ({total} en total)
+      </span>
+      <button
+        onClick={() => setPagina((p) => Math.min(totalPaginas, p + 1))}
+        disabled={paginaSegura >= totalPaginas}
+        className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 font-medium text-slate-600 hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        Siguiente
+        <ChevronRight size={13} strokeWidth={1.5} />
+      </button>
+    </div>
+  );
+}
+
 function SeccionProximosVencimientos({ vencimientos }) {
+  const { paginaSegura, totalPaginas, itemsPagina, setPagina } = usePaginacion(vencimientos, POR_PAGINA_VENCIMIENTOS);
   return (
     <section className="mt-6 max-w-5xl rounded-2xl border border-amber-200 bg-amber-50 p-5 animate-fade-in-up">
       <div className="flex items-center gap-2 text-amber-700">
@@ -463,7 +515,7 @@ function SeccionProximosVencimientos({ vencimientos }) {
         Segun el cronograma oficial de SUNAT (IGV-Renta/PLAME) -- ver el modulo Cronograma para el calendario completo.
       </p>
       <div className="mt-3 divide-y divide-amber-100">
-        {vencimientos.map((v) => (
+        {itemsPagina.map((v) => (
           <Link
             key={`${v.empresa_id}-${v.periodo_tributario}`}
             href={`/empresas/${v.empresa_id}`}
@@ -486,11 +538,19 @@ function SeccionProximosVencimientos({ vencimientos }) {
           </Link>
         ))}
       </div>
+      <ControlesPaginacion
+        paginaSegura={paginaSegura}
+        totalPaginas={totalPaginas}
+        total={vencimientos.length}
+        setPagina={setPagina}
+      />
     </section>
   );
 }
 
 function SeccionEmpresasConPendientes({ empresas }) {
+  const { paginaSegura, totalPaginas, itemsPagina, setPagina } = usePaginacion(empresas, POR_PAGINA_PENDIENTES);
+
   return (
     <section>
       <h2 className="flex items-center gap-1.5 text-sm font-bold uppercase tracking-wide text-slate-500">
@@ -501,32 +561,47 @@ function SeccionEmpresasConPendientes({ empresas }) {
       {empresas.length === 0 ? (
         <p className="mt-3 text-sm text-slate-500">No hay mensajes pendientes en ninguna empresa. Todo al dia.</p>
       ) : (
-        <div className="surface-card mt-3 divide-y divide-slate-100 overflow-hidden">
-          {empresas.map((e) => (
-            <Link
-              key={e.id}
-              href={`/empresas/${e.id}`}
-              className="flex items-center justify-between border-l-2 border-transparent px-5 py-3.5 transition-all duration-300 ease-out hover:border-accent hover:bg-slate-50"
-            >
-              <div>
-                <div className="text-sm font-medium text-ink">{e.razon_social}</div>
-                <div className="text-xs text-slate-500">{e.ruc}</div>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="rounded-full bg-accent-light px-2 py-0.5 text-[11px] font-bold text-accent">
-                  {e.pendientes}
-                </span>
-                <ArrowRight size={14} strokeWidth={1.5} className="text-slate-400" />
-              </div>
-            </Link>
-          ))}
-        </div>
+        <>
+          <div className="surface-card mt-3 divide-y divide-slate-100 overflow-hidden">
+            {itemsPagina.map((e) => (
+              <Link
+                key={e.id}
+                href={`/empresas/${e.id}`}
+                className="flex items-center justify-between border-l-2 border-transparent px-5 py-3.5 transition-all duration-300 ease-out hover:border-accent hover:bg-slate-50"
+              >
+                <div>
+                  <div className="text-sm font-medium text-ink">{e.razon_social}</div>
+                  <div className="text-xs text-slate-500">{e.ruc}</div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="rounded-full bg-accent-light px-2 py-0.5 text-[11px] font-bold text-accent">
+                    {e.pendientes}
+                  </span>
+                  <ArrowRight size={14} strokeWidth={1.5} className="text-slate-400" />
+                </div>
+              </Link>
+            ))}
+          </div>
+
+          <ControlesPaginacion
+            paginaSegura={paginaSegura}
+            totalPaginas={totalPaginas}
+            total={empresas.length}
+            setPagina={setPagina}
+          />
+        </>
       )}
     </section>
   );
 }
 
 function SeccionActividadReciente({ actividad }) {
+  // El backend ya limita esto a los ultimos 10 jobs (ver routers/dashboard.py),
+  // asi que estos controles normalmente no van a aparecer -- se dejan aca
+  // igual, por consistencia con las otras 2 secciones paginadas y por si
+  // ese limite crece mas adelante.
+  const { paginaSegura, totalPaginas, itemsPagina, setPagina } = usePaginacion(actividad, POR_PAGINA_ACTIVIDAD);
+
   return (
     <section>
       <h2 className="flex items-center gap-1.5 text-sm font-bold uppercase tracking-wide text-slate-500">
@@ -537,10 +612,11 @@ function SeccionActividadReciente({ actividad }) {
       {actividad.length === 0 ? (
         <p className="mt-3 text-sm text-slate-500">Todavia no se ha corrido ninguna consulta.</p>
       ) : (
+        <>
         <div className="surface-card mt-3 divide-y divide-slate-100 overflow-hidden">
-          {actividad.map((a, i) => (
+          {itemsPagina.map((a, i) => (
             <Link
-              key={i}
+              key={`${a.empresa_id}-${a.finalizado_en}-${i}`}
               href={`/empresas/${a.empresa_id}`}
               className="flex items-center justify-between border-l-2 border-transparent px-5 py-3.5 transition-all duration-300 ease-out hover:border-accent hover:bg-slate-50"
             >
@@ -568,6 +644,13 @@ function SeccionActividadReciente({ actividad }) {
             </Link>
           ))}
         </div>
+        <ControlesPaginacion
+          paginaSegura={paginaSegura}
+          totalPaginas={totalPaginas}
+          total={actividad.length}
+          setPagina={setPagina}
+        />
+        </>
       )}
     </section>
   );

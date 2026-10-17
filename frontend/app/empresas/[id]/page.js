@@ -511,10 +511,15 @@ export default function DetalleEmpresaPage() {
                                 PDF
                               </span>
                             )}
-                            {!m.tiene_documento && m.origen === "mensajes" && (
+                            {/* Antes solo se mostraba para origen="mensajes" -- pero
+                                Buzón Notificaciones tambien tiene mensajes sin PDF
+                                (ver jobs.py/adapter.py, respaldo de contenido_texto),
+                                y sin este chip quedaban en la lista sin ninguna
+                                indicacion de por que no se podian abrir. */}
+                            {!m.tiene_documento && (
                               <span className="flex items-center gap-1 rounded-full bg-cyan-50 px-2 py-0.5 font-medium text-cyan-700">
                                 <MessageSquare size={11} strokeWidth={1.5} />
-                                {m.contenido_texto ? "Mensaje" : "Sin contenido"}
+                                {m.contenido_texto ? "Mensaje" : "Sin documento disponible"}
                               </span>
                             )}
                           </div>
@@ -600,21 +605,24 @@ export default function DetalleEmpresaPage() {
                         {seleccionado.asunto}
                       </span>
                     </div>
-                    {seleccionado.origen === "mensajes" ? (
-                      seleccionado.contenido_texto ? (
-                        <div className="flex-1 overflow-y-auto p-5">
-                          <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink">
-                            {seleccionado.contenido_texto}
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">
-                          <MessageSquare size={28} strokeWidth={1.2} className="text-slate-300" />
-                          <p className="text-sm text-slate-500">
-                            No se pudo capturar el contenido de este mensaje -- revisalo directo en SUNAT.
-                          </p>
-                        </div>
-                      )
+                    {/* Antes esto miraba origen === "mensajes" para decidir texto vs
+                        PDF -- pero Buzón Notificaciones tambien puede tener mensajes
+                        sin PDF con contenido de respaldo (ver badge "Sin documento
+                        disponible" en la lista), asi que lo que de verdad importa es
+                        si HAY contenido_texto para mostrar, sin importar el origen. */}
+                    {!seleccionado.tiene_documento && seleccionado.contenido_texto ? (
+                      <div className="flex-1 overflow-y-auto p-5">
+                        <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink">
+                          {seleccionado.contenido_texto}
+                        </p>
+                      </div>
+                    ) : !seleccionado.tiene_documento ? (
+                      <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">
+                        <MessageSquare size={28} strokeWidth={1.2} className="text-slate-300" />
+                        <p className="text-sm text-slate-500">
+                          No se pudo capturar el contenido de este mensaje -- revisalo directo en SUNAT.
+                        </p>
+                      </div>
                     ) : cargandoPdf ? (
                       <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-400">
                         <Loader2 size={24} strokeWidth={1.5} className="animate-spin" />
