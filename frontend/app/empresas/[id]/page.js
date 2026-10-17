@@ -286,7 +286,7 @@ export default function DetalleEmpresaPage() {
   // scroll no debe irse "hasta abajo", se corta en paginas de 20. Se
   // pagina sobre la lista ya filtrada (busqueda/pestanas se aplican
   // primero, la pagina es sobre el resultado).
-  const POR_PAGINA = 20;
+  const POR_PAGINA = 10;
   const totalPaginas = Math.max(1, Math.ceil(mensajesFiltrados.length / POR_PAGINA));
   const paginaSegura = Math.min(pagina, totalPaginas);
   const mensajesPagina = mensajesFiltrados.slice(
@@ -507,12 +507,18 @@ export default function DetalleEmpresaPage() {
                       onClick={() => {
                         if (m.tiene_documento) verPdf(m);
                         else if (m.contenido_texto) verMensaje(m);
+                        // Sin PDF y sin contenido_texto no hay nada que abrir --
+                        // SUNAT no genero documento para este mensaje. El clic en
+                        // la fila no hacia nada en ese caso (solo quedaba el
+                        // boton pequeno de "marcar leido", poco visible), asi que
+                        // el mensaje se quedaba "atascado" como no leido para
+                        // siempre. Ahora el clic marca/desmarca leido directo.
+                        else toggleLeido(m);
                       }}
-                      className={`px-4 py-3.5 transition-colors duration-300 ease-out ${
-                        esClickeable ? "cursor-pointer" : ""
-                      } ${seleccionado?.id === m.id ? "bg-accent-light" : m.leido ? "" : "bg-accent-light/30"} ${
-                        esClickeable ? "hover:bg-accent-light/60" : ""
-                      }`}
+                      title={!esClickeable ? "SUNAT no genero documento para este mensaje -- clic para marcar como leido" : undefined}
+                      className={`cursor-pointer px-4 py-3.5 transition-colors duration-300 ease-out ${
+                        seleccionado?.id === m.id ? "bg-accent-light" : m.leido ? "" : "bg-accent-light/30"
+                      } hover:bg-accent-light/60`}
                     >
                       <div className="flex items-start gap-2.5">
                         <span

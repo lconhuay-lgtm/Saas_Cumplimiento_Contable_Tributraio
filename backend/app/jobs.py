@@ -12,12 +12,16 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import or_
 
 from app.database import SessionLocal
-from app.models import ConsultaJob, FichaRucJob, ReporteTributarioJob, Empresa, CredencialSol, MensajeBuzon, Usuario
+from app.models import (
+    ConsultaJob, FichaRucJob, ReporteTributarioJob, Empresa, CredencialSol, MensajeBuzon, Usuario,
+    TareaObligacion,
+)
 from app.security import descifrar_clave_sol
 from app.rate_limit import adquirir_slot_global, liberar_slot_global, limite_mensajes_por_consulta
 from app.almacenamiento import guardar_documento, guardar_documento_bytes, AlmacenamientoError
 from app.clasificacion import clasificar_tipo
 from app.email_utils import enviar_notificacion_mensajes_nuevos
+from app.cronograma_sunat import _PATRONES_SIN_OBLIGACIONES
 
 MAX_INTENTOS = 2
 ESPERA_ENTRE_INTENTOS_SEG = 15
@@ -315,6 +319,34 @@ def ejecutar_consulta_buzon(job_id: str):
                 empresa.estado_contribuyente_anterior = empresa.estado_contribuyente
                 empresa.estado_contribuyente_actualizado_en = datetime.now(timezone.utc)
             empresa.estado_contribuyente = estado_contribuyente
+
+            # La empresa paso a baja/suspension recien ahora: ya no tiene
+            # obligaciones corrientes (mismo criterio que
+            # cronograma_sunat._empresas_para_cronograma, que ya evita
+            # generarle tareas NUEVAS de aqui en adelante). Pero las tareas
+            # automaticas (IGV-Renta/Planilla/etc., proceso="automatica")
+            # que ya se habian creado ANTES de este cambio -- de un mes en
+            # que la empresa todavia estaba activa -- se quedaban pendientes
+            # para siempre y terminaban marcadas como "vencidas" sin que la
+            # empresa deba declarar nada. Las tareas manuales (creadas a
+            # mano por el usuario, ej. "tramite de cierre") no se tocan.
+            if any(patron.strip("%") in estado_contribuyente.upper() for patron in _PATRONES_SIN_OBLIGACIONES):
+                tareas_obsoletas = (
+                    db.query(TareaObligacion)
+                    .filter(
+                        TareaObligacion.empresa_id == empresa.id,
+                        TareaObligacion.estado == "pendiente",
+                        TareaObligacion.proceso == "automatica",
+                    )
+                    .all()
+                )
+                if tareas_obsoletas:
+                    logger.info(
+                        f"{empresa.ruc} paso a '{estado_contribuyente}': se marcan "
+                        f"{len(tareas_obsoletas)} tarea(s) automatica(s) pendiente(s) como 'no_aplica'."
+                    )
+                    for t in tareas_obsoletas:
+                        t.estado = "no_aplica"
 
         # Se actualiza SIEMPRE que esta corrida haya intentado leerlo (haya
         # cambiado el valor o no) -- es lo que decide si la PROXIMA consulta

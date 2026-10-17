@@ -15,6 +15,7 @@ import {
   Clock,
   ChevronLeft,
   ChevronRight,
+  CheckCheck,
 } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
 import ConfirmDialog from "../../components/ConfirmDialog";
@@ -140,6 +141,12 @@ function TareasPageContenido() {
   const [generando, setGenerando] = useState(false);
   const [mostrarNueva, setMostrarNueva] = useState(false);
   const [tareaSeleccionada, setTareaSeleccionada] = useState(null);
+  // Seleccion multiple para completar varias tareas de un tiron -- a
+  // pedido: antes habia que entrar tarea por tarea, muy tedioso con una
+  // cartera grande. Se guardan los ids en un Set (no el indice de pagina,
+  // asi la seleccion sobrevive al cambiar de pagina).
+  const [seleccionadas, setSeleccionadas] = useState(new Set());
+  const [completandoMasivo, setCompletandoMasivo] = useState(false);
 
   useEffect(() => {
     if (!getToken()) {
@@ -155,6 +162,7 @@ function TareasPageContenido() {
   useEffect(() => {
     if (!getToken()) return;
     cargarTareas();
+    setSeleccionadas(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtroEstado, filtroAsignado, miUsuarioId]);
 
@@ -208,6 +216,45 @@ function TareasPageContenido() {
       await cargarTareas();
     } catch (err) {
       alert(err.message);
+    }
+  }
+
+  function toggleSeleccion(id) {
+    setSeleccionadas((prev) => {
+      const copia = new Set(prev);
+      if (copia.has(id)) copia.delete(id);
+      else copia.add(id);
+      return copia;
+    });
+  }
+
+  function toggleSeleccionPagina(idsPagina, marcarTodas) {
+    setSeleccionadas((prev) => {
+      const copia = new Set(prev);
+      for (const id of idsPagina) {
+        if (marcarTodas) copia.add(id);
+        else copia.delete(id);
+      }
+      return copia;
+    });
+  }
+
+  async function completarSeleccionadas() {
+    if (seleccionadas.size === 0) return;
+    setCompletandoMasivo(true);
+    try {
+      const ids = [...seleccionadas];
+      const resultados = await Promise.allSettled(
+        ids.map((id) => api.actualizarTarea(id, { estado: "completado" }))
+      );
+      const fallidas = resultados.filter((r) => r.status === "rejected").length;
+      setSeleccionadas(new Set());
+      await cargarTareas();
+      if (fallidas > 0) {
+        alert(`Se completaron ${ids.length - fallidas} de ${ids.length} tareas. ${fallidas} fallaron -- intenta de nuevo con esas.`);
+      }
+    } finally {
+      setCompletandoMasivo(false);
     }
   }
 
@@ -290,6 +337,45 @@ function TareasPageContenido() {
           <div className="mt-6 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>
         )}
 
+        {!cargando && tareasPagina.length > 0 && (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs">
+            <label className="flex items-center gap-2 font-medium text-slate-600">
+              <input
+                type="checkbox"
+                checked={tareasPagina.every((t) => seleccionadas.has(t.id))}
+                onChange={(e) => toggleSeleccionPagina(tareasPagina.map((t) => t.id), e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-accent focus:ring-accent"
+              />
+              Seleccionar todas en esta pagina
+            </label>
+            {seleccionadas.size > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-slate-600">
+                  {seleccionadas.size} seleccionada{seleccionadas.size === 1 ? "" : "s"}
+                </span>
+                <button
+                  onClick={completarSeleccionadas}
+                  disabled={completandoMasivo}
+                  className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 font-semibold text-white transition-all duration-300 ease-out hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {completandoMasivo ? (
+                    <Loader2 size={13} strokeWidth={1.5} className="animate-spin" />
+                  ) : (
+                    <CheckCheck size={13} strokeWidth={1.5} />
+                  )}
+                  Completar seleccionadas
+                </button>
+                <button
+                  onClick={() => setSeleccionadas(new Set())}
+                  className="rounded-lg px-2.5 py-1.5 font-medium text-slate-500 hover:bg-slate-100"
+                >
+                  Cancelar
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {cargando ? (
           <p className="mt-8 text-sm text-slate-500">Cargando...</p>
         ) : tareasOrdenadas.length === 0 ? (
@@ -306,6 +392,13 @@ function TareasPageContenido() {
               const dias = diasRestantes(t.fecha_vencimiento);
               return (
                 <div key={t.id} className="flex items-center gap-3 px-5 py-4 transition-colors duration-300 ease-out hover:bg-slate-50">
+                  <input
+                    type="checkbox"
+                    checked={seleccionadas.has(t.id)}
+                    onChange={() => toggleSeleccion(t.id)}
+                    className="h-4 w-4 shrink-0 rounded border-slate-300 text-accent focus:ring-accent"
+                    aria-label="Seleccionar tarea"
+                  />
                   <div className="flex shrink-0 items-center gap-1">
                     <button
                       onClick={() => cambiarEstado(t, t.estado === "completado" ? "pendiente" : "completado")}

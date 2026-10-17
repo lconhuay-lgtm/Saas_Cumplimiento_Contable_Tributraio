@@ -64,6 +64,47 @@ function etiquetaDeItem(v) {
 // ilegible en pantallas chicas.
 const CHIPS_VISIBLES_POR_DIA = 3;
 
+// El panel de detalle de un dia lista una fila por empresa -- con una
+// cartera grande, un solo dia (ej. el vencimiento general de IGV-Renta)
+// puede traer decenas de empresas de un tiron. Mismo patron de 10 por
+// pagina que el resto de la app (Dashboard, Tareas, mensajes).
+const POR_PAGINA_CRONOGRAMA = 10;
+
+function usePaginacion(lista, porPagina) {
+  const [pagina, setPagina] = useState(1);
+  const totalPaginas = Math.max(1, Math.ceil(lista.length / porPagina));
+  const paginaSegura = Math.min(pagina, totalPaginas);
+  const itemsPagina = lista.slice((paginaSegura - 1) * porPagina, paginaSegura * porPagina);
+  return { paginaSegura, totalPaginas, itemsPagina, setPagina };
+}
+
+function ControlesPaginacion({ paginaSegura, totalPaginas, total, setPagina }) {
+  if (totalPaginas <= 1) return null;
+  return (
+    <div className="mt-3 flex items-center justify-between gap-2 text-xs text-slate-500">
+      <button
+        onClick={() => setPagina((p) => Math.max(1, p - 1))}
+        disabled={paginaSegura <= 1}
+        className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 font-medium text-slate-600 hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <ChevronLeft size={13} strokeWidth={1.5} />
+        Anterior
+      </button>
+      <span>
+        Pagina {paginaSegura} de {totalPaginas} ({total} en total)
+      </span>
+      <button
+        onClick={() => setPagina((p) => Math.min(totalPaginas, p + 1))}
+        disabled={paginaSegura >= totalPaginas}
+        className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 font-medium text-slate-600 hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        Siguiente
+        <ChevronRight size={13} strokeWidth={1.5} />
+      </button>
+    </div>
+  );
+}
+
 // Las fechas de vencimiento vienen del backend como medianoche UTC del dia
 // calendario correspondiente (ver backend/app/cronograma_sunat.py) -- hay
 // que leerlas con los getters UTC, no los locales, porque Peru es UTC-5 y
@@ -242,6 +283,10 @@ export default function CronogramaPage() {
 
   const esHoy = (d) => d != null && anio === hoy.getFullYear() && mes === hoy.getMonth() + 1 && d === hoy.getDate();
 
+  const itemsDiaSeleccionado = diaSeleccionado != null ? porDia[diaSeleccionado] || [] : [];
+  const { paginaSegura: paginaDia, totalPaginas: totalPaginasDia, itemsPagina: itemsPaginaDia, setPagina: setPaginaDia } =
+    usePaginacion(itemsDiaSeleccionado, POR_PAGINA_CRONOGRAMA);
+
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
@@ -394,7 +439,7 @@ export default function CronogramaPage() {
               </button>
             </div>
             <div className="mt-3 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100">
-              {porDia[diaSeleccionado].map((v) => (
+              {itemsPaginaDia.map((v) => (
                 <Link
                   key={v.key}
                   href={`/empresas/${v.empresa_id}`}
@@ -419,6 +464,12 @@ export default function CronogramaPage() {
                 </Link>
               ))}
             </div>
+            <ControlesPaginacion
+              paginaSegura={paginaDia}
+              totalPaginas={totalPaginasDia}
+              total={itemsDiaSeleccionado.length}
+              setPagina={setPaginaDia}
+            />
           </div>
         )}
       </main>

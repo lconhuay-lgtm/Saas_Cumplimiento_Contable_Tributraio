@@ -303,7 +303,8 @@ function SeccionAvanceCumplimiento() {
         <div>
           <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Avance de cumplimiento</h2>
           <p className="mt-0.5 text-xs text-slate-400">
-            Segun las obligaciones (Planilla/AFP/SBS) que configuraste por empresa -- ver detalle de empresa.
+            Tareas del periodo elegido (IGV-Renta, Planilla, AFP, SBS y demas obligaciones) -- cambia el mes
+            arriba para ver otros periodos.
           </p>
         </div>
         <select
@@ -377,6 +378,7 @@ function TarjetaAvance({ item, destacada }) {
 }
 
 function SeccionCambiosEstadoContribuyente({ cambios }) {
+  const { paginaSegura, totalPaginas, itemsPagina, setPagina } = usePaginacion(cambios, POR_PAGINA_PENDIENTES);
   return (
     <section className="rounded-2xl border border-red-200 bg-red-50 p-5 animate-fade-in-up">
       <div className="flex items-center gap-2 text-red-700">
@@ -387,7 +389,7 @@ function SeccionCambiosEstadoContribuyente({ cambios }) {
         Puede afectar la declaracion de impuestos -- revisa estas empresas.
       </p>
       <div className="mt-3 divide-y divide-red-100">
-        {cambios.map((c) => (
+        {itemsPagina.map((c) => (
           <Link
             key={c.empresa_id}
             href={`/empresas/${c.empresa_id}`}
@@ -415,11 +417,13 @@ function SeccionCambiosEstadoContribuyente({ cambios }) {
           </Link>
         ))}
       </div>
+      <ControlesPaginacion paginaSegura={paginaSegura} totalPaginas={totalPaginas} total={cambios.length} setPagina={setPagina} />
     </section>
   );
 }
 
 function SeccionCambiosDomicilio({ cambios }) {
+  const { paginaSegura, totalPaginas, itemsPagina, setPagina } = usePaginacion(cambios, POR_PAGINA_PENDIENTES);
   return (
     <section className="rounded-2xl border border-red-200 bg-red-50 p-5 animate-fade-in-up">
       <div className="flex items-center gap-2 text-red-700">
@@ -430,7 +434,7 @@ function SeccionCambiosDomicilio({ cambios }) {
         Puede afectar la declaracion de impuestos -- revisa estas empresas.
       </p>
       <div className="mt-3 divide-y divide-red-100">
-        {cambios.map((c) => (
+        {itemsPagina.map((c) => (
           <Link
             key={c.empresa_id}
             href={`/empresas/${c.empresa_id}`}
@@ -456,6 +460,7 @@ function SeccionCambiosDomicilio({ cambios }) {
           </Link>
         ))}
       </div>
+      <ControlesPaginacion paginaSegura={paginaSegura} totalPaginas={totalPaginas} total={cambios.length} setPagina={setPagina} />
     </section>
   );
 }
