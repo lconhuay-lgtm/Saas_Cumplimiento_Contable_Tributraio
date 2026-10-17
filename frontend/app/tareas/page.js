@@ -13,6 +13,8 @@ import {
   Circle,
   MinusCircle,
   Clock,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
 import ConfirmDialog from "../../components/ConfirmDialog";
@@ -54,6 +56,46 @@ const ETIQUETAS_FILTRO = [
   { valor: "no_aplica", etiqueta: "No aplica" },
   { valor: "", etiqueta: "Todas" },
 ];
+
+// Mismo patron de paginacion que el Dashboard (10 por pagina) -- la lista
+// de tareas pendientes se acumula con el tiempo y sin esto crecia sin
+// limite, obligando a un scroll muy largo para ver todo.
+const POR_PAGINA_TAREAS = 10;
+
+function usePaginacion(lista, porPagina) {
+  const [pagina, setPagina] = useState(1);
+  const totalPaginas = Math.max(1, Math.ceil(lista.length / porPagina));
+  const paginaSegura = Math.min(pagina, totalPaginas);
+  const itemsPagina = lista.slice((paginaSegura - 1) * porPagina, paginaSegura * porPagina);
+  return { paginaSegura, totalPaginas, itemsPagina, setPagina };
+}
+
+function ControlesPaginacion({ paginaSegura, totalPaginas, total, setPagina }) {
+  if (totalPaginas <= 1) return null;
+  return (
+    <div className="mt-3 flex items-center justify-between gap-2 text-xs text-slate-500">
+      <button
+        onClick={() => setPagina((p) => Math.max(1, p - 1))}
+        disabled={paginaSegura <= 1}
+        className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 font-medium text-slate-600 hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <ChevronLeft size={13} strokeWidth={1.5} />
+        Anterior
+      </button>
+      <span>
+        Pagina {paginaSegura} de {totalPaginas} ({total} en total)
+      </span>
+      <button
+        onClick={() => setPagina((p) => Math.min(totalPaginas, p + 1))}
+        disabled={paginaSegura >= totalPaginas}
+        className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 font-medium text-slate-600 hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        Siguiente
+        <ChevronRight size={13} strokeWidth={1.5} />
+      </button>
+    </div>
+  );
+}
 
 function formatoFecha(fechaIso) {
   if (!fechaIso) return null;
@@ -178,6 +220,11 @@ function TareasPageContenido() {
     });
   }, [tareas]);
 
+  const { paginaSegura, totalPaginas, itemsPagina: tareasPagina, setPagina } = usePaginacion(
+    tareasOrdenadas,
+    POR_PAGINA_TAREAS
+  );
+
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
@@ -255,7 +302,7 @@ function TareasPageContenido() {
           </div>
         ) : (
           <div className="surface-card mt-6 divide-y divide-slate-100 overflow-hidden">
-            {tareasOrdenadas.map((t) => {
+            {tareasPagina.map((t) => {
               const dias = diasRestantes(t.fecha_vencimiento);
               return (
                 <div key={t.id} className="flex items-center gap-3 px-5 py-4 transition-colors duration-300 ease-out hover:bg-slate-50">
@@ -314,6 +361,14 @@ function TareasPageContenido() {
               );
             })}
           </div>
+        )}
+        {!cargando && tareasOrdenadas.length > 0 && (
+          <ControlesPaginacion
+            paginaSegura={paginaSegura}
+            totalPaginas={totalPaginas}
+            total={tareasOrdenadas.length}
+            setPagina={setPagina}
+          />
         )}
       </main>
 

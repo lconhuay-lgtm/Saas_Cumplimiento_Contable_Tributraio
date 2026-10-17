@@ -430,7 +430,26 @@ export default function DetalleEmpresaPage() {
                 ))}
               </div>
 
-              {filtroEspecial && ETIQUETAS_FILTRO_ESPECIAL[filtroEspecial] && (
+              <button
+                onClick={() => setFiltroEspecial(filtroEspecial === "pendientes" ? null : "pendientes")}
+                className={`mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition-colors duration-300 ease-out ${
+                  filtroEspecial === "pendientes"
+                    ? "bg-accent text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                <Filter size={12} strokeWidth={1.5} />
+                Solo no leidos
+                <span
+                  className={`rounded-full px-1.5 text-[11px] ${
+                    filtroEspecial === "pendientes" ? "bg-white/20" : "bg-white text-slate-500"
+                  }`}
+                >
+                  {listaBase.filter((m) => !m.leido).length}
+                </span>
+              </button>
+
+              {filtroEspecial && filtroEspecial !== "pendientes" && ETIQUETAS_FILTRO_ESPECIAL[filtroEspecial] && (
                 <div className="mt-3 flex items-center gap-2 rounded-lg bg-accent-light px-3 py-2 text-xs font-medium text-accent">
                   <Filter size={12} strokeWidth={1.5} />
                   Mostrando solo: {ETIQUETAS_FILTRO_ESPECIAL[filtroEspecial]}

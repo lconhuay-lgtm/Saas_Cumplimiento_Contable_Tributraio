@@ -195,16 +195,22 @@ export default function DashboardPage() {
 
             <SeccionAvanceCumplimiento />
 
-            {resumen.cambios_estado_contribuyente_recientes.length > 0 && (
-              <SeccionCambiosEstadoContribuyente cambios={resumen.cambios_estado_contribuyente_recientes} />
-            )}
+            {(resumen.cambios_estado_contribuyente_recientes.length > 0 ||
+              resumen.cambios_domicilio_recientes.length > 0 ||
+              resumen.proximos_vencimientos?.length > 0) && (
+              <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
+                {resumen.cambios_estado_contribuyente_recientes.length > 0 && (
+                  <SeccionCambiosEstadoContribuyente cambios={resumen.cambios_estado_contribuyente_recientes} />
+                )}
 
-            {resumen.cambios_domicilio_recientes.length > 0 && (
-              <SeccionCambiosDomicilio cambios={resumen.cambios_domicilio_recientes} />
-            )}
+                {resumen.cambios_domicilio_recientes.length > 0 && (
+                  <SeccionCambiosDomicilio cambios={resumen.cambios_domicilio_recientes} />
+                )}
 
-            {resumen.proximos_vencimientos?.length > 0 && (
-              <SeccionProximosVencimientos vencimientos={resumen.proximos_vencimientos} />
+                {resumen.proximos_vencimientos?.length > 0 && (
+                  <SeccionProximosVencimientos vencimientos={resumen.proximos_vencimientos} />
+                )}
+              </div>
             )}
 
             <div className="mt-10 grid grid-cols-1 gap-8 xl:grid-cols-2">
@@ -372,7 +378,7 @@ function TarjetaAvance({ item, destacada }) {
 
 function SeccionCambiosEstadoContribuyente({ cambios }) {
   return (
-    <section className="mt-6 max-w-5xl rounded-2xl border border-red-200 bg-red-50 p-5 animate-fade-in-up">
+    <section className="rounded-2xl border border-red-200 bg-red-50 p-5 animate-fade-in-up">
       <div className="flex items-center gap-2 text-red-700">
         <AlertTriangle size={17} strokeWidth={1.5} />
         <h2 className="text-sm font-bold uppercase tracking-wide">Cambios de estado del contribuyente</h2>
@@ -415,7 +421,7 @@ function SeccionCambiosEstadoContribuyente({ cambios }) {
 
 function SeccionCambiosDomicilio({ cambios }) {
   return (
-    <section className="mt-6 max-w-5xl rounded-2xl border border-red-200 bg-red-50 p-5 animate-fade-in-up">
+    <section className="rounded-2xl border border-red-200 bg-red-50 p-5 animate-fade-in-up">
       <div className="flex items-center gap-2 text-red-700">
         <AlertTriangle size={17} strokeWidth={1.5} />
         <h2 className="text-sm font-bold uppercase tracking-wide">Cambios de domicilio fiscal</h2>
@@ -506,7 +512,7 @@ function ControlesPaginacion({ paginaSegura, totalPaginas, total, setPagina }) {
 function SeccionProximosVencimientos({ vencimientos }) {
   const { paginaSegura, totalPaginas, itemsPagina, setPagina } = usePaginacion(vencimientos, POR_PAGINA_VENCIMIENTOS);
   return (
-    <section className="mt-6 max-w-5xl rounded-2xl border border-amber-200 bg-amber-50 p-5 animate-fade-in-up">
+    <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 animate-fade-in-up">
       <div className="flex items-center gap-2 text-amber-700">
         <CalendarClock size={17} strokeWidth={1.5} />
         <h2 className="text-sm font-bold uppercase tracking-wide">Proximos vencimientos</h2>
