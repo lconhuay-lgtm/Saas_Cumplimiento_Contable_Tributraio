@@ -23,6 +23,7 @@ from app.schemas import (
     UltimoMensajeResumen,
 )
 from app.security import cifrar_clave_sol, descifrar_clave_sol, crear_token_ingreso_directo, decodificar_token
+from app.clasificacion import tipo_mas_severo, TIPO_OTROS
 from app.rate_limit import (
     adquirir_slot_global,
     liberar_slot_global,
@@ -54,6 +55,23 @@ def _con_estadisticas(empresas: list[Empresa], db: Session) -> list[EmpresaRespo
     )
     pendientes_por_empresa = {empresa_id: total for empresa_id, total in filas_pendientes}
 
+    # Severidad del peor pendiente por empresa -- misma idea que el conteo
+    # de arriba, pero trayendo el `tipo` en vez de solo contar, para poder
+    # reducirlo con tipo_mas_severo() en Python (ver el analisis de la
+    # tarjeta de empresa: "Orden de Pago" sin leer no deberia verse igual
+    # que un mensaje informativo sin leer).
+    filas_tipo_pendientes = (
+        db.query(MensajeBuzon.empresa_id, MensajeBuzon.tipo)
+        .filter(MensajeBuzon.empresa_id.in_(ids), MensajeBuzon.leido.is_(False))
+        .all()
+    )
+    tipos_pendientes_por_empresa: dict[str, list[str]] = {}
+    for empresa_id, tipo in filas_tipo_pendientes:
+        tipos_pendientes_por_empresa.setdefault(empresa_id, []).append(tipo or TIPO_OTROS)
+    tipo_pendiente_mas_severo_por_empresa = {
+        eid: tipo_mas_severo(tipos) for eid, tipos in tipos_pendientes_por_empresa.items()
+    }
+
     filas_mensajes = (
         db.query(MensajeBuzon.empresa_id, func.count(MensajeBuzon.id))
         .filter(MensajeBuzon.empresa_id.in_(ids))
@@ -79,6 +97,18 @@ def _con_estadisticas(empresas: list[Empresa], db: Session) -> list[EmpresaRespo
     )
     mensajes_hoy_por_empresa = {empresa_id: total for empresa_id, total in filas_hoy}
 
+    filas_tipo_hoy = (
+        db.query(MensajeBuzon.empresa_id, MensajeBuzon.tipo)
+        .filter(MensajeBuzon.empresa_id.in_(ids), MensajeBuzon.descubierto_en >= inicio_de_hoy)
+        .all()
+    )
+    tipos_hoy_por_empresa: dict[str, list[str]] = {}
+    for empresa_id, tipo in filas_tipo_hoy:
+        tipos_hoy_por_empresa.setdefault(empresa_id, []).append(tipo or TIPO_OTROS)
+    tipo_hoy_mas_severo_por_empresa = {
+        eid: tipo_mas_severo(tipos) for eid, tipos in tipos_hoy_por_empresa.items()
+    }
+
     mensajes_ordenados = (
         db.query(MensajeBuzon)
         .filter(MensajeBuzon.empresa_id.in_(ids))
@@ -97,6 +127,8 @@ def _con_estadisticas(empresas: list[Empresa], db: Session) -> list[EmpresaRespo
         r.total_mensajes = mensajes_por_empresa.get(e.id, 0)
         r.total_consultas = consultas_por_empresa.get(e.id, 0)
         r.mensajes_hoy = mensajes_hoy_por_empresa.get(e.id, 0)
+        r.tipo_pendiente_mas_severo = tipo_pendiente_mas_severo_por_empresa.get(e.id)
+        r.tipo_hoy_mas_severo = tipo_hoy_mas_severo_por_empresa.get(e.id)
         ultimo = ultimo_mensaje_por_empresa.get(e.id)
         if ultimo:
             r.ultimo_mensaje = UltimoMensajeResumen(

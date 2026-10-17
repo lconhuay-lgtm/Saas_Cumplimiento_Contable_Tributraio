@@ -109,6 +109,14 @@ class EmpresaResponse(BaseModel):
     total_mensajes: int = 0
     total_consultas: int = 0
     mensajes_hoy: int = 0
+    # Severidad del PEOR mensaje sin leer / llegado hoy (ver
+    # clasificacion.tipo_mas_severo) -- None si no hay nada pendiente/hoy.
+    # Permite que la tarjeta de la lista de empresas coloree el contador de
+    # "pendientes"/"hoy" segun si lo que falta leer es, por ejemplo, una
+    # Orden de Pago (critico) o solo un mensaje informativo ("Otros"), sin
+    # tener que entrar al detalle de la empresa para saberlo.
+    tipo_pendiente_mas_severo: str | None = None
+    tipo_hoy_mas_severo: str | None = None
     ultimo_mensaje: UltimoMensajeResumen | None = None
     condicion_domicilio: str | None = None
     estado_contribuyente: str | None = None
@@ -234,6 +242,10 @@ class MensajeNotificacionItem(BaseModel):
     id: str
     asunto: str
     fecha_publicacion: datetime
+    # Para que el popup pueda distinguir visualmente una Orden de Pago de
+    # un mensaje informativo (ver lib/tiposMensaje.js) -- antes se perdia
+    # esta distincion justo en el unico lugar que se llama "Notificaciones".
+    tipo: str | None = None
 
 
 class NotificacionEmpresaGrupo(BaseModel):

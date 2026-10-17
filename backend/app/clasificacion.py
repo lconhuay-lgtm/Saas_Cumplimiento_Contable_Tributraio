@@ -32,3 +32,30 @@ def clasificar_tipo(asunto: str) -> str:
 
 def tipos_disponibles() -> list[str]:
     return [etiqueta for etiqueta, _ in _PATRONES_TIPO] + [TIPO_OTROS]
+
+
+# Mismo orden que _PATRONES_TIPO (y que la paleta de colores en
+# frontend/lib/tiposMensaje.js, que va de mas a menos severo) -- se
+# reexpone como un dict de orden para no recorrer la lista entera cada vez
+# que hay que comparar dos tipos.
+_ORDEN_SEVERIDAD = {etiqueta: i for i, etiqueta in enumerate(tipos_disponibles())}
+
+
+def tipo_mas_severo(tipos) -> str | None:
+    """
+    Dado un iterable de `tipo` (los valores que devuelve clasificar_tipo,
+    ej. de varios mensajes sin leer de una misma empresa), devuelve el mas
+    severo de todos -- "Orden de Pago" le gana a "Esquela", que le gana a
+    "Otros", etc. None si la lista viene vacia. Pensado para que un
+    resumen (ej. el conteo de "pendientes" en la lista de empresas) pueda
+    mostrar la severidad del PEOR caso sin tener que listar cada tipo por
+    separado -- mismo patron que SAP/Oracle usan en sus badges de resumen
+    ("worst-of" status).
+    """
+    mas_severo = None
+    for tipo in tipos:
+        if mas_severo is None or _ORDEN_SEVERIDAD.get(tipo, len(_ORDEN_SEVERIDAD)) < _ORDEN_SEVERIDAD.get(
+            mas_severo, len(_ORDEN_SEVERIDAD)
+        ):
+            mas_severo = tipo
+    return mas_severo

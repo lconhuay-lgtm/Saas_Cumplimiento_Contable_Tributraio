@@ -24,6 +24,18 @@ import {
 import Sidebar from "../../components/Sidebar";
 import { api, getToken, API_URL } from "../../lib/api";
 import { colorBadgeTipo } from "../../lib/tiposMensaje";
+
+// "Pendientes" y "X hoy" antes siempre se veian igual sin importar que
+// clase de mensaje era -- una Orden de Pago sin leer se confundia con un
+// mensaje informativo sin leer. Se colorean con la MISMA paleta de
+// severidad que ya existe para el tipo de mensaje (colorBadgeTipo), segun
+// el tipo mas severo entre lo pendiente/lo de hoy (tipo_pendiente_mas_severo/
+// tipo_hoy_mas_severo, calculados en el backend -- ver
+// clasificacion.tipo_mas_severo). "Otros" (o sin tipo) se trata como caso
+// neutro -- nada que destacar especialmente.
+function esTipoSevero(tipo) {
+  return !!tipo && tipo !== "Otros";
+}
 import BotonConsultarTodas, { formatoDuracionEstimada } from "../../components/BotonConsultarTodas";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import InfoDialog from "../../components/InfoDialog";
@@ -711,9 +723,22 @@ function TarjetaEmpresa({
             {e.mensajes_hoy > 0 && (
               <Link
                 href={`/empresas/${e.id}?filtro=hoy`}
-                className="flex items-center gap-1 rounded-full bg-accent-light px-2 py-0.5 text-[11px] font-semibold text-accent transition-colors duration-300 ease-out hover:bg-blue-100"
+                title={
+                  esTipoSevero(e.tipo_hoy_mas_severo)
+                    ? `${e.mensajes_hoy} de hoy -- incluye ${e.tipo_hoy_mas_severo}`
+                    : `${e.mensajes_hoy} mensaje(s) de hoy`
+                }
+                className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold transition-colors duration-300 ease-out ${
+                  esTipoSevero(e.tipo_hoy_mas_severo)
+                    ? colorBadgeTipo(e.tipo_hoy_mas_severo)
+                    : "bg-accent-light text-accent hover:bg-blue-100"
+                }`}
               >
-                <Sparkles size={10} strokeWidth={1.5} />
+                {esTipoSevero(e.tipo_hoy_mas_severo) ? (
+                  <AlertTriangle size={10} strokeWidth={1.5} />
+                ) : (
+                  <Sparkles size={10} strokeWidth={1.5} />
+                )}
                 {e.mensajes_hoy} hoy
               </Link>
             )}
@@ -768,12 +793,22 @@ function TarjetaEmpresa({
       <div className="mt-4 flex flex-wrap items-center gap-1.5">
         <Link
           href={`/empresas/${e.id}?filtro=pendientes`}
-          title="Pendientes"
+          title={
+            e.pendientes === 0
+              ? "Sin pendientes"
+              : esTipoSevero(e.tipo_pendiente_mas_severo)
+              ? `${e.pendientes} pendiente(s) -- incluye ${e.tipo_pendiente_mas_severo}`
+              : `${e.pendientes} mensaje(s) pendiente(s)`
+          }
           className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold transition-all duration-300 ease-out hover:-translate-y-0.5 ${
-            e.pendientes > 0 ? "bg-accent-light text-accent" : "bg-slate-50 text-slate-500"
+            e.pendientes > 0 ? colorBadgeTipo(e.tipo_pendiente_mas_severo) : "bg-slate-50 text-slate-500"
           }`}
         >
-          <Inbox size={13} strokeWidth={2} />
+          {esTipoSevero(e.tipo_pendiente_mas_severo) ? (
+            <AlertTriangle size={13} strokeWidth={2} />
+          ) : (
+            <Inbox size={13} strokeWidth={2} />
+          )}
           {e.pendientes}
         </Link>
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { BellRing, Building2, ArrowRight, X } from "lucide-react";
+import { colorPuntoTipo } from "../lib/tiposMensaje";
 
 // Ventana emergente de "mensajes nuevos" al entrar a la app -- mismo patron
 // visual que ConfirmDialog.js / los modales de empresas/page.js (overlay
@@ -58,8 +59,9 @@ export default function ModalNotificacionesNuevas({ grupos, onIrAEmpresa, onCerr
                 </div>
                 <ul className="mt-2 space-y-1">
                   {visibles.map((m) => (
-                    <li key={m.id} className="truncate text-xs text-slate-600" title={m.asunto}>
-                      &middot; {m.asunto}
+                    <li key={m.id} className="flex items-center gap-1.5 truncate text-xs text-slate-600" title={`${m.tipo || "Otros"}: ${m.asunto}`}>
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${colorPuntoTipo(m.tipo)}`} />
+                      <span className="truncate">{m.asunto}</span>
                     </li>
                   ))}
                   {restantes > 0 && <li className="text-xs text-slate-400">y {restantes} mas...</li>}

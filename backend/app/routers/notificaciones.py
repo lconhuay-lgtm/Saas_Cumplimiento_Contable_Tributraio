@@ -47,7 +47,12 @@ def listar_notificaciones_nuevas(
             )
             grupos[empresa.id] = grupo
         grupo.mensajes.append(
-            MensajeNotificacionItem(id=mensaje.id, asunto=mensaje.asunto, fecha_publicacion=mensaje.fecha_publicacion)
+            MensajeNotificacionItem(
+                id=mensaje.id,
+                asunto=mensaje.asunto,
+                fecha_publicacion=mensaje.fecha_publicacion,
+                tipo=mensaje.tipo,
+            )
         )
 
     return list(grupos.values())
