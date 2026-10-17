@@ -302,6 +302,20 @@ class ProximoVencimientoItem(VencimientoAgendaItem):
     dias_restantes: int
 
 
+class TareaCompletadaRecienteItem(BaseModel):
+    """Una tarea (IGV-Renta/Planilla/AFP/etc.) recien marcada como
+    completada -- a diferencia de "Avance de cumplimiento" (que es un
+    porcentaje por tipo/periodo), esto es la lista cruda de que se
+    completo y cuando, sin importar el periodo."""
+    id: str
+    empresa_id: str
+    empresa_ruc: str
+    empresa_razon_social: str
+    titulo: str
+    tipo: str
+    fecha_completado: datetime
+
+
 class DashboardResumen(BaseModel):
     empresas_activas: int
     empresas_totales: int
@@ -320,6 +334,7 @@ class DashboardResumen(BaseModel):
     # ya paso, de CUALQUIER periodo (no solo el mes actual) -- ver
     # routers.dashboard.resumen.
     tareas_vencidas: int = 0
+    tareas_completadas_recientes: list[TareaCompletadaRecienteItem] = []
 
 
 class EmpresaEnProgresoItem(BaseModel):
