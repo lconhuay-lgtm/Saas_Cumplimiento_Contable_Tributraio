@@ -82,7 +82,14 @@ class NavegacionBuzonMixin:
             # cargada). id="aOpcionBuzon" es el selector mas estable posible.
             try:
                 logger.info("Estrategia 0: Buscando Buzón Electrónico por id 'aOpcionBuzon'...")
-                buzon_elemento = WebDriverWait(self.driver, 5).until(
+                # Timeout generoso (antes 5s) -- diagnostico en vivo
+                # (18/10/2026, mismo chequeo canario que confirmo la demora
+                # intermitente de SUNAT en _click_condicional): esta misma
+                # Estrategia 0, que ya se habia confirmado estable en
+                # produccion, empezo a fallar justo en corridas donde el
+                # Menu SOL tambien habia tardado de mas en aparecer -- 5s
+                # no alcanza a cubrir esa misma lentitud aca.
+                buzon_elemento = WebDriverWait(self.driver, 20).until(
                     EC.element_to_be_clickable((By.ID, "aOpcionBuzon"))
                 )
                 buzon_elemento.click()
