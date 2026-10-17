@@ -22,6 +22,18 @@ import config
 
 logger = logging.getLogger('web_navigation')
 
+# Cuanto esperar (con reintentos) a que aparezca la ventana de Menu SOL
+# despues del login, antes de darse por vencido -- ver _click_condicional.
+# Confirmado con un diagnostico en vivo (18/10/2026, chequeo canario): la
+# MISMA cuenta, con el MISMO codigo, llego al Menu SOL en 5s en una corrida
+# y seguia sin llegar a los 57s en otra, minutos despues -- SUNAT a veces
+# demora en redirigir desde la pantalla de transicion "Bienvenido a SUNAT"
+# (login ya exitoso, confirmado con el JWT de la URL) hasta el Menu SOL
+# real. No es un problema de credenciales ni de nuestro codigo -- es
+# variabilidad del lado de SUNAT que un solo chequeo despues de un sleep
+# fijo no cubre.
+ESPERA_MAXIMA_MENU_SOL_SEG = 45
+
 
 class DeteccionEstadoMixin:
     """Deteccion post-login: razon social, condicion de domicilio, estado del contribuyente, flujo."""
@@ -273,19 +285,34 @@ class DeteccionEstadoMixin:
                     logger.warning(f"Error inesperado al buscar/clickear botón siguiente, se continúa igual: {str(e)}")
                     return True
 
-            # Asegurarnos de estar en la ventana correcta (Menú SOL)
-            ventanas = self.driver.window_handles
+            # Asegurarnos de estar en la ventana correcta (Menú SOL) -- con
+            # reintentos (ver ESPERA_MAXIMA_MENU_SOL_SEG arriba): SUNAT a
+            # veces demora en redirigir desde la pantalla de transicion
+            # "Bienvenido a SUNAT" hasta aca, y un solo chequeo no alcanza
+            # a cubrir esa demora cuando pasa.
             ventana_encontrada = False
-            for ventana in ventanas:
-                self.driver.switch_to.window(ventana)
-                self._ocultar_ventana_si_corresponde()
-                if "SUNAT - Menú SOL" in self.driver.title:
-                    logger.info("Encontrada ventana de Menú SOL")
-                    ventana_encontrada = True
+            tiempo_inicio_espera = time.time()
+            intento = 0
+            while time.time() - tiempo_inicio_espera < ESPERA_MAXIMA_MENU_SOL_SEG:
+                intento += 1
+                for ventana in self.driver.window_handles:
+                    self.driver.switch_to.window(ventana)
+                    self._ocultar_ventana_si_corresponde()
+                    if "SUNAT - Menú SOL" in self.driver.title:
+                        logger.info(
+                            f"Encontrada ventana de Menú SOL (intento {intento}, "
+                            f"{time.time() - tiempo_inicio_espera:.1f}s de espera)"
+                        )
+                        ventana_encontrada = True
+                        break
+                if ventana_encontrada:
                     break
-            
+                time.sleep(3)
+
             if not ventana_encontrada:
-                logger.error("No se encontró la ventana de Menú SOL")
+                logger.error(
+                    f"No se encontró la ventana de Menú SOL tras {ESPERA_MAXIMA_MENU_SOL_SEG}s de reintentos"
+                )
                 return False
 
             def buscar_y_procesar_flujos():
