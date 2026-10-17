@@ -76,21 +76,26 @@ def decodificar_token(token: str) -> dict | None:
 
 
 def crear_token_ingreso_directo(
-    usuario_id: str, tenant_id: str, empresa_id: str, minutos: int = 2, scope: str = "ingreso_directo"
+    usuario_id: str, tenant_id: str, empresa_id: str, minutos: int = 2, scope: str = "ingreso_directo",
+    mensaje_id: str | None = None,
 ) -> str:
     """
-    Token de un solo proposito y vida MUY corta -- para el flujo de
-    "ingreso directo a SUNAT" (ver routers/empresas.py). Hace falta
-    porque esa pantalla se abre navegando derecho a una URL en una
-    pestaña nueva, y una navegacion comun del navegador no manda el
-    header Authorization -- asi que el token viaja como query param en
-    su lugar. Vida corta (2 minutos por defecto, alcanza de sobra para
-    que se abra la pestaña) y un "scope" propio para que, si alguien
-    llegara a verlo en un log o en el historial del navegador, no sirva
-    para nada mas que ese unico uso puntual. `scope` parametrizable
-    porque hay mas de un destino de ingreso directo (Buzon/Menu SOL
-    clasico vs. Mis Declaraciones y Pagos) -- cada uno con su propio
-    scope, para que un token de uno no sirva para entrar al otro.
+    Token de un solo proposito y vida corta -- para el flujo de "ingreso
+    directo a SUNAT" (ver routers/empresas.py) y, reusando el mismo
+    mecanismo, para el link directo al PDF de un mensaje en el correo de
+    "mensajes nuevos" (ver jobs.py::_notificar_mensajes_nuevos, scope
+    "ver_documento"). Hace falta porque esas pantallas/endpoints se abren
+    navegando derecho a una URL (desde una pestaña nueva o desde un
+    cliente de correo), y esa navegacion no manda el header Authorization
+    -- asi que el token viaja como query param en su lugar. Vida corta por
+    defecto (2 minutos, alcanza de sobra para que se abra la pestaña de
+    SUNAT) y un "scope" propio para que, si alguien llegara a verlo en un
+    log o en el historial del navegador, no sirva para nada mas que ese
+    unico uso puntual. `scope` parametrizable porque hay mas de un destino
+    de ingreso directo (Buzon/Menu SOL clasico vs. Mis Declaraciones y
+    Pagos vs. DJ Anual) -- cada uno con su propio scope, para que un token
+    de uno no sirva para entrar al otro. `mensaje_id` solo se usa (y se
+    incluye en el payload) para el scope "ver_documento".
     """
     expira = datetime.now(timezone.utc) + timedelta(minutes=minutos)
     payload = {
@@ -100,6 +105,8 @@ def crear_token_ingreso_directo(
         "scope": scope,
         "exp": expira,
     }
+    if mensaje_id is not None:
+        payload["mensaje_id"] = mensaje_id
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 

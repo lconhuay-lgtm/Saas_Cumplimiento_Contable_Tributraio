@@ -21,6 +21,7 @@ from app.jobs import ejecutar_consulta_buzon
 from app.rate_limit import verificar_limite_ruc, espaciado_consultas_seg, LimiteExcedido
 from app.almacenamiento import leer_documento, AlmacenamientoError
 from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible
+from app.security import decodificar_token
 
 router = APIRouter(tags=["consultas"])
 
@@ -280,6 +281,51 @@ def obtener_documento(
     db: Session = Depends(get_db),
 ):
     empresa = obtener_empresa_visible(empresa_id, usuario, db)
+    mensaje = (
+        db.query(MensajeBuzon)
+        .filter(MensajeBuzon.id == mensaje_id, MensajeBuzon.empresa_id == empresa.id)
+        .first()
+    )
+    if not mensaje or not mensaje.documento_ref:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No hay documento disponible para este mensaje")
+
+    try:
+        contenido = leer_documento(mensaje.documento_ref)
+    except AlmacenamientoError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    return Response(content=contenido, media_type="application/pdf")
+
+
+@router.get("/empresas/{empresa_id}/mensajes/{mensaje_id}/documento-por-correo")
+def obtener_documento_por_correo(empresa_id: str, mensaje_id: str, token: str, db: Session = Depends(get_db)):
+    """
+    Igual que obtener_documento (mismo storage, mismo PDF, cero trabajo
+    extra), pero SIN requerir sesion -- para el link directo que va en el
+    correo de "mensajes nuevos" (ver jobs.py::_notificar_mensajes_nuevos).
+    En vez del header Authorization (que un clic desde un cliente de
+    correo no puede mandar), valida un token de un solo proposito
+    (scope="ver_documento", ver security.crear_token_ingreso_directo) que
+    ya viene atado a esta empresa y a este mensaje puntual -- no sirve
+    para ver ningun otro documento ni para nada mas en el sistema.
+    """
+    payload = decodificar_token(token)
+    if (
+        not payload
+        or payload.get("scope") != "ver_documento"
+        or payload.get("empresa_id") != empresa_id
+        or payload.get("mensaje_id") != mensaje_id
+    ):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Enlace invalido o vencido")
+
+    empresa = (
+        db.query(Empresa)
+        .filter(Empresa.id == empresa_id, Empresa.tenant_id == payload.get("tenant_id"))
+        .first()
+    )
+    if not empresa:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada")
+
     mensaje = (
         db.query(MensajeBuzon)
         .filter(MensajeBuzon.id == mensaje_id, MensajeBuzon.empresa_id == empresa.id)

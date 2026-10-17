@@ -392,27 +392,34 @@ def avance_cumplimiento(
     app.routers.empresas._crear_obligaciones_por_defecto) tambien se
     puede marcar como completada igual que cualquier otra.
 
-    Ojo con la confusion de "periodo" (reportada en vivo, 17/10/2026): el
-    "periodo" de una tarea de IGV-Renta es el mes DECLARADO (ej. "2026-09"),
-    pero ese periodo VENCE recien el mes siguiente (octubre). Si el panel
-    defaulteaba ciegamente al mes calendario actual (octubre), un usuario
-    entrando el 17/10 via el selector por defecto veia "0% -- 0 tareas"
-    (porque las tareas de "2026-10" ni siquiera se generan/vencen todavia)
-    y pensaba que no habia cumplido nada, cuando en realidad las tareas
-    relevantes AHORA son las de "2026-09" (con vencimiento este mes). Para
-    evitar ese 0% enganoso, si no se pidio un periodo explicito y el mes
-    calendario actual no tiene ninguna tarea, se cae hacia atras hasta
-    encontrar el periodo mas reciente que si tenga.
+    OJO -- "periodo" aca es el MES CALENDARIO EN QUE VENCE, no el periodo
+    tributario declarado (reportado en vivo, 17/10/2026, y confirmado que
+    asi se espera que funcione): el "periodo" interno de una tarea de
+    IGV-Renta es el mes DECLARADO (ej. "2026-09"), pero esa declaracion
+    VENCE recien el mes siguiente (octubre). Si el selector filtraba por
+    el campo `periodo` tal cual, elegir "Octubre" mostraba 0 tareas
+    (las de periodo "2026-10" ni siquiera vencen todavia) justo cuando lo
+    que SI vence en octubre (las de periodo "2026-09") quedaba invisible
+    -- confuso: parecia que no se habia cumplido nada. Por eso se agrupa
+    por el mes calendario de `fecha_vencimiento`, que es lo que de verdad
+    hay que hacer ESE mes, sin importar de que periodo tributario se trate.
     """
     hoy = datetime.now(timezone.utc)
     periodo_objetivo = periodo or f"{hoy.year:04d}-{hoy.month:02d}"
     periodo_ajustado_automaticamente = False
+
+    def _rango_del_mes(periodo_str: str) -> tuple[datetime, datetime]:
+        anio, mes = (int(p) for p in periodo_str.split("-"))
+        inicio = datetime(anio, mes, 1, tzinfo=timezone.utc)
+        fin = datetime(anio + 1, 1, 1, tzinfo=timezone.utc) if mes == 12 else datetime(anio, mes + 1, 1, tzinfo=timezone.utc)
+        return inicio, fin
 
     # Se cuenta en Python en vez de un GROUP BY con suma condicional --
     # func.sum() de una comparacion booleana no es portable entre SQLite y
     # Postgres sin trucos especificos de cada motor, y el volumen de tareas
     # por tenant no amerita esa complejidad.
     def _tareas_de(periodo_buscado: str):
+        inicio, fin = _rango_del_mes(periodo_buscado)
         return (
             filtrar_empresas_visibles(
                 db.query(TareaObligacion.tipo, TareaObligacion.estado, TareaObligacion.fecha_vencimiento).join(
@@ -420,12 +427,16 @@ def avance_cumplimiento(
                 ),
                 usuario,
             )
-            .filter(TareaObligacion.periodo == periodo_buscado)
+            .filter(TareaObligacion.fecha_vencimiento >= inicio, TareaObligacion.fecha_vencimiento < fin)
             .all()
         )
 
     tareas_del_periodo = _tareas_de(periodo_objetivo)
 
+    # Red de seguridad: si el mes elegido (o el default) no tiene NINGUNA
+    # tarea con vencimiento ahi (ej. todavia no se genero nada), se cae
+    # hacia atras hasta el mes mas reciente que si tenga, en vez de
+    # mostrar un "0%" que parece que no se cumplio nada.
     if periodo is None and not tareas_del_periodo:
         anio, mes = hoy.year, hoy.month
         for _ in range(6):

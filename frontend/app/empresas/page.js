@@ -86,6 +86,9 @@ function EmpresasPageContenido() {
   const [busqueda, setBusqueda] = useState("");
   // El Dashboard enlaza aca con ?hoy=1 para llegar directo con el filtro activado.
   const [soloHoy, setSoloHoy] = useState(searchParams.get("hoy") === "1");
+  // Mismo patron que soloHoy, pero para mensajes no leidos sin importar
+  // cuando llegaron (a diferencia de "hoy", que es solo lo del dia).
+  const [soloPendientes, setSoloPendientes] = useState(searchParams.get("pendientes") === "1");
   const [filtroEstadoContribuyente, setFiltroEstadoContribuyente] = useState("");
   const [filtroCondicionDomicilio, setFiltroCondicionDomicilio] = useState("");
   const [filtroUltimoDigito, setFiltroUltimoDigito] = useState("");
@@ -416,12 +419,14 @@ function EmpresasPageContenido() {
       e.razon_social.toLowerCase().includes(textoBusqueda) ||
       e.ruc.includes(textoBusqueda);
     const coincideHoy = !soloHoy || e.mensajes_hoy > 0;
+    const coincidePendientes = !soloPendientes || e.pendientes > 0;
     const coincideEstado = !filtroEstadoContribuyente || e.estado_contribuyente === filtroEstadoContribuyente;
     const coincideDomicilio = !filtroCondicionDomicilio || e.condicion_domicilio === filtroCondicionDomicilio;
     const coincideDigito = !filtroUltimoDigito || e.ruc.slice(-1) === filtroUltimoDigito;
-    return coincideBusqueda && coincideHoy && coincideEstado && coincideDomicilio && coincideDigito;
+    return coincideBusqueda && coincideHoy && coincidePendientes && coincideEstado && coincideDomicilio && coincideDigito;
   });
   const empresasConNovedadesHoy = empresas.filter((e) => e.mensajes_hoy > 0).length;
+  const empresasConPendientes = empresas.filter((e) => e.pendientes > 0).length;
 
   return (
     <div className="flex min-h-screen bg-surface">
@@ -524,6 +529,27 @@ function EmpresasPageContenido() {
                     }`}
                   >
                     {empresasConNovedadesHoy}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setSoloPendientes((v) => !v)}
+                className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-3.5 py-2.5 text-sm font-medium transition-all duration-300 ease-out ${
+                  soloPendientes
+                    ? "border-accent bg-accent text-white"
+                    : "border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                }`}
+              >
+                <Inbox size={15} strokeWidth={1.5} />
+                Con pendientes por leer
+                {empresasConPendientes > 0 && (
+                  <span
+                    className={`rounded-full px-1.5 text-xs ${
+                      soloPendientes ? "bg-white/20" : "bg-accent-light text-accent"
+                    }`}
+                  >
+                    {empresasConPendientes}
                   </span>
                 )}
               </button>

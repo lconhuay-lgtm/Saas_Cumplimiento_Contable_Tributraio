@@ -14,7 +14,6 @@ from app.schemas import (
     CambioDomicilioItem,
     CambioEstadoContribuyenteItem,
     ProximoVencimientoItem,
-    TareaCompletadaRecienteItem,
 )
 from app.deps import get_usuario_actual
 from app.cronograma_sunat import proximos_vencimientos_por_tenant
@@ -173,31 +172,6 @@ def resumen(
         .count()
     )
 
-    # A pedido: lista cruda de las ultimas tareas completadas (cualquier
-    # tipo/periodo), para el Dashboard -- distinto de "Avance de
-    # Cumplimiento" (que es un % por tipo y un solo periodo a la vez).
-    tareas_completadas_recientes = [
-        TareaCompletadaRecienteItem(
-            id=t.id,
-            empresa_id=t.empresa_id,
-            empresa_ruc=empresas_por_id[t.empresa_id].ruc,
-            empresa_razon_social=empresas_por_id[t.empresa_id].razon_social,
-            titulo=t.titulo,
-            tipo=t.tipo,
-            fecha_completado=_con_utc(t.fecha_completado),
-        )
-        for t in (
-            filtrar_empresas_visibles(
-                db.query(TareaObligacion).join(Empresa, Empresa.id == TareaObligacion.empresa_id), usuario
-            )
-            .filter(TareaObligacion.estado == "completado", TareaObligacion.fecha_completado.isnot(None))
-            .order_by(TareaObligacion.fecha_completado.desc())
-            .limit(30)
-            .all()
-        )
-        if t.empresa_id in empresas_por_id
-    ]
-
     return DashboardResumen(
         empresas_activas=empresas_activas,
         empresas_totales=len(empresas),
@@ -210,5 +184,4 @@ def resumen(
         cambios_estado_contribuyente_recientes=cambios_estado_contribuyente_recientes,
         proximos_vencimientos=proximos_vencimientos,
         tareas_vencidas=tareas_vencidas,
-        tareas_completadas_recientes=tareas_completadas_recientes,
     )

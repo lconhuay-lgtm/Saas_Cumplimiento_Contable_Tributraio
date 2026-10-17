@@ -16,7 +16,7 @@ from app.models import (
     ConsultaJob, FichaRucJob, ReporteTributarioJob, Empresa, CredencialSol, MensajeBuzon, Usuario,
     TareaObligacion,
 )
-from app.security import descifrar_clave_sol
+from app.security import descifrar_clave_sol, crear_token_ingreso_directo
 from app.rate_limit import adquirir_slot_global, liberar_slot_global, limite_mensajes_por_consulta
 from app.almacenamiento import guardar_documento, guardar_documento_bytes, AlmacenamientoError
 from app.clasificacion import clasificar_tipo
@@ -26,6 +26,17 @@ from app.cronograma_sunat import _PATRONES_SIN_OBLIGACIONES
 MAX_INTENTOS = 2
 ESPERA_ENTRE_INTENTOS_SEG = 15
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+# Dominio publico del backend -- NEXT_PUBLIC_API_URL ya esta en el .env
+# (lo usa el frontend al buildear) y docker-compose lo carga igual en este
+# contenedor via env_file, asi que se reusa en vez de pedir una variable
+# nueva. Se usa para armar el link directo al PDF en el correo de "mensajes
+# nuevos" (ver _notificar_mensajes_nuevos).
+API_URL_PUBLICA = os.environ.get("NEXT_PUBLIC_API_URL", "http://localhost:8000")
+# Vida del link de documento por correo -- mucho mas larga que los 2
+# minutos del token de "ingreso directo a SUNAT" (que se usa al toque, en
+# la misma sesion) porque este viaja en un correo que la persona puede
+# abrir dias despues, de otro dispositivo, sin haber iniciado sesion ahi.
+DURACION_TOKEN_DOCUMENTO_CORREO_MIN = 60 * 24 * 7  # 7 dias
 
 # A pedido: leer el "Estado del Contribuyente" cuesta ~8-10s extra por
 # consulta (navega a la Ficha RUC, ver deteccion_estado._leer_estado_contribuyente)
@@ -108,7 +119,7 @@ def _es_probable_truncamiento(nombre_actual: str, nombre_sunat: str) -> bool:
     return actual.startswith(sunat)
 
 
-def _notificar_mensajes_nuevos(db, empresa: Empresa, asuntos: list[str]) -> None:
+def _notificar_mensajes_nuevos(db, empresa: Empresa, mensajes_info: list[dict]) -> None:
     """
     Correo INMEDIATO por mensajes nuevos (distinto del resumen diario de
     scheduler_job.py, que sigue igual) -- solo se llama cuando la consulta
@@ -119,6 +130,17 @@ def _notificar_mensajes_nuevos(db, empresa: Empresa, asuntos: list[str]) -> None
     (si hay) que tiene esta empresa asignada. No se importa acceso.py aca
     porque esa funcion trabaja sobre una Query ya armada con Empresa en el
     FROM -- este es un proceso de worker, no un endpoint.
+
+    mensajes_info: [{"asunto": str, "mensaje_id": str, "tiene_documento": bool}, ...]
+    Para los que SI tienen documento, se arma un link directo al PDF con un
+    token de un solo proposito (ver crear_token_ingreso_directo en
+    security.py, mismo mecanismo que "ingreso directo a SUNAT" mas abajo en
+    este archivo, reusado aca con scope="ver_documento") -- asi el correo
+    no necesita adjuntar ni pre-cargar ningun PDF (cero trabajo extra para
+    el sistema al mandar el correo), y el link sirve sin tener que volver a
+    iniciar sesion, incluso dias despues desde otro dispositivo. El PDF se
+    lee de storage recien cuando (y si) alguien hace clic, igual que ya
+    pasa con el visor normal del tablero -- no hay ninguna carga de mas.
 
     Nunca debe tumbar el job de consulta si algo sale mal aca (mismo
     criterio que el resto de los envios de correo del sistema).
@@ -134,8 +156,24 @@ def _notificar_mensajes_nuevos(db, empresa: Empresa, asuntos: list[str]) -> None
         if not usuarios:
             return
         link_empresa = f"{FRONTEND_URL}/empresas/{empresa.id}"
+
         for usuario in usuarios:
-            enviar_notificacion_mensajes_nuevos(usuario.email, empresa.razon_social, empresa.ruc, asuntos, link_empresa)
+            items = []
+            for m in mensajes_info:
+                link_documento = None
+                if m["tiene_documento"]:
+                    token_doc = crear_token_ingreso_directo(
+                        usuario.id, empresa.tenant_id, empresa.id,
+                        minutos=DURACION_TOKEN_DOCUMENTO_CORREO_MIN,
+                        scope="ver_documento",
+                        mensaje_id=m["mensaje_id"],
+                    )
+                    link_documento = (
+                        f"{API_URL_PUBLICA}/empresas/{empresa.id}/mensajes/{m['mensaje_id']}"
+                        f"/documento-por-correo?token={token_doc}"
+                    )
+                items.append({"asunto": m["asunto"], "link_documento": link_documento})
+            enviar_notificacion_mensajes_nuevos(usuario.email, empresa.razon_social, empresa.ruc, items, link_empresa)
     except Exception:
         logger.exception(f"No se pudo notificar mensajes nuevos por correo para {empresa.ruc}")
 
@@ -366,6 +404,11 @@ def ejecutar_consulta_buzon(job_id: str):
 
         nuevos = 0
         asuntos_nuevos = []
+        # Referencias a los objetos recien creados (no solo el asunto) --
+        # hace falta despues del commit para armar el link de documento por
+        # correo (necesita el id real, que el ORM solo asigna al flushear/
+        # commitear, no al construir el objeto).
+        mensajes_nuevos_objs = []
         documentos_descargados = resultado.get("documentos", {}) or {}
         # Respaldo para mensajes de Buzón Notificaciones que NO traen PDF
         # (confirmado en produccion: algunos tipos, ej. "NOTIFICACION DE LA
@@ -411,7 +454,7 @@ def ejecutar_consulta_buzon(job_id: str):
                 except AlmacenamientoError as e:
                     logger.error(f"No se pudo guardar el documento del mensaje '{msg['asunto']}': {e}")
 
-            db.add(MensajeBuzon(
+            nuevo_mensaje = MensajeBuzon(
                 empresa_id=empresa.id,
                 mensaje_externo_id=mid,
                 fecha_publicacion=_parsear_fecha(msg["fecha"]),
@@ -420,9 +463,11 @@ def ejecutar_consulta_buzon(job_id: str):
                 documento_ref=documento_ref,
                 contenido_texto=contenidos_texto_notif.get(mid) if documento_ref is None else None,
                 notificado_popup=job.es_alta_inicial,
-            ))
+            )
+            db.add(nuevo_mensaje)
             nuevos += 1
             asuntos_nuevos.append(msg["asunto"])
+            mensajes_nuevos_objs.append(nuevo_mensaje)
 
         # Buzón Mensajes (bandeja separada de Notificaciones, sin PDF en
         # general -- ver adapter._leer_mensajes_buzon_mensajes). Mismo
@@ -447,7 +492,7 @@ def ejecutar_consulta_buzon(job_id: str):
                     existe.contenido_texto = msg["contenido_texto"]
                 continue
 
-            db.add(MensajeBuzon(
+            nuevo_mensaje = MensajeBuzon(
                 empresa_id=empresa.id,
                 mensaje_externo_id=mid,
                 fecha_publicacion=_parsear_fecha(msg["fecha"]),
@@ -457,9 +502,11 @@ def ejecutar_consulta_buzon(job_id: str):
                 origen="mensajes",
                 contenido_texto=msg.get("contenido_texto"),
                 notificado_popup=job.es_alta_inicial,
-            ))
+            )
+            db.add(nuevo_mensaje)
             nuevos += 1
             asuntos_nuevos.append(msg["asunto"])
+            mensajes_nuevos_objs.append(nuevo_mensaje)
 
         empresa.ultima_consulta_en = datetime.now(timezone.utc)
         job.estado = "completado"
@@ -470,7 +517,13 @@ def ejecutar_consulta_buzon(job_id: str):
         logger.info(f"Job {job_id} completado: {nuevos} mensajes nuevos para {empresa.ruc}")
 
         if nuevos > 0 and not job.es_alta_inicial:
-            _notificar_mensajes_nuevos(db, empresa, asuntos_nuevos)
+            # Recien aca los objetos tienen su id real (el ORM lo asigna al
+            # flushear, que ya paso con el commit de arriba).
+            info_mensajes_nuevos = [
+                {"asunto": m.asunto, "mensaje_id": m.id, "tiene_documento": m.documento_ref is not None}
+                for m in mensajes_nuevos_objs
+            ]
+            _notificar_mensajes_nuevos(db, empresa, info_mensajes_nuevos)
 
     except Exception as e:
         logger.exception(f"Error ejecutando job {job_id}")

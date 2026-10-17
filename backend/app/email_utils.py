@@ -193,7 +193,7 @@ def enviar_verificacion_email(destinatario: str, link: str) -> None:
 
 
 def enviar_notificacion_mensajes_nuevos(
-    destinatario: str, razon_social: str, ruc: str, asuntos: list[str], link_empresa: str
+    destinatario: str, razon_social: str, ruc: str, items: list[dict], link_empresa: str
 ) -> None:
     """
     Aviso INMEDIATO (a diferencia de enviar_resumen_diario, que es el
@@ -205,16 +205,25 @@ def enviar_notificacion_mensajes_nuevos(
     politica de nunca lanzar excepcion que enviar_resumen_diario, porque
     esto se dispara desde dentro del worker de consultas -- un problema de
     correo no debe tumbar el resto del job.
+
+    items: [{"asunto": str, "link_documento": str | None}, ...] -- cuando
+    hay link_documento, apunta directo al PDF (token de un solo uso, ver
+    jobs.py::_notificar_mensajes_nuevos) sin que este correo haya tenido
+    que leer ni adjuntar nada: el PDF se lee de storage recien si alguien
+    hace clic.
     """
-    if not asuntos:
+    if not items:
         return
 
-    asunto = f"Anzen Sol -- {len(asuntos)} mensaje(s) nuevo(s) en {razon_social}"
+    asunto = f"Anzen Sol -- {len(items)} mensaje(s) nuevo(s) en {razon_social}"
     lineas = [
-        f"Se encontraron {len(asuntos)} mensaje(s) nuevo(s) en el buzon de {razon_social} ({ruc}):",
+        f"Se encontraron {len(items)} mensaje(s) nuevo(s) en el buzon de {razon_social} ({ruc}):",
         "",
     ]
-    lineas.extend(f"  - {a}" for a in asuntos)
+    for item in items:
+        lineas.append(f"  - {item['asunto']}")
+        if item.get("link_documento"):
+            lineas.append(f"    Ver PDF: {item['link_documento']}")
     lineas.append("")
     lineas.append(f"Ver el detalle en el tablero:\n{link_empresa}")
     cuerpo = "\n".join(lineas)
@@ -225,7 +234,7 @@ def enviar_notificacion_mensajes_nuevos(
 
     try:
         _enviar_smtp(destinatario, asunto, cuerpo)
-        logger.info(f"Correo de mensajes nuevos enviado a {destinatario} ({razon_social}, {len(asuntos)} mensaje(s))")
+        logger.info(f"Correo de mensajes nuevos enviado a {destinatario} ({razon_social}, {len(items)} mensaje(s))")
     except Exception as e:
         logger.error(f"No se pudo enviar el correo de mensajes nuevos a {destinatario}: {e}")
 

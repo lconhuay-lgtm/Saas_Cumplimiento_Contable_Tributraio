@@ -198,16 +198,12 @@ export default function DashboardPage() {
 
             {(resumen.cambios_estado_contribuyente_recientes.length > 0 ||
               resumen.cambios_domicilio_recientes.length > 0 ||
-              resumen.proximos_vencimientos?.length > 0 ||
-              resumen.tareas_completadas_recientes?.length > 0) && (
-              // Grid de 2 columnas con las 4 tarjetas al mismo nivel (no
-              // anidadas en columnas independientes) -- a pedido: cada
+              resumen.proximos_vencimientos?.length > 0) && (
+              // Grid de 2 columnas con las tarjetas al mismo nivel -- cada
               // tarjeta tiene su propia altura FIJA con scroll interno (ver
               // el div "h-[340px]" de cada Seccion*), asi que con grid
-              // las 4 miden exactamente lo mismo sin importar cuantos items
-              // traiga cada una ni cuantas de las 4 esten presentes esta
-              // vez -- eso es lo que antes se rompia (una columna con 2
-              // tarjetas apiladas terminaba mas alta que la otra con 1 sola).
+              // miden exactamente lo mismo sin importar cuantos items
+              // traiga cada una.
               <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
                 {resumen.cambios_domicilio_recientes.length > 0 && (
                   <SeccionCambiosDomicilio cambios={resumen.cambios_domicilio_recientes} />
@@ -217,9 +213,6 @@ export default function DashboardPage() {
                 )}
                 {resumen.proximos_vencimientos?.length > 0 && (
                   <SeccionProximosVencimientos vencimientos={resumen.proximos_vencimientos} />
-                )}
-                {resumen.tareas_completadas_recientes?.length > 0 && (
-                  <SeccionTareasCompletadas tareas={resumen.tareas_completadas_recientes} />
                 )}
               </div>
             )}
@@ -323,8 +316,8 @@ function SeccionAvanceCumplimiento() {
         <div>
           <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Avance de cumplimiento</h2>
           <p className="mt-0.5 text-xs text-slate-400">
-            Tareas del periodo elegido (IGV-Renta, Planilla, AFP, SBS y demas obligaciones) -- cambia el mes
-            arriba para ver otros periodos.
+            Tareas que vencen en el mes elegido (IGV-Renta, Planilla, AFP, SBS y demas obligaciones) -- ej. IGV-Renta
+            de Setiembre vence en Octubre, asi que aparece bajo "Octubre".
           </p>
         </div>
         <select
@@ -500,57 +493,6 @@ function SeccionCambiosDomicilio({ cambios }) {
         ))}
       </div>
       <ControlesPaginacion paginaSegura={paginaSegura} totalPaginas={totalPaginas} total={cambios.length} setPagina={setPagina} />
-    </section>
-  );
-}
-
-const ETIQUETAS_TIPO_TAREA = {
-  igv_renta: "IGV-Renta",
-  planilla: "Planilla",
-  afp: "AFP",
-  sbs: "Reporte SBS",
-  cts: "CTS",
-  itan: "ITAN",
-  sire: "SIRE",
-  otro: "Otro",
-};
-
-function SeccionTareasCompletadas({ tareas }) {
-  const { paginaSegura, totalPaginas, itemsPagina, setPagina } = usePaginacion(tareas, POR_PAGINA_PENDIENTES);
-  return (
-    <section className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 animate-fade-in-up">
-      <div className="flex items-center gap-2 text-emerald-700">
-        <CheckCircle2 size={17} strokeWidth={1.5} />
-        <h2 className="text-sm font-bold uppercase tracking-wide">Tareas completadas recientemente</h2>
-      </div>
-      <p className="mt-1 text-xs text-emerald-600/80">
-        Las ultimas obligaciones marcadas como completadas, de cualquier periodo.
-      </p>
-      <div className="mt-3 h-[340px] divide-y divide-emerald-100 overflow-x-hidden overflow-y-auto scroll-fino">
-        {itemsPagina.map((t) => (
-          <Link
-            key={t.id}
-            href={`/empresas/${t.empresa_id}`}
-            className="-mx-2 flex items-center justify-between gap-3 rounded-lg px-2 py-3 transition-colors duration-300 ease-out hover:bg-white/70"
-          >
-            <div className="min-w-0">
-              <div className="truncate text-sm font-medium text-ink">{t.titulo}</div>
-              <div className="truncate text-xs text-slate-500">
-                {t.empresa_razon_social} &middot; {t.empresa_ruc}
-              </div>
-            </div>
-            <div className="flex shrink-0 flex-col items-end gap-1">
-              <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700">
-                {ETIQUETAS_TIPO_TAREA[t.tipo] || t.tipo}
-              </span>
-              <span className="text-[11px] text-slate-400">
-                {new Date(t.fecha_completado).toLocaleDateString()}
-              </span>
-            </div>
-          </Link>
-        ))}
-      </div>
-      <ControlesPaginacion paginaSegura={paginaSegura} totalPaginas={totalPaginas} total={tareas.length} setPagina={setPagina} />
     </section>
   );
 }
