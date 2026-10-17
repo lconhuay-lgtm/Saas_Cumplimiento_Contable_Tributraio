@@ -98,6 +98,7 @@ function EmpresasPageContenido() {
   const progresoReporte = solicitandoReporte;
   const [entrandoDirecto, setEntrandoDirecto] = useState({}); // { [empresaId]: boolean }
   const [entrandoDeclaraciones, setEntrandoDeclaraciones] = useState({}); // { [empresaId]: boolean }
+  const [entrandoRentaAnual, setEntrandoRentaAnual] = useState({}); // { [empresaId]: boolean }
   const [marcandoTodoLeido, setMarcandoTodoLeido] = useState(false);
   const masivaEnCursoAnteriorRef = useRef(false);
   // Reemplazan los alert() nativos que solo avisaban un resultado (no
@@ -369,6 +370,27 @@ function EmpresasPageContenido() {
     }
   }
 
+  // Misma estructura y mismo mecanismo que entrarDirectoASunat -- unico
+  // cambio: el destino post-login es "DJ Anual" (Declaracion Jurada Anual
+  // de Renta, e-renta.sunat.gob.pe) en vez del Menu SOL clasico (ver GET
+  // /ingreso-directo-renta-anual y
+  // core_scraper/adapter.py::preparar_ingreso_directo_renta_anual).
+  async function entrarDirectoARentaAnual(empresaId) {
+    const pestana = window.open("", "_blank");
+    setEntrandoRentaAnual((prev) => ({ ...prev, [empresaId]: true }));
+    try {
+      const { token } = await api.obtenerTokenIngresoDirectoRentaAnual(empresaId);
+      if (pestana) {
+        pestana.location.href = `${API_URL}/empresas/${empresaId}/ingreso-directo-renta-anual?token=${encodeURIComponent(token)}`;
+      }
+    } catch (err) {
+      if (pestana) pestana.close();
+      alert(err.message);
+    } finally {
+      setEntrandoRentaAnual((prev) => ({ ...prev, [empresaId]: false }));
+    }
+  }
+
   // Opciones armadas de los valores que de verdad trae SUNAT hoy (no una
   // lista fija de catalogo) -- ver comentario junto a los <select> de abajo.
   const opcionesEstadoContribuyente = useMemo(
@@ -581,6 +603,8 @@ function EmpresasPageContenido() {
                     onEntrarDirecto={() => entrarDirectoASunat(e.id)}
                     entrandoDeclaraciones={!!entrandoDeclaraciones[e.id]}
                     onEntrarDeclaraciones={() => entrarDirectoADeclaraciones(e.id)}
+                    entrandoRentaAnual={!!entrandoRentaAnual[e.id]}
+                    onEntrarRentaAnual={() => entrarDirectoARentaAnual(e.id)}
                   />
                 ))}
               </div>
@@ -642,6 +666,8 @@ function TarjetaEmpresa({
   onEntrarDirecto,
   entrandoDeclaraciones,
   onEntrarDeclaraciones,
+  entrandoRentaAnual,
+  onEntrarRentaAnual,
 }) {
   return (
     <div className="surface-card animate-fade-in-up p-6 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-soft-lg">
@@ -769,6 +795,20 @@ function TarjetaEmpresa({
             <LogIn size={13} strokeWidth={2} />
           )}
           {entrandoDeclaraciones ? "Entrando..." : "Ir a Declaraciones y Pagos"}
+        </button>
+
+        <button
+          onClick={onEntrarRentaAnual}
+          disabled={entrandoRentaAnual}
+          title="Entra directo a DJ Anual (Declaracion Jurada Anual de Renta) de SUNAT, ya logueado, sin escribir nada."
+          className="inline-flex items-center gap-1.5 rounded-lg bg-violet-50 px-2.5 py-1.5 text-xs font-bold text-violet-700 transition-all duration-300 ease-out hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+        >
+          {entrandoRentaAnual ? (
+            <Loader2 size={13} strokeWidth={2} className="animate-spin" />
+          ) : (
+            <LogIn size={13} strokeWidth={2} />
+          )}
+          {entrandoRentaAnual ? "Entrando..." : "DJ Anual"}
         </button>
 
         <button

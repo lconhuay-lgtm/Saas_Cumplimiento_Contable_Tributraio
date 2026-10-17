@@ -47,6 +47,7 @@ logger = logging.getLogger("app.ingreso_directo_cache")
 _CLAVE_TICKET = {
     "clasico": "ingreso_directo:ticket",
     "declaraciones": "ingreso_directo:ticket:declaraciones",
+    "renta_anual": "ingreso_directo:ticket:renta_anual",
 }
 # Techo duro en Redis (EX) -- una red de seguridad ademas del chequeo de
 # edad de abajo, para que un ticket nunca quede dando vueltas indefinidamente
@@ -99,6 +100,8 @@ def prewarm_ingreso_directo_job(tipo: str = "clasico") -> None:
 
     if tipo == "declaraciones":
         from adapter import preparar_ingreso_directo_declaraciones as _descubrir
+    elif tipo == "renta_anual":
+        from adapter import preparar_ingreso_directo_renta_anual as _descubrir
     else:
         from adapter import preparar_ingreso_directo as _descubrir
 

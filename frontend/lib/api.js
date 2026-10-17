@@ -190,6 +190,10 @@ export const api = {
   obtenerTokenIngresoDirectoDeclaraciones: (empresaId) =>
     apiFetch(`/empresas/${empresaId}/ingreso-directo-declaraciones/token`, { method: "POST" }),
 
+  /** Igual que obtenerTokenIngresoDirecto, pero para "DJ Anual" (Declaracion Jurada Anual de Renta -- e-renta.sunat.gob.pe, destino distinto, mismo mecanismo). */
+  obtenerTokenIngresoDirectoRentaAnual: (empresaId) =>
+    apiFetch(`/empresas/${empresaId}/ingreso-directo-renta-anual/token`, { method: "POST" }),
+
   /**
    * Dispara en segundo plano un "pre-calentado" del ingreso directo (ver
    * backend/app/ingreso_directo_cache.py) -- se llama una vez al abrir la

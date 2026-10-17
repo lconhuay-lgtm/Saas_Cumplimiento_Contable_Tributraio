@@ -371,6 +371,65 @@ def preparar_ingreso_directo_declaraciones(ruc: str = "", headless: bool = False
         navegador.close_browser()
 
 
+def preparar_ingreso_directo_renta_anual(ruc: str = "", headless: bool = False) -> dict:
+    """
+    Igual que preparar_ingreso_directo (se detiene ANTES de escribir
+    ninguna credencial, mismo motivo de seguridad), pero para "DJ Anual"
+    -- Declaracion Jurada Anual de Renta (Formulario 710 Empresas / 709
+    Personas). Es un sistema DISTINTO de SOL/Buzon (dominio
+    e-renta.sunat.gob.pe en vez de e-menu.sunat.gob.pe, con su propio
+    client id de OAuth2) pero usa el MISMO mecanismo de login
+    (oauth2/j_security_check, mismos nombres de campo: tipo/custom_ruc/
+    j_username/j_password/state/originalUrl/lang) -- confirmado con un
+    diagnostico real end-to-end (17/10/2026): entrar sin sesion a
+    e-renta.sunat.gob.pe/loader/.../formularios?idFormulario=menu
+    redirige solo (sin JS ni popup, a diferencia de Declaraciones y
+    Pagos) a la pantalla de login con el originalUrl ya armado, y
+    autoenviando el formulario oculto con eso se llega a la bienvenida
+    real de "Renta Anual" ya logueado.
+
+    Returns:
+        dict: mismo formato que preparar_ingreso_directo.
+    """
+    vacio = {"ok": False, "accion_url": None, "state": None, "original_url": None, "lang": None, "error": None}
+
+    navegador = SunatWebNavigator(empresa=None, headless=headless)
+    try:
+        if not navegador.initialize_browser():
+            return {**vacio, "error": "No se pudo iniciar el navegador"}
+
+        driver = navegador.driver
+        driver.get(
+            "https://e-renta.sunat.gob.pe/loader/recaudaciontributaria/declaracionpago/formularios?idFormulario=menu"
+        )
+        WebDriverWait(driver, 15).until(
+            lambda d: "j_security_check" in d.current_url or "oauth2/login" in d.current_url
+        )
+        url_login = driver.current_url
+
+        partes = urlparse(url_login)
+        query = parse_qs(partes.query)
+        state = query.get("state", [None])[0]
+        original_url = query.get("originalUrl", [None])[0]
+        lang = query.get("lang", ["es-PE"])[0]
+        accion_url = urljoin(url_login, "j_security_check")
+
+        return {
+            "ok": True,
+            "accion_url": accion_url,
+            "state": state,
+            "original_url": original_url,
+            "lang": lang,
+            "error": None,
+        }
+
+    except Exception as e:
+        logger.error(f"Error preparando el ingreso directo a DJ Anual para {ruc}: {e}")
+        return {**vacio, "error": str(e)}
+    finally:
+        navegador.close_browser()
+
+
 def _escanear_mensajes(navegador, limite):
     """
     Escanea el listado visible en el Buzon Electronico y devuelve, por cada
