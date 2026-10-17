@@ -147,6 +147,13 @@ function TareasPageContenido() {
   // asi la seleccion sobrevive al cambiar de pagina).
   const [seleccionadas, setSeleccionadas] = useState(new Set());
   const [completandoMasivo, setCompletandoMasivo] = useState(false);
+  // Mientras no este activo, cada fila muestra SOLO el circulo (completar
+  // esa tarea sola, de un clic) -- a pedido: tener el circulo Y un
+  // checkbox juntos en cada fila todo el tiempo confundia ("dos senales").
+  // Activando este modo, el circulo se reemplaza por el checkbox de
+  // seleccion en toda la lista, para que solo haya un control visible por
+  // fila a la vez.
+  const [modoSeleccion, setModoSeleccion] = useState(false);
 
   useEffect(() => {
     if (!getToken()) {
@@ -338,42 +345,59 @@ function TareasPageContenido() {
         )}
 
         {!cargando && tareasPagina.length > 0 && (
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs">
-            <label className="flex items-center gap-2 font-medium text-slate-600">
-              <input
-                type="checkbox"
-                checked={tareasPagina.every((t) => seleccionadas.has(t.id))}
-                onChange={(e) => toggleSeleccionPagina(tareasPagina.map((t) => t.id), e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-accent focus:ring-accent"
-              />
-              Seleccionar todas en esta pagina
-            </label>
-            {seleccionadas.size > 0 && (
+          !modoSeleccion ? (
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={() => setModoSeleccion(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition-colors duration-300 ease-out hover:border-accent hover:text-accent"
+              >
+                <CheckCheck size={13} strokeWidth={1.5} />
+                Seleccionar varias
+              </button>
+            </div>
+          ) : (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-accent/30 bg-accent-light/40 px-4 py-2.5 text-xs">
+              <label className="flex items-center gap-2 font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={tareasPagina.every((t) => seleccionadas.has(t.id))}
+                  onChange={(e) => toggleSeleccionPagina(tareasPagina.map((t) => t.id), e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-accent focus:ring-accent"
+                />
+                Seleccionar todas en esta pagina
+              </label>
               <div className="flex items-center gap-2">
-                <span className="font-medium text-slate-600">
-                  {seleccionadas.size} seleccionada{seleccionadas.size === 1 ? "" : "s"}
-                </span>
+                {seleccionadas.size > 0 && (
+                  <>
+                    <span className="font-medium text-slate-600">
+                      {seleccionadas.size} seleccionada{seleccionadas.size === 1 ? "" : "s"}
+                    </span>
+                    <button
+                      onClick={completarSeleccionadas}
+                      disabled={completandoMasivo}
+                      className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 font-semibold text-white transition-all duration-300 ease-out hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {completandoMasivo ? (
+                        <Loader2 size={13} strokeWidth={1.5} className="animate-spin" />
+                      ) : (
+                        <CheckCheck size={13} strokeWidth={1.5} />
+                      )}
+                      Completar seleccionadas
+                    </button>
+                  </>
+                )}
                 <button
-                  onClick={completarSeleccionadas}
-                  disabled={completandoMasivo}
-                  className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 font-semibold text-white transition-all duration-300 ease-out hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {completandoMasivo ? (
-                    <Loader2 size={13} strokeWidth={1.5} className="animate-spin" />
-                  ) : (
-                    <CheckCheck size={13} strokeWidth={1.5} />
-                  )}
-                  Completar seleccionadas
-                </button>
-                <button
-                  onClick={() => setSeleccionadas(new Set())}
+                  onClick={() => {
+                    setModoSeleccion(false);
+                    setSeleccionadas(new Set());
+                  }}
                   className="rounded-lg px-2.5 py-1.5 font-medium text-slate-500 hover:bg-slate-100"
                 >
-                  Cancelar
+                  Salir de seleccion
                 </button>
               </div>
-            )}
-          </div>
+            </div>
+          )
         )}
 
         {cargando ? (
@@ -392,26 +416,29 @@ function TareasPageContenido() {
               const dias = diasRestantes(t.fecha_vencimiento);
               return (
                 <div key={t.id} className="flex items-center gap-3 px-5 py-4 transition-colors duration-300 ease-out hover:bg-slate-50">
-                  <input
-                    type="checkbox"
-                    checked={seleccionadas.has(t.id)}
-                    onChange={() => toggleSeleccion(t.id)}
-                    className="h-4 w-4 shrink-0 rounded border-slate-300 text-accent focus:ring-accent"
-                    aria-label="Seleccionar tarea"
-                  />
-                  <div className="flex shrink-0 items-center gap-1">
-                    <button
-                      onClick={() => cambiarEstado(t, t.estado === "completado" ? "pendiente" : "completado")}
-                      title={t.estado === "completado" ? "Marcar pendiente" : "Marcar completada"}
-                      className="flex items-center justify-center rounded-lg p-1.5 text-slate-400 transition-colors duration-300 ease-out hover:bg-slate-100 hover:text-emerald-600"
-                    >
-                      {t.estado === "completado" ? (
-                        <CheckCircle2 size={20} strokeWidth={1.5} className="text-emerald-500" />
-                      ) : (
-                        <Circle size={20} strokeWidth={1.5} />
-                      )}
-                    </button>
-                  </div>
+                  {modoSeleccion ? (
+                    <input
+                      type="checkbox"
+                      checked={seleccionadas.has(t.id)}
+                      onChange={() => toggleSeleccion(t.id)}
+                      className="h-4 w-4 shrink-0 rounded border-slate-300 text-accent focus:ring-accent"
+                      aria-label="Seleccionar tarea"
+                    />
+                  ) : (
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        onClick={() => cambiarEstado(t, t.estado === "completado" ? "pendiente" : "completado")}
+                        title={t.estado === "completado" ? "Marcar pendiente" : "Marcar completada"}
+                        className="flex items-center justify-center rounded-lg p-1.5 text-slate-400 transition-colors duration-300 ease-out hover:bg-slate-100 hover:text-emerald-600"
+                      >
+                        {t.estado === "completado" ? (
+                          <CheckCircle2 size={20} strokeWidth={1.5} className="text-emerald-500" />
+                        ) : (
+                          <Circle size={20} strokeWidth={1.5} />
+                        )}
+                      </button>
+                    </div>
+                  )}
 
                   <button onClick={() => setTareaSeleccionada(t)} className="min-w-0 flex-1 text-left">
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -702,7 +729,30 @@ function ModalEditarTarea({ tarea, onClose, onGuardada }) {
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Fecha limite</label>
-              <input type="date" value={fechaVencimiento} onChange={(e) => setFechaVencimiento(e.target.value)} className="campo-input" />
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="date"
+                  value={fechaVencimiento}
+                  onChange={(e) => setFechaVencimiento(e.target.value)}
+                  className="campo-input"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Aplazar: suma 1 mes a la fecha actual (o a hoy si
+                    // todavia no tenia fecha) -- a pedido, para el caso
+                    // tipico de "me indicaron que lo haga el mes que viene"
+                    // sin tener que calcular la fecha a mano.
+                    const base = fechaVencimiento ? new Date(`${fechaVencimiento}T00:00:00`) : new Date();
+                    base.setMonth(base.getMonth() + 1);
+                    setFechaVencimiento(base.toISOString().slice(0, 10));
+                  }}
+                  title="Aplazar 1 mes"
+                  className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-2 text-xs font-semibold text-slate-600 transition-colors duration-300 ease-out hover:border-accent hover:text-accent"
+                >
+                  +1 mes
+                </button>
+              </div>
             </div>
           </div>
           <div>

@@ -17,6 +17,7 @@ import {
   AlarmClock,
   ChevronLeft,
   ChevronRight,
+  Info,
 } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
 import { api, getToken } from "../../lib/api";
@@ -199,33 +200,27 @@ export default function DashboardPage() {
               resumen.cambios_domicilio_recientes.length > 0 ||
               resumen.proximos_vencimientos?.length > 0 ||
               resumen.tareas_completadas_recientes?.length > 0) && (
-              // Flex en vez de grid a proposito: con grid, una fila le copia
-              // la altura al item mas alto de ESA fila en AMBAS columnas, asi
-              // que una seccion corta (ej. 4 cambios de domicilio) quedaba
-              // estirada a la fuerza hasta igualar a "Proximos vencimientos"
-              // (que puede traer decenas), dejando un hueco vacio enorme
-              // abajo -- de ahi que se viera "sumamente grande" aunque tuviera
-              // pocos items. Con 2 columnas flex independientes cada una
-              // ocupa solo lo que necesita, y se aprovecha el espacio
-              // sobrante apilando "Tareas completadas recientemente" debajo
-              // de Domicilio en vez de dejarlo en blanco.
-              <div className="mt-6 flex flex-col gap-6 xl:flex-row xl:items-start">
-                <div className="flex flex-1 flex-col gap-6">
-                  {resumen.cambios_domicilio_recientes.length > 0 && (
-                    <SeccionCambiosDomicilio cambios={resumen.cambios_domicilio_recientes} />
-                  )}
-                  {resumen.tareas_completadas_recientes?.length > 0 && (
-                    <SeccionTareasCompletadas tareas={resumen.tareas_completadas_recientes} />
-                  )}
-                </div>
-                <div className="flex flex-1 flex-col gap-6">
-                  {resumen.cambios_estado_contribuyente_recientes.length > 0 && (
-                    <SeccionCambiosEstadoContribuyente cambios={resumen.cambios_estado_contribuyente_recientes} />
-                  )}
-                  {resumen.proximos_vencimientos?.length > 0 && (
-                    <SeccionProximosVencimientos vencimientos={resumen.proximos_vencimientos} />
-                  )}
-                </div>
+              // Grid de 2 columnas con las 4 tarjetas al mismo nivel (no
+              // anidadas en columnas independientes) -- a pedido: cada
+              // tarjeta tiene su propia altura FIJA con scroll interno (ver
+              // el div "h-[420px]" de cada Seccion*), asi que con grid
+              // las 4 miden exactamente lo mismo sin importar cuantos items
+              // traiga cada una ni cuantas de las 4 esten presentes esta
+              // vez -- eso es lo que antes se rompia (una columna con 2
+              // tarjetas apiladas terminaba mas alta que la otra con 1 sola).
+              <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
+                {resumen.cambios_domicilio_recientes.length > 0 && (
+                  <SeccionCambiosDomicilio cambios={resumen.cambios_domicilio_recientes} />
+                )}
+                {resumen.cambios_estado_contribuyente_recientes.length > 0 && (
+                  <SeccionCambiosEstadoContribuyente cambios={resumen.cambios_estado_contribuyente_recientes} />
+                )}
+                {resumen.proximos_vencimientos?.length > 0 && (
+                  <SeccionProximosVencimientos vencimientos={resumen.proximos_vencimientos} />
+                )}
+                {resumen.tareas_completadas_recientes?.length > 0 && (
+                  <SeccionTareasCompletadas tareas={resumen.tareas_completadas_recientes} />
+                )}
               </div>
             )}
 
@@ -277,10 +272,15 @@ function TarjetaMetricaColor({ Icon, color, label, value, detalle, href }) {
 // tareas hay este periodo y cuantas ya se completaron, con un selector de
 // periodo tributario igual en espiritu al del competidor.
 function SeccionAvanceCumplimiento() {
-  const [periodo, setPeriodo] = useState(() => {
-    const hoy = new Date();
-    return `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}`;
-  });
+  // null = "todavia no elegido a mano" -- deja que el backend decida el
+  // periodo mas relevante (ver fallback en
+  // routers/tareas.py::avance_cumplimiento). Arrancar con el mes
+  // calendario actual a la fuerza causaba confusion real: el "periodo" de
+  // IGV-Renta es el mes DECLARADO, que vence el mes SIGUIENTE, asi que el
+  // 17/10 el mes calendario (octubre) todavia no tenia ninguna tarea y el
+  // panel mostraba "0%" como si no se hubiera cumplido nada, cuando las
+  // tareas que realmente vencen este mes son las de "2026-09".
+  const [periodo, setPeriodo] = useState(null);
   const [avance, setAvance] = useState(null);
   const [cargando, setCargando] = useState(true);
 
@@ -294,6 +294,10 @@ function SeccionAvanceCumplimiento() {
     try {
       const data = await api.obtenerAvanceCumplimiento(periodo);
       setAvance(data);
+      // Sincroniza el selector con lo que el backend realmente devolvio --
+      // en la carga inicial (periodo null) puede no coincidir con el mes
+      // calendario actual, y el <select> necesita saber cual marcar.
+      if (data.periodo && data.periodo !== periodo) setPeriodo(data.periodo);
     } catch (err) {
       // silencioso -- no es critico para el resto del dashboard
     } finally {
@@ -324,7 +328,7 @@ function SeccionAvanceCumplimiento() {
           </p>
         </div>
         <select
-          value={periodo}
+          value={periodo || opcionesPeriodo[0].valor}
           onChange={(e) => setPeriodo(e.target.value)}
           className="campo-input w-auto text-xs"
         >
@@ -335,6 +339,14 @@ function SeccionAvanceCumplimiento() {
           ))}
         </select>
       </div>
+
+      {avance?.periodo_ajustado_automaticamente && (
+        <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-amber-600">
+          <Info size={13} strokeWidth={1.75} />
+          {opcionesPeriodo.find((o) => o.valor === new Date().toISOString().slice(0, 7))?.etiqueta || "Este mes"}{" "}
+          todavia no tiene tareas generadas -- mostrando el periodo mas reciente con actividad.
+        </p>
+      )}
 
       {cargando ? (
         <p className="mt-3 text-sm text-slate-500">Cargando...</p>
@@ -404,7 +416,12 @@ function SeccionCambiosEstadoContribuyente({ cambios }) {
       <p className="mt-1 text-xs text-red-600/80">
         Puede afectar la declaracion de impuestos -- revisa estas empresas.
       </p>
-      <div className="mt-3 divide-y divide-red-100">
+      {/* Altura FIJA (no max-height) + scroll interno a proposito -- a
+          pedido: esta tarjeta y las otras 3 de la misma fila (Estado del
+          contribuyente, Proximos vencimientos, Tareas completadas) deben
+          medir exactamente lo mismo sin importar cuantos items traiga cada
+          una, para mantener un orden visual prolijo en el grid. */}
+      <div className="mt-3 h-[420px] divide-y divide-red-100 overflow-y-auto">
         {itemsPagina.map((c) => (
           <Link
             key={c.empresa_id}
@@ -449,7 +466,7 @@ function SeccionCambiosDomicilio({ cambios }) {
       <p className="mt-1 text-xs text-red-600/80">
         Puede afectar la declaracion de impuestos -- revisa estas empresas.
       </p>
-      <div className="mt-3 divide-y divide-red-100">
+      <div className="mt-3 h-[420px] divide-y divide-red-100 overflow-y-auto">
         {itemsPagina.map((c) => (
           <Link
             key={c.empresa_id}
@@ -503,7 +520,7 @@ function SeccionTareasCompletadas({ tareas }) {
       <p className="mt-1 text-xs text-emerald-600/80">
         Las ultimas obligaciones marcadas como completadas, de cualquier periodo.
       </p>
-      <div className="mt-3 divide-y divide-emerald-100">
+      <div className="mt-3 h-[420px] divide-y divide-emerald-100 overflow-y-auto">
         {itemsPagina.map((t) => (
           <Link
             key={t.id}
@@ -592,7 +609,7 @@ function SeccionProximosVencimientos({ vencimientos }) {
       <p className="mt-1 text-xs text-amber-600/80">
         Segun el cronograma oficial de SUNAT (IGV-Renta/PLAME) -- ver el modulo Cronograma para el calendario completo.
       </p>
-      <div className="mt-3 divide-y divide-amber-100">
+      <div className="mt-3 h-[420px] divide-y divide-amber-100 overflow-y-auto">
         {itemsPagina.map((v) => (
           <Link
             key={`${v.empresa_id}-${v.periodo_tributario}`}

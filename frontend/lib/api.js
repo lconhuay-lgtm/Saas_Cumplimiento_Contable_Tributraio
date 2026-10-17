@@ -301,7 +301,10 @@ export const api = {
 
   generarTareas: (anio, mes) => apiFetch(`/tareas/generar?anio=${anio}&mes=${mes}`, { method: "POST" }),
 
-  obtenerAvanceCumplimiento: (periodo) => apiFetch(`/tareas/avance-cumplimiento?periodo=${periodo}`),
+  // periodo en null/undefined (sin query param) deja que el backend elija
+  // el mas relevante -- ver el fallback en routers/tareas.py::avance_cumplimiento.
+  obtenerAvanceCumplimiento: (periodo) =>
+    apiFetch(`/tareas/avance-cumplimiento${periodo ? `?periodo=${periodo}` : ""}`),
 
   importarEmpresas: (archivo) => {
     const formData = new FormData();

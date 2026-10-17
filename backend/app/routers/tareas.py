@@ -370,24 +370,55 @@ def avance_cumplimiento(
     que desde que se autogeneran sus tareas (ver
     app.routers.empresas._crear_obligaciones_por_defecto) tambien se
     puede marcar como completada igual que cualquier otra.
+
+    Ojo con la confusion de "periodo" (reportada en vivo, 17/10/2026): el
+    "periodo" de una tarea de IGV-Renta es el mes DECLARADO (ej. "2026-09"),
+    pero ese periodo VENCE recien el mes siguiente (octubre). Si el panel
+    defaulteaba ciegamente al mes calendario actual (octubre), un usuario
+    entrando el 17/10 via el selector por defecto veia "0% -- 0 tareas"
+    (porque las tareas de "2026-10" ni siquiera se generan/vencen todavia)
+    y pensaba que no habia cumplido nada, cuando en realidad las tareas
+    relevantes AHORA son las de "2026-09" (con vencimiento este mes). Para
+    evitar ese 0% enganoso, si no se pidio un periodo explicito y el mes
+    calendario actual no tiene ninguna tarea, se cae hacia atras hasta
+    encontrar el periodo mas reciente que si tenga.
     """
     hoy = datetime.now(timezone.utc)
     periodo_objetivo = periodo or f"{hoy.year:04d}-{hoy.month:02d}"
+    periodo_ajustado_automaticamente = False
 
     # Se cuenta en Python en vez de un GROUP BY con suma condicional --
     # func.sum() de una comparacion booleana no es portable entre SQLite y
     # Postgres sin trucos especificos de cada motor, y el volumen de tareas
     # por tenant no amerita esa complejidad.
-    tareas_del_periodo = (
-        filtrar_empresas_visibles(
-            db.query(TareaObligacion.tipo, TareaObligacion.estado, TareaObligacion.fecha_vencimiento).join(
-                Empresa, Empresa.id == TareaObligacion.empresa_id
-            ),
-            usuario,
+    def _tareas_de(periodo_buscado: str):
+        return (
+            filtrar_empresas_visibles(
+                db.query(TareaObligacion.tipo, TareaObligacion.estado, TareaObligacion.fecha_vencimiento).join(
+                    Empresa, Empresa.id == TareaObligacion.empresa_id
+                ),
+                usuario,
+            )
+            .filter(TareaObligacion.periodo == periodo_buscado)
+            .all()
         )
-        .filter(TareaObligacion.periodo == periodo_objetivo)
-        .all()
-    )
+
+    tareas_del_periodo = _tareas_de(periodo_objetivo)
+
+    if periodo is None and not tareas_del_periodo:
+        anio, mes = hoy.year, hoy.month
+        for _ in range(6):
+            mes -= 1
+            if mes == 0:
+                mes = 12
+                anio -= 1
+            periodo_candidato = f"{anio:04d}-{mes:02d}"
+            tareas_candidatas = _tareas_de(periodo_candidato)
+            if tareas_candidatas:
+                periodo_objetivo = periodo_candidato
+                tareas_del_periodo = tareas_candidatas
+                periodo_ajustado_automaticamente = True
+                break
 
     acumulado: dict[str, dict[str, int]] = {}
     for tipo, estado, fecha_vencimiento in tareas_del_periodo:
@@ -421,6 +452,7 @@ def avance_cumplimiento(
 
     return AvanceCumplimientoResponse(
         periodo=periodo_objetivo,
+        periodo_ajustado_automaticamente=periodo_ajustado_automaticamente,
         por_tipo=por_tipo,
         total=AvancePorTipo(
             tipo="Total",

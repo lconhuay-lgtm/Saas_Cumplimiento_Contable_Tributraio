@@ -559,6 +559,12 @@ class AvanceCumplimientoResponse(BaseModel):
     periodo: str
     por_tipo: list[AvancePorTipo]
     total: AvancePorTipo
+    # True cuando el llamador no pidio un periodo especifico y el mes
+    # calendario actual todavia no tenia tareas (ej. recien empieza
+    # octubre y las tareas de IGV-Renta "periodo 2026-10" todavia no se
+    # generan ni vencen hasta noviembre) -- en ese caso se muestra el
+    # periodo mas reciente que SI tiene tareas en vez de un 0% enganoso.
+    periodo_ajustado_automaticamente: bool = False
 
 
 class DocumentoRecienteItem(BaseModel):
