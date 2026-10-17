@@ -462,9 +462,9 @@ function SeccionCambiosDomicilio({ cambios }) {
 // empresas/[id]/page.js). El backend ya manda la lista completa (ordenada
 // segun corresponda a cada seccion -- ver routers/dashboard.py), asi que
 // alcanza con recortarla aca, no hace falta pedirle paginas al backend.
-const POR_PAGINA_PENDIENTES = 15;
-const POR_PAGINA_VENCIMIENTOS = 15;
-const POR_PAGINA_ACTIVIDAD = 15;
+const POR_PAGINA_PENDIENTES = 10;
+const POR_PAGINA_VENCIMIENTOS = 10;
+const POR_PAGINA_ACTIVIDAD = 10;
 
 // Hook compartido por las 3 secciones paginadas del Dashboard -- evita
 // repetir el mismo calculo de pagina/totalPaginas/slice en cada una.

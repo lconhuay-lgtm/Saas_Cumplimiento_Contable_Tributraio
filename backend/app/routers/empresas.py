@@ -601,10 +601,16 @@ def prewarm_ingreso_directo(usuario: Usuario = Depends(get_usuario_actual)):
     el prewarm falla o no llega a tiempo, GET /{empresa_id}/ingreso-directo
     simplemente hace el descubrimiento en vivo, como si este endpoint no
     existiera.
+
+    Fix (analisis 16/10): calienta TAMBIEN el ticket de "Declaraciones y
+    Pagos" (antes solo el clasico) -- son dos descubrimientos
+    independientes (ver app/ingreso_directo_cache.py), asi que se encolan
+    los dos jobs por separado.
     """
     from app.ingreso_directo_cache import prewarm_ingreso_directo_job
 
-    cola_consultas.enqueue(prewarm_ingreso_directo_job, job_timeout="2m")
+    cola_consultas.enqueue(prewarm_ingreso_directo_job, "clasico", job_timeout="2m")
+    cola_consultas.enqueue(prewarm_ingreso_directo_job, "declaraciones", job_timeout="2m")
     return {"encolado": True}
 
 
@@ -793,9 +799,15 @@ def ingreso_directo_declaraciones(empresa_id: str, token: str, db: Session = Dep
     viaja una vez hacia el navegador del usuario), pero aterriza en "Mis
     Declaraciones y Pagos" en vez del Menu SOL clasico -- usa
     preparar_ingreso_directo_declaraciones() en vez de
-    preparar_ingreso_directo(). Sin el cache "pre-calentado" del otro
-    endpoint a proposito: es un boton bastante menos usado, no amerita la
-    complejidad extra de generalizar ese cache para dos destinos.
+    preparar_ingreso_directo().
+
+    Fix (analisis 16/10, reportado como "Declaraciones y Pagos tarda mucho
+    mas que Ir a SUNAT"): antes este endpoint NO usaba el cache
+    "pre-calentado" a proposito ("es un boton bastante menos usado"), asi
+    que pagaba el costo completo de abrir Chrome (15-30s) en el 100% de
+    los clics, mientras que el clasico podia ser casi instantaneo. Ahora
+    usa el mismo mecanismo (app/ingreso_directo_cache.py, con su propia
+    clave de cache -- son tickets distintos, no intercambiables).
     """
     payload = decodificar_token(token)
     if not payload or payload.get("scope") != "ingreso_directo_declaraciones" or payload.get("empresa_id") != empresa_id:
@@ -824,40 +836,48 @@ def ingreso_directo_declaraciones(empresa_id: str, token: str, db: Session = Dep
 
     clave_en_claro = descifrar_clave_sol(credencial.clave_cifrada, credencial.dek_cifrada)
 
-    display = None
-    if not os.environ.get("DISPLAY"):
-        from pyvirtualdisplay import Display
-        display = Display(visible=False, size=(1600, 1000))
-        display.start()
+    from app.ingreso_directo_cache import obtener_ticket_fresco
+    resultado = obtener_ticket_fresco(tipo="declaraciones")
 
-    try:
-        token_slot = adquirir_slot_global(espera_maxima_seg=45)
-    except LimiteExcedido as e:
-        if display is not None:
-            display.stop()
-        return HTMLResponse(
-            _pagina_error_ingreso_directo(
-                f"{e} Entra a SUNAT de la forma normal mientras tanto."
-            ),
-            status_code=503,
-        )
-    try:
-        from adapter import preparar_ingreso_directo_declaraciones
-        resultado = preparar_ingreso_directo_declaraciones(ruc=empresa.ruc)
-    finally:
-        liberar_slot_global(token_slot)
-        if display is not None:
-            display.stop()
+    if resultado is not None:
+        logger.info(f"Ingreso a Declaraciones y Pagos para {empresa.ruc}: usando ticket pre-calentado (sin abrir Selenium).")
+        from app.ingreso_directo_cache import prewarm_ingreso_directo_job
+        cola_consultas.enqueue(prewarm_ingreso_directo_job, "declaraciones", job_timeout="2m")
+    else:
+        display = None
+        if not os.environ.get("DISPLAY"):
+            from pyvirtualdisplay import Display
+            display = Display(visible=False, size=(1600, 1000))
+            display.start()
 
-    if not resultado["ok"]:
-        logger.error(f"Ingreso directo a Declaraciones y Pagos fallo para {empresa.ruc}: {resultado['error']}")
-        return HTMLResponse(
-            _pagina_error_ingreso_directo(
-                f"No se pudo preparar el ingreso a Declaraciones y Pagos: {resultado['error']}. "
-                "Intenta de nuevo, o entra a SUNAT de la forma normal."
-            ),
-            status_code=502,
-        )
+        try:
+            token_slot = adquirir_slot_global(espera_maxima_seg=45)
+        except LimiteExcedido as e:
+            if display is not None:
+                display.stop()
+            return HTMLResponse(
+                _pagina_error_ingreso_directo(
+                    f"{e} Entra a SUNAT de la forma normal mientras tanto."
+                ),
+                status_code=503,
+            )
+        try:
+            from adapter import preparar_ingreso_directo_declaraciones
+            resultado = preparar_ingreso_directo_declaraciones(ruc=empresa.ruc)
+        finally:
+            liberar_slot_global(token_slot)
+            if display is not None:
+                display.stop()
+
+        if not resultado["ok"]:
+            logger.error(f"Ingreso directo a Declaraciones y Pagos fallo para {empresa.ruc}: {resultado['error']}")
+            return HTMLResponse(
+                _pagina_error_ingreso_directo(
+                    f"No se pudo preparar el ingreso a Declaraciones y Pagos: {resultado['error']}. "
+                    "Intenta de nuevo, o entra a SUNAT de la forma normal."
+                ),
+                status_code=502,
+            )
 
     html_respuesta = _pagina_autoenvio_sunat(
         accion_url=resultado["accion_url"],

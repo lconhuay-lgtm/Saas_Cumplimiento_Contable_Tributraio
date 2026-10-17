@@ -25,6 +25,16 @@ simplemente hace el descubrimiento en vivo -- EXACTAMENTE el mismo
 comportamiento que existia antes de este cache. Este modulo nunca puede
 hacer que el flujo salga peor de lo que ya estaba, solo mejor cuando hay
 un ticket fresco esperando.
+
+Fix (analisis 16/10 -- "Declaraciones y Pagos" tarda mucho mas que "Ir a
+SUNAT"): hasta ahora este cache solo cubria el Menu SOL clasico -- el boton
+"Ir a Declaraciones y Pagos" (preparar_ingreso_directo_declaraciones en
+adapter.py) nunca tuvo esta optimizacion a proposito ("es un boton bastante
+menos usado", decia el comentario original en routers/empresas.py), asi que
+SIEMPRE pagaba el costo completo de abrir Chrome (15-30s), sin excepcion.
+Se generaliza con un parametro `tipo` ("clasico" | "declaraciones"), cada
+uno con su propia clave en Redis -- son tickets distintos (apuntan a un
+`originalUrl` distinto en SUNAT) y no se pueden mezclar.
 """
 import json
 import logging
@@ -34,7 +44,10 @@ from app.queue_conn import redis_conn
 
 logger = logging.getLogger("app.ingreso_directo_cache")
 
-_CLAVE_TICKET = "ingreso_directo:ticket"
+_CLAVE_TICKET = {
+    "clasico": "ingreso_directo:ticket",
+    "declaraciones": "ingreso_directo:ticket:declaraciones",
+}
 # Techo duro en Redis (EX) -- una red de seguridad ademas del chequeo de
 # edad de abajo, para que un ticket nunca quede dando vueltas indefinidamente
 # en el cache aunque algo en la logica de arriba fallara.
@@ -42,13 +55,13 @@ _TTL_REDIS_SEG = 180
 DEFAULT_MAX_EDAD_SEG = 90
 
 
-def guardar_ticket(resultado: dict) -> None:
-    """Guarda un ticket recien descubierto (el dict que devuelve preparar_ingreso_directo, con ok=True) junto con cuando se genero."""
+def guardar_ticket(resultado: dict, tipo: str = "clasico") -> None:
+    """Guarda un ticket recien descubierto (el dict que devuelve preparar_ingreso_directo[_declaraciones], con ok=True) junto con cuando se genero."""
     payload = {**resultado, "descubierto_en": time.time()}
-    redis_conn.set(_CLAVE_TICKET, json.dumps(payload), ex=_TTL_REDIS_SEG)
+    redis_conn.set(_CLAVE_TICKET[tipo], json.dumps(payload), ex=_TTL_REDIS_SEG)
 
 
-def obtener_ticket_fresco(max_edad_segundos: int = DEFAULT_MAX_EDAD_SEG) -> dict | None:
+def obtener_ticket_fresco(max_edad_segundos: int = DEFAULT_MAX_EDAD_SEG, tipo: str = "clasico") -> dict | None:
     """
     Devuelve el ticket cacheado SOLO si sigue lo bastante fresco, y lo
     borra de una vez del cache (de un solo uso -- asi dos clics casi
@@ -56,46 +69,50 @@ def obtener_ticket_fresco(max_edad_segundos: int = DEFAULT_MAX_EDAD_SEG) -> dict
     ticket). Devuelve None si no habia nada cacheado o ya esta viejo -- en
     ese caso el llamador hace el descubrimiento en vivo como siempre.
     """
-    crudo = redis_conn.get(_CLAVE_TICKET)
+    crudo = redis_conn.get(_CLAVE_TICKET[tipo])
     if not crudo:
         return None
-    redis_conn.delete(_CLAVE_TICKET)  # de un solo uso, se aproveche o no esta vez
+    redis_conn.delete(_CLAVE_TICKET[tipo])  # de un solo uso, se aproveche o no esta vez
     try:
         ticket = json.loads(crudo)
     except (TypeError, ValueError):
         return None
     edad = time.time() - ticket.get("descubierto_en", 0)
     if edad > max_edad_segundos:
-        logger.info(f"Ticket de ingreso directo cacheado descartado por viejo ({edad:.1f}s)")
+        logger.info(f"Ticket de ingreso directo ({tipo}) cacheado descartado por viejo ({edad:.1f}s)")
         return None
     return ticket
 
 
-def prewarm_ingreso_directo_job() -> None:
+def prewarm_ingreso_directo_job(tipo: str = "clasico") -> None:
     """
     Job de RQ (corre en el worker, que ya tiene su propia pantalla virtual
     arrancada por worker_entry.py -- no hace falta arrancar una aca):
-    hace UN descubrimiento (el mismo preparar_ingreso_directo de siempre,
-    sin ruc especifico porque el ticket no depende de la empresa) y lo deja
-    listo en el cache. Se encola cuando alguien abre la lista de empresas
-    (ver POST /empresas/ingreso-directo/prewarm) -- asi el costo de abrir
-    Chrome solo se paga cuando de verdad hay alguien mirando la pantalla,
-    no en un loop de fondo permanente.
+    hace UN descubrimiento (el mismo preparar_ingreso_directo[_declaraciones]
+    de siempre, sin ruc especifico porque el ticket no depende de la
+    empresa) y lo deja listo en el cache. Se encola cuando alguien abre la
+    lista de empresas (ver POST /empresas/ingreso-directo/prewarm) -- asi
+    el costo de abrir Chrome solo se paga cuando de verdad hay alguien
+    mirando la pantalla, no en un loop de fondo permanente.
     """
-    from adapter import preparar_ingreso_directo
     from app.rate_limit import adquirir_slot_global, liberar_slot_global
+
+    if tipo == "declaraciones":
+        from adapter import preparar_ingreso_directo_declaraciones as _descubrir
+    else:
+        from adapter import preparar_ingreso_directo as _descubrir
 
     token_slot = adquirir_slot_global()
     try:
-        resultado = preparar_ingreso_directo()
+        resultado = _descubrir()
     finally:
         liberar_slot_global(token_slot)
 
     if resultado.get("ok"):
-        guardar_ticket(resultado)
-        logger.info("Ticket de ingreso directo pre-calentado y cacheado.")
+        guardar_ticket(resultado, tipo=tipo)
+        logger.info(f"Ticket de ingreso directo ({tipo}) pre-calentado y cacheado.")
     else:
         logger.warning(
-            "Prewarm de ingreso directo fallo (no es grave, el proximo clic hace el "
+            f"Prewarm de ingreso directo ({tipo}) fallo (no es grave, el proximo clic hace el "
             f"descubrimiento en vivo como siempre): {resultado.get('error')}"
         )

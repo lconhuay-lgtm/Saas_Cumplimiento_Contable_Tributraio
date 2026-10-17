@@ -40,8 +40,61 @@ display = Display(visible=False, size=(1600, 1000))
 display.start()
 logger.info(f"Pantalla virtual lista en DISPLAY={os.environ.get('DISPLAY')}")
 
+import signal
+
 from rq import Worker
 from app.queue_conn import redis_conn, cola_consultas
+
+
+def _limpiar_procesos_chrome_huerfanos():
+    """
+    Hallazgo real (analisis exhaustivo, 16/10): cuando RQ mata un job por
+    timeout (job_timeout="10m", ver el enqueue() en routers/consultas.py,
+    empresas.py, ficha_ruc.py y reporte_tributario.py) lo hace con SIGKILL
+    -- una señal que Python no puede interceptar, asi que el `finally:
+    close_browser()` de core_scraper/adapter.py nunca llega a correr.
+    Chrome/chromedriver quedan huerfanos, reparentados a este proceso (PID 1
+    del contenedor), y se van acumulando con el tiempo (se llego a ver 6031
+    procesos "zombie" en el servidor real).
+
+    Igual que _reconciliar_al_arrancar() de abajo pero para procesos del
+    sistema operativo en vez de filas de la base: en el momento exacto en
+    que este proceso arranca, el worker todavia no tomo ningun job de la
+    cola -- asi que CUALQUIER chrome/chromedriver que siga vivo en este
+    contenedor a esta altura es necesariamente basura de una corrida
+    anterior (crash, OOM, `docker restart` a mitad de un job), nunca una
+    sesion legitima en curso. Seguro de correr siempre al arrancar, antes
+    de escuchar la cola.
+
+    Implementado leyendo /proc directo (sin pkill/psutil) a proposito: la
+    imagen (python:3.12-slim) no trae el paquete procps, y agregar una
+    dependencia nueva hubiera significado reconstruir la imagen de nuevo
+    solo para esto -- /proc ya esta disponible sin instalar nada.
+    """
+    propio_pid = os.getpid()
+    matados = 0
+    try:
+        for entrada in os.listdir("/proc"):
+            if not entrada.isdigit() or int(entrada) == propio_pid:
+                continue
+            pid = int(entrada)
+            try:
+                with open(f"/proc/{pid}/cmdline", "rb") as f:
+                    cmdline = f.read().replace(b"\x00", b" ").decode(errors="ignore").lower()
+            except (FileNotFoundError, ProcessLookupError, PermissionError):
+                continue  # el proceso ya termino entre el listdir y el open, o no se puede leer
+            if "chrome" in cmdline or "chromedriver" in cmdline:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    matados += 1
+                except ProcessLookupError:
+                    pass
+        if matados:
+            logger.warning(f"Limpieza al arrancar: se mataron {matados} proceso(s) de Chrome/chromedriver huerfanos de una corrida anterior.")
+    except Exception as e:
+        # Nunca debe impedir que el worker arranque -- en el peor caso,
+        # los procesos huerfanos quedan para el proximo reinicio.
+        logger.warning(f"No se pudo limpiar procesos de Chrome huerfanos al arrancar (no es critico): {e}")
 
 
 def _reconciliar_al_arrancar():
@@ -109,6 +162,7 @@ def _reconciliar_al_arrancar():
 
 
 if __name__ == "__main__":
+    _limpiar_procesos_chrome_huerfanos()
     _reconciliar_al_arrancar()
     logger.info("Worker RQ arrancando, escuchando la cola 'consultas_buzon'...")
     worker = Worker([cola_consultas], connection=redis_conn)
