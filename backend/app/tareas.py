@@ -213,9 +213,16 @@ def revisar_obligacion_plame(db: Session, empresa_id: str) -> str | None:
     usuario configuro: si la apago a mano, se respeta. No hace commit.
     Devuelve "creada" o None.
     """
+    # Solo cuenta una obligacion de PLAME (tipo planilla que sigue el
+    # cronograma de SUNAT): "Planilla mensual"/"Adelanto de quincena" con dia
+    # fijo son el pago interno de sueldos, no la declaracion.
     ya_tiene = (
         db.query(EmpresaObligacion.id)
-        .filter(EmpresaObligacion.empresa_id == empresa_id, EmpresaObligacion.tipo == "planilla")
+        .filter(
+            EmpresaObligacion.empresa_id == empresa_id,
+            EmpresaObligacion.tipo == "planilla",
+            EmpresaObligacion.regla_vencimiento == "cronograma_sunat",
+        )
         .first()
     )
     if ya_tiene:
@@ -260,14 +267,19 @@ def sincronizar_tareas_con_sunat(db: Session, empresa_id: str) -> int:
     (SireEstadoPeriodo) de Cumplimiento. No hace commit. Devuelve cuantas
     completo.
     """
+    # Solo tareas de obligaciones que siguen el cronograma de SUNAT: una
+    # "Planilla mensual" con dia fijo es el pago de sueldos, no la PLAME, y
+    # no debe darse por cumplida porque se presento el 0601.
     pendientes = (
         db.query(TareaObligacion)
+        .join(EmpresaObligacion, EmpresaObligacion.id == TareaObligacion.empresa_obligacion_id)
         .filter(
             TareaObligacion.empresa_id == empresa_id,
             TareaObligacion.estado == "pendiente",
             TareaObligacion.periodo.isnot(None),
             TareaObligacion.tipo.in_(TIPOS_VERIFICABLES_EN_SUNAT),
             TareaObligacion.verificado_sunat_en.is_(None),
+            EmpresaObligacion.regla_vencimiento.in_(("cronograma_sunat", "cronograma_sire")),
         )
         .all()
     )

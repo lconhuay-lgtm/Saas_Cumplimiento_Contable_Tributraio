@@ -117,10 +117,14 @@ def cumplimiento_declaraciones(
         .filter(DeclaracionSunat.empresa_id.in_(ids), DeclaracionSunat.formulario.in_(list(FORMULARIOS_CONTROLADOS)))
         .group_by(DeclaracionSunat.empresa_id, DeclaracionSunat.formulario)
     }
+    # Solo obligaciones que siguen el cronograma de SUNAT: una "Planilla
+    # mensual" con dia fijo es el pago de sueldos, no la obligacion de PLAME.
     obligaciones = {
         (eid, tipo)
         for eid, tipo in db.query(EmpresaObligacion.empresa_id, EmpresaObligacion.tipo).filter(
-            EmpresaObligacion.empresa_id.in_(ids), EmpresaObligacion.activa.is_(True)
+            EmpresaObligacion.empresa_id.in_(ids),
+            EmpresaObligacion.activa.is_(True),
+            EmpresaObligacion.regla_vencimiento == "cronograma_sunat",
         )
     }
     vencimientos = {
