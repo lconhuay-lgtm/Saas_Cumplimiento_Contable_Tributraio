@@ -930,6 +930,7 @@ def aplicar_lectura_valores(db, empresa_id: str, valores: list[dict], ahora: dat
     es la linea base, no "valores nuevos" para la ventana emergente.
     """
     marca = ahora.isoformat()
+    db.flush()  # que la consulta de abajo vea tambien lo agregado y aun no guardado en esta sesion
     existentes = {v.num_valor: v for v in db.query(ValorDeuda).filter(ValorDeuda.empresa_id == empresa_id)}
     vistos = set()
     nuevos = 0
