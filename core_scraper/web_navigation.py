@@ -89,6 +89,11 @@ class SunatWebNavigator(
         # cambiar antes de que algo se rompa del todo). None hasta que
         # _click_condicional corre.
         self.flujo_detectado = None
+        # True solo si SUNAT mostro su pantalla de "usuario/clave incorrectos"
+        # (btnVolver, ver _ingresar_credenciales) -- cualquier otro fallo del
+        # login (portal lento, pagina que no carga) NO es culpa de la clave y
+        # no debe decirsele al usuario que la revise.
+        self.credenciales_rechazadas = False
 
 
     def ejecutar_proceso_completo(self, empresa, max_intentos=None, dias_atras=1):

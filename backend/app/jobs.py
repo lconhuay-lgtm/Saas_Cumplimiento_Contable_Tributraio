@@ -14,7 +14,7 @@ from sqlalchemy import or_
 from app.database import SessionLocal
 from app.models import (
     ConsultaJob, FichaRucJob, ReporteTributarioJob, Empresa, CredencialSol, MensajeBuzon, Usuario,
-    TareaObligacion, ConsultaSireJob, SireEstadoPeriodo,
+    TareaObligacion, ConsultaSireJob, SireEstadoPeriodo, ConsultaDeudasJob, ValorDeuda,
 )
 from app.security import descifrar_clave_sol, crear_token_ingreso_directo
 from app.rate_limit import adquirir_slot_global, liberar_slot_global, limite_mensajes_por_consulta
@@ -287,6 +287,10 @@ def ejecutar_consulta_buzon(job_id: str):
                 logger.warning(
                     f"Intento {intento}/{MAX_INTENTOS} fallo para {empresa.ruc}: {resultado['error']}"
                 )
+                # Reintentar con una clave que SUNAT ya rechazo no arregla
+                # nada y suma intentos fallidos que pueden bloquear el usuario SOL.
+                if resultado.get("credenciales_rechazadas"):
+                    break
                 if intento < MAX_INTENTOS:
                     time.sleep(ESPERA_ENTRE_INTENTOS_SEG * intento)
         finally:
@@ -748,7 +752,7 @@ def ejecutar_generar_reporte_tributario(job_id: str):
                         "(cuenta contra el limite diario de SUNAT)"
                     )
                     break
-                if resultado.get("verificacion_humana"):
+                if resultado.get("verificacion_humana") or resultado.get("credenciales_rechazadas"):
                     break
                 if intento < MAX_INTENTOS:
                     time.sleep(ESPERA_ENTRE_INTENTOS_SEG * intento)
@@ -846,6 +850,8 @@ def ejecutar_consulta_sire(job_id: str):
                 if resultado["ok"]:
                     break
                 logger.warning(f"SIRE intento {intento}/{MAX_INTENTOS} fallo para {empresa.ruc}: {resultado['error']}")
+                if resultado.get("credenciales_rechazadas"):
+                    break
                 if intento < MAX_INTENTOS:
                     time.sleep(ESPERA_ENTRE_INTENTOS_SEG * intento)
         finally:
@@ -888,6 +894,177 @@ def ejecutar_consulta_sire(job_id: str):
         logger.exception(f"Error ejecutando ConsultaSireJob {job_id}")
         db.rollback()
         job = db.query(ConsultaSireJob).filter(ConsultaSireJob.id == job_id).first()
+        if job:
+            job.estado = "error"
+            job.error = str(e)[:1000]
+            job.finalizado_en = datetime.now(timezone.utc)
+            db.commit()
+        _reportar_etapa(None)
+    finally:
+        db.close()
+
+
+# Campos de ValorDeuda que se copian tal cual de lo que devuelve
+# adapter.consultar_valores_pendientes (ver normalizar_valor).
+_CAMPOS_VALOR_DEUDA = (
+    "tipo", "tipo_descripcion", "periodo", "cod_tributo", "tributo", "estado", "etapa_cod", "etapa",
+    "etapa_alterna", "en_cobranza_coactiva", "num_expediente_coactivo", "monto_tributo", "interes",
+    "saldo_total", "saldo_exigible",
+)
+
+
+def _fecha_o_none(iso: str | None):
+    return datetime.strptime(iso, "%Y-%m-%d").date() if iso else None
+
+
+def aplicar_lectura_valores(db, empresa_id: str, valores: list[dict], ahora: datetime) -> dict:
+    """
+    Cruza una lectura COMPLETA de valores pendientes con lo ya guardado: alta
+    de los nuevos, cambios de etapa/saldo al historial, y los que ya no
+    vienen pasan a vigente=False (nunca se borran -- es el historial de
+    deudas que pidio el usuario). Solo debe llamarse con una lectura que
+    cubrio todo el rango; una parcial marcaria como desaparecidas deudas que
+    siguen vigentes.
+    """
+    marca = ahora.isoformat()
+    existentes = {v.num_valor: v for v in db.query(ValorDeuda).filter(ValorDeuda.empresa_id == empresa_id)}
+    vistos = set()
+    nuevos = 0
+    for dato in valores:
+        numero = dato["num_valor"][:20]
+        vistos.add(numero)
+        fila = existentes.get(numero)
+        eventos = []
+        if fila is None:
+            fila = ValorDeuda(empresa_id=empresa_id, num_valor=numero, detectado_en=ahora, historial=[])
+            db.add(fila)
+            eventos.append({"fecha": marca, "evento": "nuevo", "detalle": f"{dato['etapa']} -- saldo S/ {dato['saldo_total']:,.2f}"})
+            nuevos += 1
+        else:
+            if not fila.vigente:
+                eventos.append({"fecha": marca, "evento": "reaparecio", "detalle": dato["etapa"]})
+            if fila.etapa != dato["etapa"]:
+                eventos.append({"fecha": marca, "evento": "cambio_etapa", "detalle": f"{fila.etapa} -> {dato['etapa']}"})
+            if round(fila.saldo_total or 0, 2) != round(dato["saldo_total"], 2):
+                eventos.append({
+                    "fecha": marca, "evento": "cambio_saldo",
+                    "detalle": f"S/ {fila.saldo_total or 0:,.2f} -> S/ {dato['saldo_total']:,.2f}",
+                })
+        for campo in _CAMPOS_VALOR_DEUDA:
+            setattr(fila, campo, dato[campo])
+        fila.tipo = (fila.tipo or "")[:10]
+        fila.tipo_descripcion = (fila.tipo_descripcion or "")[:80]
+        fila.tributo = (fila.tributo or "")[:150]
+        fila.etapa = (fila.etapa or "")[:80]
+        fila.etapa_alterna = (fila.etapa_alterna or "")[:80]
+        fila.estado = (fila.estado or "")[:60]
+        fila.fecha_emision = _fecha_o_none(dato.get("fecha_emision"))
+        fila.fecha_notificacion = _fecha_o_none(dato.get("fecha_notificacion"))
+        fila.vigente = True
+        fila.visto_en = ahora
+        fila.ya_no_aparece_desde = None
+        if eventos:
+            # Se reasigna (no .append) para que SQLAlchemy detecte el cambio en la columna JSON.
+            fila.historial = list(fila.historial or []) + eventos
+
+    for numero, fila in existentes.items():
+        if numero not in vistos and fila.vigente:
+            fila.vigente = False
+            fila.ya_no_aparece_desde = ahora
+            fila.historial = list(fila.historial or []) + [{
+                "fecha": marca, "evento": "ya_no_aparece",
+                "detalle": f"ultimo saldo S/ {fila.saldo_total or 0:,.2f}",
+            }]
+    return {"vigentes": len(vistos), "nuevos": nuevos}
+
+
+def ejecutar_consulta_deudas(job_id: str):
+    """Lee de SUNAT los valores pendientes de pago (2020 -> mes pasado) de una empresa y actualiza su historial de deudas."""
+    db = SessionLocal()
+
+    def _reportar_etapa(etapa: str | None):
+        db_etapa = SessionLocal()
+        try:
+            job_actual = db_etapa.query(ConsultaDeudasJob).filter(ConsultaDeudasJob.id == job_id).first()
+            if job_actual:
+                job_actual.etapa = etapa
+                db_etapa.commit()
+        finally:
+            db_etapa.close()
+
+    try:
+        job = db.query(ConsultaDeudasJob).filter(ConsultaDeudasJob.id == job_id).first()
+        if not job:
+            logger.error(f"ConsultaDeudasJob {job_id} no encontrado")
+            return
+
+        job.estado = "en_progreso"
+        job.iniciado_en = datetime.now(timezone.utc)
+        db.commit()
+
+        empresa = db.query(Empresa).filter(Empresa.id == job.empresa_id).first()
+        credencial = (
+            db.query(CredencialSol).filter(CredencialSol.empresa_id == job.empresa_id).first()
+            if empresa else None
+        )
+        if not empresa or not credencial:
+            job.estado = "error"
+            job.error = "Empresa o credenciales no encontradas"
+            job.finalizado_en = datetime.now(timezone.utc)
+            db.commit()
+            return
+
+        clave_en_claro = descifrar_clave_sol(credencial.clave_cifrada, credencial.dek_cifrada)
+
+        from adapter import consultar_valores_pendientes
+
+        token_slot = adquirir_slot_global()
+        try:
+            resultado = None
+            for intento in range(1, MAX_INTENTOS + 1):
+                resultado = consultar_valores_pendientes(
+                    ruc=empresa.ruc,
+                    usuario_sol=credencial.usuario_sol,
+                    clave_sol=clave_en_claro,
+                    razon_social=empresa.razon_social,
+                    headless=False,
+                    on_progreso=_reportar_etapa,
+                )
+                if resultado["ok"]:
+                    break
+                logger.warning(f"Deudas intento {intento}/{MAX_INTENTOS} fallo para {empresa.ruc}: {resultado['error']}")
+                if resultado.get("credenciales_rechazadas"):
+                    break
+                if intento < MAX_INTENTOS:
+                    time.sleep(ESPERA_ENTRE_INTENTOS_SEG * intento)
+        finally:
+            liberar_slot_global(token_slot)
+
+        if not resultado["ok"]:
+            job.estado = "error"
+            job.error = (resultado["error"] or "Error desconocido")[:1000]
+            job.finalizado_en = datetime.now(timezone.utc)
+            db.commit()
+            _reportar_etapa(None)
+            return
+
+        ahora = datetime.now(timezone.utc)
+        cuenta = aplicar_lectura_valores(db, empresa.id, resultado["valores"], ahora)
+        job.estado = "completado"
+        job.valores_vigentes = cuenta["vigentes"]
+        job.valores_nuevos = cuenta["nuevos"]
+        job.finalizado_en = ahora
+        db.commit()
+        _reportar_etapa(None)
+        logger.info(
+            f"ConsultaDeudasJob {job_id} completado para {empresa.ruc}: "
+            f"{cuenta['vigentes']} vigente(s), {cuenta['nuevos']} nuevo(s)"
+        )
+
+    except Exception as e:
+        logger.exception(f"Error ejecutando ConsultaDeudasJob {job_id}")
+        db.rollback()
+        job = db.query(ConsultaDeudasJob).filter(ConsultaDeudasJob.id == job_id).first()
         if job:
             job.estado = "error"
             job.error = str(e)[:1000]

@@ -19,11 +19,15 @@ import time
 import logging
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import func
+
 from app.database import SessionLocal
 from app.models import Empresa, Tenant, CredencialSol, ConsultaJob, CanarioCheck, TareaObligacion
-from app.models import Usuario
+from app.models import Usuario, ConsultaDeudasJob, ConsultaSireJob, CronogramaVencimiento
 from app.queue_conn import cola_consultas, redis_conn
-from app.jobs import ejecutar_consulta_buzon
+from app.jobs import ejecutar_consulta_buzon, ejecutar_consulta_deudas, ejecutar_consulta_sire
+from app.cumplimiento import empresas_de_tenants_activos, encolar_lecturas, filtrar_activas_en_sunat
+from app.cronograma_sunat import grupo_para_empresa
 from app.email_utils import enviar_resumen_diario, enviar_alerta_canario, enviar_recordatorio_tareas
 from app.rate_limit import adquirir_slot_global, liberar_slot_global, espaciado_consultas_seg
 from app.security import descifrar_clave_sol
@@ -116,6 +120,71 @@ def encolar_chequeo_nocturno(espaciado_seg: int | None = None) -> dict:
             "saltadas_sin_credencial": saltados_sin_credencial,
             "espaciado_seg": espaciado_seg,
         }
+    finally:
+        db.close()
+
+
+def encolar_deudas_diario() -> dict:
+    """Modulo Cumplimiento > Deudas: relee cada dia los valores pendientes de todas las empresas activas en SUNAT."""
+    db = SessionLocal()
+    try:
+        empresas = filtrar_activas_en_sunat(empresas_de_tenants_activos(db)).order_by(Empresa.razon_social).all()
+        resultado = encolar_lecturas(db, empresas, ConsultaDeudasJob, ejecutar_consulta_deudas)
+        logger.info(f"Lectura diaria de deudas: {resultado}")
+        return resultado
+    finally:
+        db.close()
+
+
+# SIRE: se relee una empresa si su ultima lectura buena tiene mas de estos
+# dias, o si ayer/anteayer vencio su plazo del cronograma SIRE (asi el
+# cuadro refleja enseguida quien presento a tiempo y quien no).
+DIAS_REFRESCO_SIRE = int(os.environ.get("DIAS_REFRESCO_SIRE", 7))
+_DIAS_TRAS_VENCIMIENTO_SIRE = 2
+_ZONA_LIMA = timezone(timedelta(hours=-5))
+
+
+def empresas_para_refresco_sire(db, hoy=None) -> list[Empresa]:
+    hoy = hoy or datetime.now(_ZONA_LIMA).date()
+    empresas = filtrar_activas_en_sunat(empresas_de_tenants_activos(db)).order_by(Empresa.razon_social).all()
+    ultima_lectura = dict(
+        db.query(ConsultaSireJob.empresa_id, func.max(ConsultaSireJob.finalizado_en))
+        .filter(ConsultaSireJob.estado == "completado")
+        .group_by(ConsultaSireJob.empresa_id)
+        .all()
+    )
+    vencimientos_recientes: dict[str, list] = {}
+    for grupo, fecha in db.query(CronogramaVencimiento.grupo, CronogramaVencimiento.fecha_vencimiento).filter(
+        CronogramaVencimiento.tipo == "sire",
+        CronogramaVencimiento.fecha_vencimiento >= datetime.combine(
+            hoy - timedelta(days=_DIAS_TRAS_VENCIMIENTO_SIRE), datetime.min.time(), tzinfo=timezone.utc
+        ),
+        CronogramaVencimiento.fecha_vencimiento < datetime.combine(hoy, datetime.min.time(), tzinfo=timezone.utc),
+    ):
+        vencimientos_recientes.setdefault(grupo, []).append(fecha.date())
+
+    elegidas = []
+    for empresa in empresas:
+        leida = ultima_lectura.get(empresa.id)
+        if leida is not None and leida.tzinfo is None:
+            leida = leida.replace(tzinfo=timezone.utc)
+        leida_dia = leida.astimezone(_ZONA_LIMA).date() if leida else None
+        if leida_dia is None or (hoy - leida_dia).days >= DIAS_REFRESCO_SIRE:
+            elegidas.append(empresa)
+            continue
+        grupo = grupo_para_empresa(empresa.ruc, empresa.es_buen_contribuyente)
+        if any(leida_dia <= vence for vence in vencimientos_recientes.get(grupo, [])):
+            elegidas.append(empresa)
+    return elegidas
+
+
+def encolar_sire_programado() -> dict:
+    """Modulo Cumplimiento > SIRE: lectura diaria SOLO de las empresas que lo necesitan (ver empresas_para_refresco_sire)."""
+    db = SessionLocal()
+    try:
+        resultado = encolar_lecturas(db, empresas_para_refresco_sire(db), ConsultaSireJob, ejecutar_consulta_sire)
+        logger.info(f"Lectura programada del SIRE: {resultado}")
+        return resultado
     finally:
         db.close()
 

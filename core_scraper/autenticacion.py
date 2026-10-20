@@ -497,6 +497,7 @@ class AutenticacionMixin:
             # produccion: paso exactamente eso con un RUC real).
             if self.driver.find_elements(By.ID, "btnVolver"):
                 logger.error("SUNAT rechazo el usuario/clave SOL ingresados")
+                self.credenciales_rechazadas = True
                 return False
 
             self._rescatar_pagina_bienvenida_congelada()

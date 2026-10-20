@@ -4,10 +4,10 @@ Coinciden con el diagrama ERD revisado: TENANTS, USUARIOS, EMPRESAS,
 CREDENCIALES_SOL, MENSAJES_BUZON, CONSULTAS_JOBS.
 """
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
-    String, Boolean, DateTime, ForeignKey, UniqueConstraint, Integer, LargeBinary, Float, Text
+    String, Boolean, Date, DateTime, ForeignKey, UniqueConstraint, Integer, JSON, LargeBinary, Float, Text
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -178,6 +178,8 @@ class Empresa(Base):
     reporte_tributario_jobs: Mapped[list["ReporteTributarioJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     consulta_sire_jobs: Mapped[list["ConsultaSireJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     sire_estados: Mapped[list["SireEstadoPeriodo"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    consulta_deudas_jobs: Mapped[list["ConsultaDeudasJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    valores_deuda: Mapped[list["ValorDeuda"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     canario_checks: Mapped[list["CanarioCheck"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     obligaciones: Mapped[list["EmpresaObligacion"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     tareas: Mapped[list["TareaObligacion"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
@@ -396,6 +398,70 @@ class SireEstadoPeriodo(Base):
     actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="sire_estados")
+
+
+class ConsultaDeudasJob(Base):
+    """Cola/bitacora de lecturas de "Valores pendientes de pago" de una empresa."""
+    __tablename__ = "consulta_deudas_jobs"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    solicitado_por: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
+    estado: Mapped[str] = mapped_column(String(20), default="pendiente", nullable=False, index=True)
+    etapa: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    valores_vigentes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    valores_nuevos: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    iniciado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finalizado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="consulta_deudas_jobs")
+
+
+class ValorDeuda(Base):
+    """
+    Un valor (Orden de Pago, Resolucion de Multa/Determinacion...) tal como
+    lo lista SUNAT en Revision de mis deudas > Consulta valores pendientes de
+    pago. Nunca se borra: cuando deja de aparecer en la consulta (pagado,
+    fraccionado, anulado...) queda vigente=False con la fecha en
+    ya_no_aparece_desde, para que la empresa tenga su historial de deudas.
+
+    historial: lista de eventos [{"fecha", "evento", "detalle"}] -- "nuevo",
+    "cambio_etapa", "cambio_saldo", "ya_no_aparece", "reaparecio".
+    """
+    __tablename__ = "valores_deuda"
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "num_valor", name="uq_valor_deuda_empresa_numero"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    num_valor: Mapped[str] = mapped_column(String(20), nullable=False)
+    tipo: Mapped[str] = mapped_column(String(10), nullable=False, default="")  # OP, RM, RD...
+    tipo_descripcion: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    periodo: Mapped[str] = mapped_column(String(7), nullable=False, default="")  # "YYYY-MM"
+    cod_tributo: Mapped[str] = mapped_column(String(10), nullable=False, default="")
+    tributo: Mapped[str] = mapped_column(String(150), nullable=False, default="")
+    fecha_emision: Mapped[date | None] = mapped_column(Date, nullable=True)
+    fecha_notificacion: Mapped[date | None] = mapped_column(Date, nullable=True)
+    estado: Mapped[str] = mapped_column(String(60), nullable=False, default="")
+    etapa_cod: Mapped[str] = mapped_column(String(5), nullable=False, default="")
+    etapa: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    etapa_alterna: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    en_cobranza_coactiva: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    num_expediente_coactivo: Mapped[str | None] = mapped_column(String(25), nullable=True)
+    monto_tributo: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    interes: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    saldo_total: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    saldo_exigible: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    vigente: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    detectado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    visto_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    ya_no_aparece_desde: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    historial: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="valores_deuda")
 
 
 class CanarioCheck(Base):

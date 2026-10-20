@@ -53,6 +53,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.scheduler_job import (
     encolar_chequeo_nocturno, enviar_resumenes_diarios, ejecutar_chequeo_canario, enviar_recordatorios_vencimiento,
+    encolar_deudas_diario, encolar_sire_programado,
 )
 from app.database import SessionLocal
 from app.cronograma_sunat import asegurar_cronograma_vigente
@@ -82,6 +83,17 @@ _horario_actual = {"chequeo1_hora": None, "chequeo1_minuto": None, "chequeo2_hor
 # el portal de SUNAT, sin sumarle carga real al sistema (es 1 sola sesion
 # de Selenium cada vez, y solo si hay una empresa marcada como canario).
 CANARIO_INTERVALO_MIN = int(os.environ.get("CANARIO_INTERVALO_MIN", "30"))
+
+# Modulo Cumplimiento: lecturas automaticas, despues de que termine la
+# consulta masiva de la manana (11:00 UTC, tarda ~2h con 60+ empresas) para
+# no competir por los mismos cupos de SUNAT.
+#   DEUDAS_HORA_UTC=13:30 -> 8:30 hora Peru (todas las empresas, cada dia)
+#   SIRE_HORA_UTC=15:30   -> 10:30 hora Peru (solo las que lo necesitan, ver
+#                            app.scheduler_job.empresas_para_refresco_sire)
+DEUDAS_HORA_UTC = int(os.environ.get("DEUDAS_HORA_UTC", "13"))
+DEUDAS_MINUTO_UTC = int(os.environ.get("DEUDAS_MINUTO_UTC", "30"))
+SIRE_HORA_UTC = int(os.environ.get("SIRE_HORA_UTC", "15"))
+SIRE_MINUTO_UTC = int(os.environ.get("SIRE_MINUTO_UTC", "30"))
 
 
 def job_chequeo(etiqueta: str):
@@ -151,6 +163,22 @@ def job_recargar_horarios(scheduler):
         )
 
     _horario_actual.update(horarios)
+
+
+def job_deudas_diario():
+    logger.info("Encolando la lectura diaria de deudas (valores pendientes)...")
+    try:
+        logger.info(f"Lectura diaria de deudas encolada: {encolar_deudas_diario()}")
+    except Exception:
+        logger.exception("Fallo la lectura diaria de deudas")
+
+
+def job_sire_programado():
+    logger.info("Encolando la lectura programada del SIRE...")
+    try:
+        logger.info(f"Lectura programada del SIRE encolada: {encolar_sire_programado()}")
+    except Exception:
+        logger.exception("Fallo la lectura programada del SIRE")
 
 
 def job_limpieza_diagnosticos():
@@ -291,6 +319,16 @@ if __name__ == "__main__":
         CronTrigger(hour=6, minute=0),
         id="recordatorio_tareas",
     )
+    scheduler.add_job(
+        job_deudas_diario,
+        CronTrigger(hour=DEUDAS_HORA_UTC, minute=DEUDAS_MINUTO_UTC),
+        id="deudas_diario",
+    )
+    scheduler.add_job(
+        job_sire_programado,
+        CronTrigger(hour=SIRE_HORA_UTC, minute=SIRE_MINUTO_UTC),
+        id="sire_programado",
+    )
     logger.info(
         "Scheduler arrancado. Chequeos diarios a las "
         f"{horarios_iniciales['chequeo1_hora']:02d}:{horarios_iniciales['chequeo1_minuto']:02d} UTC y "
@@ -303,6 +341,8 @@ if __name__ == "__main__":
         "Limpieza de datos de diagnostico a las 04:30 UTC. "
         "Generacion de tareas del mes (todos los tenants) a las 05:15 UTC. "
         "Recordatorio por correo de tareas por vencer a las 06:00 UTC. "
+        f"Lectura de deudas a las {DEUDAS_HORA_UTC:02d}:{DEUDAS_MINUTO_UTC:02d} UTC y "
+        f"del SIRE (las que lo necesitan) a las {SIRE_HORA_UTC:02d}:{SIRE_MINUTO_UTC:02d} UTC. "
         "(para probar sin esperar, usa los endpoints /admin/chequeo-nocturno, "
         "/admin/enviar-resumenes, /admin/canario/ejecutar, /admin/limpieza-diagnosticos "
         "y POST /cronograma/sincronizar; para tareas, POST /tareas/generar)"

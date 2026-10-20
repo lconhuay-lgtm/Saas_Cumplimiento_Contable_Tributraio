@@ -23,6 +23,7 @@ import base64
 import logging
 import hashlib
 import json
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse, parse_qs, urljoin
 
 import config
@@ -49,6 +50,26 @@ def mensaje_id(fecha: str, asunto: str) -> str:
     funcion cambia, jobs.py debe cambiar igual o dejan de coincidir.
     """
     return hashlib.sha256(f"{fecha}|{asunto}".encode("utf-8")).hexdigest()
+
+
+# Fragmento que el frontend busca (empresas/page.js, ERROR_CREDENCIALES_INCORRECTAS)
+# para pedirle al usuario que corrija la clave -- solo debe aparecer cuando
+# SUNAT realmente la rechazo.
+ERROR_CREDENCIALES_INCORRECTAS = "revisa usuario/clave"
+
+
+def error_inicio_sesion(navegador: SunatWebNavigator) -> str:
+    """
+    Mensaje para un login fallido. Antes TODO fallo decia "revisa
+    usuario/clave", aunque la causa fuera SUNAT lento o una pagina que no
+    cargo -- el cliente terminaba cambiando una clave que estaba bien.
+    """
+    if navegador.credenciales_rechazadas:
+        return f"SUNAT rechazo el usuario o la clave SOL ({ERROR_CREDENCIALES_INCORRECTAS})"
+    return (
+        "No se pudo completar el ingreso a SUNAT porque el portal no respondio como se esperaba "
+        "(SUNAT no rechazo el usuario ni la clave). Intenta de nuevo en unos minutos."
+    )
 
 
 def consultar_buzon(
@@ -143,7 +164,7 @@ def consultar_buzon(
 
         _reportar("autenticando")
         if not navegador._hacer_clicks_sunat(empresa):
-            return {"ok": False, "mensajes": [], "documentos": {}, "mensajes_bandeja": [], "razon_social_sunat": navegador.razon_social_detectada, "condicion_domicilio": navegador.condicion_domicilio_detectada, "estado_contribuyente": None, "estado_contribuyente_verificado": False, "flujo_detectado": navegador.flujo_detectado, "error": "No se pudo iniciar sesion en SUNAT (revisa usuario/clave)"}
+            return {"ok": False, "mensajes": [], "documentos": {}, "mensajes_bandeja": [], "razon_social_sunat": navegador.razon_social_detectada, "condicion_domicilio": navegador.condicion_domicilio_detectada, "estado_contribuyente": None, "estado_contribuyente_verificado": False, "flujo_detectado": navegador.flujo_detectado, "error": error_inicio_sesion(navegador), "credenciales_rechazadas": navegador.credenciales_rechazadas}
 
         # Se hace ANTES de navegar al Buzon (no despues) porque el
         # desplegable del nombre y el boton "Ver Ficha Ruc" viven en esta
@@ -885,7 +906,7 @@ def generar_ficha_ruc_pdf(
 
         _reportar("autenticando")
         if not navegador._hacer_clicks_sunat(empresa):
-            return {"ok": False, "pdf_bytes": None, "error": "No se pudo iniciar sesion en SUNAT (revisa usuario/clave)"}
+            return {"ok": False, "pdf_bytes": None, "error": error_inicio_sesion(navegador), "credenciales_rechazadas": navegador.credenciales_rechazadas}
 
         driver = navegador.driver
 
@@ -1137,7 +1158,7 @@ def generar_reporte_tributario_terceros(
 
         _reportar("autenticando")
         if not navegador._hacer_clicks_sunat(empresa):
-            return {"ok": False, "error": "No se pudo iniciar sesion en SUNAT (revisa usuario/clave)", "solicitud_pudo_haberse_enviado": False}
+            return {"ok": False, "error": error_inicio_sesion(navegador), "solicitud_pudo_haberse_enviado": False, "credenciales_rechazadas": navegador.credenciales_rechazadas}
 
         driver = navegador.driver
         ventana_original = driver.current_window_handle
@@ -1322,6 +1343,43 @@ def generar_reporte_tributario_terceros(
         navegador.close_browser()
 
 
+def _abrir_opcion_menu_sol(navegador: SunatWebNavigator, ids_menu, codigo_opcion: str, nombre_opcion: str) -> str | None:
+    """
+    Recorre el Menu SOL clic por clic (ids_menu, del nivel 1 al 4) y deja el
+    driver DENTRO del iframe donde SUNAT carga esa opcion (su src lleva
+    code=<codigo_opcion>). Devuelve None si quedo lista, o el mensaje de
+    error para el usuario.
+
+    El alert de "listarAlertas" (error 500 propio de SUNAT al cargar el Menu
+    SOL, ver _cerrar_alerta_si_aparece) bloquea cualquier comando de
+    Selenium mientras siga abierto, asi que se descarta antes de cada clic.
+    """
+    driver = navegador.driver
+    driver.switch_to.default_content()
+    time.sleep(2)
+    navegador._cerrar_alerta_si_aparece()
+    for elid in ids_menu:
+        navegador._cerrar_alerta_si_aparece()
+        elementos = driver.find_elements(By.ID, elid)
+        if not elementos:
+            return f"El Menu SOL de esta empresa no muestra {nombre_opcion}"
+        driver.execute_script("arguments[0].click();", elementos[0])
+        time.sleep(2)
+
+    for _ in range(30):
+        navegador._cerrar_alerta_si_aparece()
+        frame = next(
+            (f for f in driver.find_elements(By.TAG_NAME, "iframe")
+             if f"code={codigo_opcion}" in (f.get_attribute("src") or "")),
+            None,
+        )
+        if frame is not None:
+            driver.switch_to.frame(frame)
+            return None
+        time.sleep(1)
+    return f"SUNAT no abrio la pantalla de {nombre_opcion}"
+
+
 # Codigos de libro que usa la API interna del SIRE (los mismos que pide la
 # pantalla de Gestion de Ventas / Gestion de Compras de SUNAT).
 LIBROS_SIRE = {"RVIE": "140000", "RCE": "080000"}
@@ -1371,32 +1429,17 @@ def consultar_estado_sire(
 
         _reportar("autenticando")
         if not navegador._hacer_clicks_sunat(empresa):
-            return {"ok": False, "error": "No se pudo iniciar sesion en SUNAT", "libros": {}}
+            return {"ok": False, "error": error_inicio_sesion(navegador), "libros": {}, "credenciales_rechazadas": navegador.credenciales_rechazadas}
 
         driver = navegador.driver
         driver.switch_to.default_content()
 
         _reportar("abriendo_sire")
-        for elid in _MENU_GESTION_VENTAS_SIRE:
-            elementos = driver.find_elements(By.ID, elid)
-            if not elementos:
-                return {"ok": False, "error": "El Menu SOL de esta empresa no muestra el SIRE (Registros Electronicos)", "libros": {}}
-            driver.execute_script("arguments[0].click();", elementos[0])
-            time.sleep(2)
-
-        frame_sire = None
-        for _ in range(30):
-            frame_sire = next(
-                (f for f in driver.find_elements(By.TAG_NAME, "iframe")
-                 if "code=60.2.1.1.1" in (f.get_attribute("src") or "")),
-                None,
-            )
-            if frame_sire:
-                break
-            time.sleep(1)
-        if frame_sire is None:
-            return {"ok": False, "error": "No se abrio la pantalla de Gestion de Ventas del SIRE", "libros": {}}
-        driver.switch_to.frame(frame_sire)
+        error_menu = _abrir_opcion_menu_sol(
+            navegador, _MENU_GESTION_VENTAS_SIRE, "60.2.1.1.1", "el SIRE (Registros Electronicos)"
+        )
+        if error_menu:
+            return {"ok": False, "error": error_menu, "libros": {}}
 
         try:
             WebDriverWait(driver, 45).until(
@@ -1442,5 +1485,204 @@ def consultar_estado_sire(
     except Exception as e:
         logger.error(f"Error consultando el SIRE de {ruc}: {e}")
         return {"ok": False, "error": str(e), "libros": {}}
+    finally:
+        navegador.close_browser()
+
+
+# Menu SOL: Revision de mis deudas > Valores pendientes de pago > Valores > Consulta valores pendientes de pago.
+_MENU_VALORES_PENDIENTES = ("nivel1_15", "nivel2_15_1", "nivel3_15_1_1", "nivel4_15_1_1_1_1")
+# Desde que periodo se revisan los valores (pedido: "desde el ejercicio 2020").
+PERIODO_INICIO_VALORES = "202001"
+# La pantalla de SUNAT no acepta rangos de mas de 6 meses (validacion "menorSeisMeses").
+_MESES_POR_CONSULTA_VALORES = 6
+_ZONA_LIMA = timezone(timedelta(hours=-5))
+_MARCA_LISTADO_VALORES = b"var ListadoValores ="
+
+
+def _ultimo_periodo_consultable_valores(hoy: datetime | None = None) -> str:
+    """El mes anterior al actual (hora Peru): SUNAT rechaza el periodo en curso ("periodoMenorActual")."""
+    hoy = hoy or datetime.now(_ZONA_LIMA)
+    anio, mes = (hoy.year, hoy.month - 1) if hoy.month > 1 else (hoy.year - 1, 12)
+    return f"{anio}{mes:02d}"
+
+
+def tramos_periodos(desde: str, hasta: str, meses: int = _MESES_POR_CONSULTA_VALORES) -> list[tuple[str, str]]:
+    """Parte el rango AAAAMM..AAAAMM en tramos de `meses` meses como maximo, en orden."""
+    inicio = int(desde[:4]) * 12 + int(desde[4:]) - 1
+    fin = int(hasta[:4]) * 12 + int(hasta[4:]) - 1
+    tramos = []
+    while inicio <= fin:
+        cierre = min(inicio + meses - 1, fin)
+        tramos.append((f"{inicio // 12}{inicio % 12 + 1:02d}", f"{cierre // 12}{cierre % 12 + 1:02d}"))
+        inicio = cierre + 1
+    return tramos
+
+
+def extraer_listado_valores(html: bytes) -> list[dict] | None:
+    """
+    La pantalla de resultados no trae una tabla HTML: la arma en el navegador
+    desde `var ListadoValores = [...]` (JSON). None si la respuesta no es esa
+    pantalla (sesion vencida, pagina de error de SUNAT).
+
+    Ojo con la codificacion: la plantilla es UTF-8 pero los datos vienen en
+    Latin-1 ("Resoluci\\xf3n de Multa", confirmado con Bascat 20/10/2026), asi
+    que se decodifica solo el JSON, probando UTF-8 primero por si SUNAT lo
+    corrige algun dia.
+    """
+    inicio = html.find(_MARCA_LISTADO_VALORES)
+    if inicio < 0:
+        return None
+    resto = html[inicio + len(_MARCA_LISTADO_VALORES):]
+    try:
+        texto = resto.decode("utf-8")
+    except UnicodeDecodeError:
+        texto = resto.decode("cp1252", errors="replace")
+    listado, _ = json.JSONDecoder().raw_decode(texto.lstrip())
+    return listado
+
+
+def _texto(valor) -> str:
+    return str(valor if valor is not None else "").strip()
+
+
+def _fecha_iso(ddmmaaaa) -> str | None:
+    try:
+        fecha = datetime.strptime(_texto(ddmmaaaa), "%d/%m/%Y")
+    except ValueError:
+        return None
+    return fecha.date().isoformat() if fecha.year > 1900 else None
+
+
+def _monto(valor) -> float:
+    try:
+        return round(float(_texto(valor) or 0), 2)
+    except ValueError:
+        return 0.0
+
+
+def normalizar_valor(crudo: dict) -> dict:
+    """Pasa un elemento de ListadoValores (nombres internos de SUNAT) a los campos que guarda el sistema."""
+    periodo = _texto(crudo.get("perDoc"))
+    etapa = _texto(crudo.get("desEtaBas")) or _texto(crudo.get("desEta"))
+    etapa_cod = _texto(crudo.get("codEta"))
+    return {
+        "num_valor": _texto(crudo.get("numVal")),
+        "tipo": _texto(crudo.get("desCor")),  # OP, RM, RD...
+        "tipo_descripcion": _texto(crudo.get("desLar")),  # Orden de Pago, Resolucion de Multa...
+        "periodo": f"{periodo[:4]}-{periodo[4:]}" if len(periodo) == 6 and periodo.isdigit() else periodo,
+        "cod_tributo": _texto(crudo.get("codTri")),
+        "tributo": _texto(crudo.get("descLarTrib")),
+        "fecha_emision": _fecha_iso(crudo.get("strFecEmi")),
+        "fecha_notificacion": _fecha_iso(crudo.get("strFecNot")),
+        "estado": _texto(crudo.get("desEst")),
+        "etapa_cod": etapa_cod,
+        "etapa": etapa,
+        "etapa_alterna": _texto(crudo.get("desEtaAlt")),
+        "en_cobranza_coactiva": etapa_cod == "03" or "coactiva" in etapa.lower(),
+        "num_expediente_coactivo": _texto(crudo.get("numExpCoa")) or None,
+        "monto_tributo": _monto(crudo.get("mtoTri")),
+        "interes": _monto(crudo.get("montoInteresSolesAct")),
+        "saldo_total": _monto(crudo.get("saldoTotal")),
+        "saldo_exigible": _monto(crudo.get("saldoExigible")),
+    }
+
+
+def consultar_valores_pendientes(
+    ruc: str,
+    usuario_sol: str,
+    clave_sol: str,
+    razon_social: str = "",
+    headless: bool = True,
+    on_progreso=None,
+    desde: str = PERIODO_INICIO_VALORES,
+) -> dict:
+    """
+    SOLO LECTURA: abre "Consulta valores pendientes de pago" y pide, desde la
+    propia pantalla y con su misma sesion, el mismo POST que hace su boton
+    Consultar -- una vez por cada tramo de 6 meses entre `desde` y el mes
+    pasado. No usa "Generar Reporte" (SUNAT lo limita a 3 por dia).
+
+    Solo devuelve ok=True si TODOS los tramos se leyeron: el llamador marca
+    como "ya no aparece" lo que no venga en la lista, asi que una lectura a
+    medias haria parecer pagadas deudas que siguen vigentes.
+
+    Returns:
+        {"ok": bool, "error": str | None, "desde": "AAAAMM", "hasta": "AAAAMM",
+         "valores": [normalizar_valor(...), ...]}
+    """
+    def _reportar(etapa: str):
+        if on_progreso is None:
+            return
+        try:
+            on_progreso(etapa)
+        except Exception as e:
+            logger.warning(f"El callback de progreso fallo (no es grave, se sigue igual): {e}")
+
+    hasta = _ultimo_periodo_consultable_valores()
+    resultado_vacio = {"ok": False, "error": None, "desde": desde, "hasta": hasta, "valores": []}
+    empresa = {"ruc": ruc, "usuario": usuario_sol, "clave": clave_sol, "razon_social": razon_social}
+    navegador = SunatWebNavigator(empresa=empresa, headless=headless)
+    try:
+        if not navegador.initialize_browser():
+            return {**resultado_vacio, "error": "No se pudo iniciar el navegador"}
+
+        _reportar("iniciando_sesion")
+        navegador.driver.get(config.URL_SUNAT)
+        time.sleep(3)
+
+        _reportar("autenticando")
+        if not navegador._hacer_clicks_sunat(empresa):
+            return {**resultado_vacio, "error": error_inicio_sesion(navegador), "credenciales_rechazadas": navegador.credenciales_rechazadas}
+
+        _reportar("abriendo_deudas")
+        error_menu = _abrir_opcion_menu_sol(
+            navegador, _MENU_VALORES_PENDIENTES, "15.1.1.1.1", "la consulta de Valores pendientes de pago"
+        )
+        if error_menu:
+            return {**resultado_vacio, "error": error_menu}
+        driver = navegador.driver
+        try:
+            WebDriverWait(driver, 40).until(lambda d: d.find_elements(By.ID, "txtStartDate"))
+        except Exception:
+            navegador._guardar_captura_error("valores_sin_formulario")
+            return {**resultado_vacio, "error": "La consulta de Valores pendientes de pago no termino de cargar"}
+
+        _reportar("leyendo_deudas")
+        driver.set_script_timeout(90)
+        por_numero: dict[str, dict] = {}
+        for ini, fin in tramos_periodos(desde, hasta):
+            status, cuerpo_b64 = driver.execute_async_script(
+                """
+                var done = arguments[arguments.length - 1];
+                var cuerpo = new URLSearchParams({txtStartDate: arguments[0], txtEndDate: arguments[1], txtNumValor: ''});
+                fetch('consulta', {method: 'POST', body: cuerpo, credentials: 'include'})
+                  .then(function (r) { return r.arrayBuffer().then(function (buf) {
+                      var bytes = new Uint8Array(buf), bin = '';
+                      for (var i = 0; i < bytes.length; i += 8192) {
+                          bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+                      }
+                      done([r.status, btoa(bin)]);
+                  }); })
+                  .catch(function (e) { done([0, '']); });
+                """,
+                ini, fin,
+            )
+            listado = extraer_listado_valores(base64.b64decode(cuerpo_b64 or "")) if status == 200 else None
+            if listado is None:
+                logger.warning(f"Valores {ruc}: el tramo {ini}-{fin} no devolvio el listado (HTTP {status})")
+                navegador._guardar_captura_error("valores_tramo_sin_listado")
+                return {**resultado_vacio, "error": f"SUNAT no devolvio la lista de valores del tramo {ini}-{fin} (HTTP {status})"}
+            for crudo in listado:
+                valor = normalizar_valor(crudo)
+                if valor["num_valor"]:
+                    por_numero[valor["num_valor"]] = valor
+            time.sleep(0.5)
+
+        logger.info(f"Valores pendientes {ruc}: {len(por_numero)} valor(es) entre {desde} y {hasta}")
+        return {"ok": True, "error": None, "desde": desde, "hasta": hasta, "valores": list(por_numero.values())}
+
+    except Exception as e:
+        logger.error(f"Error consultando los valores pendientes de {ruc}: {e}")
+        return {**resultado_vacio, "error": str(e)}
     finally:
         navegador.close_browser()

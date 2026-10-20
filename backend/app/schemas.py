@@ -1,5 +1,5 @@
 """Schemas Pydantic -- validacion de entrada/salida de la API."""
-from datetime import datetime
+from datetime import date, datetime
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -241,6 +241,70 @@ class CumplimientoSireResponse(BaseModel):
     anio: int
     anios_disponibles: list[int]
     filas: list[CumplimientoSireFila]
+
+
+class ConsultaDeudasJobResponse(BaseModel):
+    id: str
+    empresa_id: str
+    estado: str
+    etapa: str | None = None
+    valores_vigentes: int
+    valores_nuevos: int
+    creado_en: datetime
+    iniciado_en: datetime | None
+    finalizado_en: datetime | None
+    error: str | None
+
+    class Config:
+        from_attributes = True
+
+
+class EventoValorDeuda(BaseModel):
+    fecha: datetime
+    evento: str  # nuevo | cambio_etapa | cambio_saldo | ya_no_aparece | reaparecio
+    detalle: str = ""
+
+
+class ValorDeudaItem(BaseModel):
+    num_valor: str
+    tipo: str
+    tipo_descripcion: str
+    periodo: str
+    cod_tributo: str
+    tributo: str
+    fecha_emision: date | None
+    fecha_notificacion: date | None
+    estado: str
+    etapa: str
+    etapa_alterna: str
+    en_cobranza_coactiva: bool
+    num_expediente_coactivo: str | None
+    monto_tributo: float
+    interes: float
+    saldo_total: float
+    saldo_exigible: float
+    vigente: bool
+    detectado_en: datetime
+    visto_en: datetime
+    ya_no_aparece_desde: datetime | None
+    historial: list[EventoValorDeuda]
+
+    class Config:
+        from_attributes = True
+
+
+class CumplimientoDeudasFila(BaseModel):
+    empresa_id: str
+    ruc: str
+    razon_social: str
+    valores: list[ValorDeudaItem]
+    actualizado_en: datetime | None  # ultima lectura completa a SUNAT
+    consulta_en_curso: bool
+    ultimo_error: str | None = None
+
+
+class CumplimientoDeudasResponse(BaseModel):
+    filas: list[CumplimientoDeudasFila]
 
 
 class ReporteTributarioJobResponse(BaseModel):

@@ -5,15 +5,16 @@ periodo, leido de SUNAT SOL (Gestion de Ventas/Compras). Alimenta el modulo
 Cumplimiento: una lectura trae todos los periodos de todos los anios de una
 empresa, asi que el cuadro por anio se arma aca desde lo ya guardado.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import ConsultaSireJob, CredencialSol, CronogramaVencimiento, Empresa, SireEstadoPeriodo, Usuario
+from app.models import ConsultaSireJob, CronogramaVencimiento, Empresa, SireEstadoPeriodo, Usuario
 from app.cronograma_sunat import grupo_para_empresa
+from app.cumplimiento import ESTADOS_EN_CURSO as _ESTADOS_EN_CURSO, encolar_lecturas, filtrar_activas_en_sunat
 from app.schemas import (
     ConsultaSireJobResponse, CumplimientoSireFila, CumplimientoSireResponse,
     SireEstadoLibro, SirePeriodoItem,
@@ -21,12 +22,10 @@ from app.schemas import (
 from app.deps import get_usuario_actual
 from app.queue_conn import cola_consultas
 from app.jobs import ejecutar_consulta_sire
-from app.rate_limit import verificar_limite_ruc, espaciado_consultas_seg, LimiteExcedido
+from app.rate_limit import verificar_limite_ruc, LimiteExcedido
 from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible
 
 router = APIRouter(tags=["sire"])
-
-_ESTADOS_EN_CURSO = ("pendiente", "en_progreso")
 
 
 @router.post("/empresas/{empresa_id}/sire/consultar", response_model=ConsultaSireJobResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -65,7 +64,7 @@ def cumplimiento_sire(
 ):
     """Cuadro de control: estado SIRE (RVIE/RCE) de cada empresa visible, mes por mes, para un anio."""
     empresas = (
-        filtrar_empresas_visibles(db.query(Empresa), usuario)
+        filtrar_activas_en_sunat(filtrar_empresas_visibles(db.query(Empresa), usuario))
         .filter(Empresa.activo.is_(True))
         .order_by(Empresa.razon_social)
         .all()
@@ -145,32 +144,9 @@ def consultar_sire_todas(
     db: Session = Depends(get_db),
 ):
     """Encola la lectura del SIRE de todas las empresas visibles, espaciadas igual que la consulta masiva del buzon."""
-    espaciado_seg = espaciado_consultas_seg()
     empresas = (
-        filtrar_empresas_visibles(db.query(Empresa), usuario)
+        filtrar_activas_en_sunat(filtrar_empresas_visibles(db.query(Empresa), usuario))
         .filter(Empresa.activo.is_(True))
         .all()
     )
-    encoladas = 0
-    saltadas = 0
-    for empresa in empresas:
-        tiene_credencial = db.query(CredencialSol.id).filter(CredencialSol.empresa_id == empresa.id).first()
-        ya_en_curso = (
-            db.query(ConsultaSireJob.id)
-            .filter(ConsultaSireJob.empresa_id == empresa.id, ConsultaSireJob.estado.in_(_ESTADOS_EN_CURSO))
-            .first()
-        )
-        if not tiene_credencial or ya_en_curso:
-            saltadas += 1
-            continue
-        job = ConsultaSireJob(empresa_id=empresa.id, solicitado_por=usuario.id, estado="pendiente")
-        db.add(job)
-        db.commit()
-        cola_consultas.enqueue_in(
-            timedelta(seconds=encoladas * espaciado_seg),
-            ejecutar_consulta_sire,
-            job.id,
-            job_timeout="10m",
-        )
-        encoladas += 1
-    return {"empresas_encoladas": encoladas, "saltadas": saltadas, "espaciado_seg": espaciado_seg}
+    return encolar_lecturas(db, empresas, ConsultaSireJob, ejecutar_consulta_sire, solicitado_por=usuario.id)

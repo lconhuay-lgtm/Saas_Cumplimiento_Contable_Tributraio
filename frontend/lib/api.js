@@ -253,6 +253,9 @@ export const api = {
   obtenerCumplimientoSire: (anio) => apiFetch(`/cumplimiento/sire${anio ? `?anio=${anio}` : ""}`),
   consultarSireTodas: () => apiFetch(`/cumplimiento/sire/consultar-todas`, { method: "POST" }),
   consultarSire: (empresaId) => apiFetch(`/empresas/${empresaId}/sire/consultar`, { method: "POST" }),
+  obtenerCumplimientoDeudas: () => apiFetch(`/cumplimiento/deudas`),
+  consultarDeudasTodas: () => apiFetch(`/cumplimiento/deudas/consultar-todas`, { method: "POST" }),
+  consultarDeudas: (empresaId) => apiFetch(`/empresas/${empresaId}/deudas/consultar`, { method: "POST" }),
 
   // Modulo de cronograma SUNAT: sincronizar a mano (por si SUNAT publica
   // una modificacion a mitad de ano), agenda por mes (calendario), y
