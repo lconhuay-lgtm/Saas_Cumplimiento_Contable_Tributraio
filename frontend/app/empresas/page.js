@@ -305,29 +305,6 @@ function EmpresasPageContenido() {
     setPidiendoReporteTributario({ empresa });
   }
 
-  // Reporte Tributario para Terceros: informacion RESERVADA (Art. 85 del
-  // Codigo Tributario) que SUNAT genera y manda por su cuenta al correo
-  // indicado -- a diferencia de la Ficha RUC, aca no hay ningun PDF que
-  // esta app descargue ni muestre, solo se dispara la solicitud y se
-  // confirma que SUNAT la recibio.
-  async function solicitarReporteTributario(empresa, correo) {
-    try {
-      const job = await api.generarReporteTributario(empresa.id, correo);
-      // El polling real vive en TrabajosContext -- sobrevive si el usuario
-      // navega a otra pantalla mientras SUNAT procesa la solicitud.
-      const jobFinal = await iniciarTrabajo("reporte", empresa.id, empresa.razon_social, job.id);
-      if (jobFinal.estado === "completado") {
-        alert(`Reporte Tributario solicitado correctamente. SUNAT lo enviara a ${correo} en los proximos minutos.`);
-      } else if (jobFinal.estado === "error") {
-        alert(`No se pudo solicitar el Reporte Tributario: ${jobFinal.error || "error desconocido"}`);
-      }
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      quitar("reporte", empresa.id);
-    }
-  }
-
   async function togglePausa(empresa) {
     try {
       await api.actualizarEmpresa(empresa.id, { activo: !empresa.activo });
@@ -349,8 +326,8 @@ function EmpresasPageContenido() {
   // un login de prueba con Selenium solo para conseguir los datos frescos
   // que pide SUNAT en ese momento) -- la pestana muestra una pagina de
   // "Entrando a SUNAT..." mientras tanto.
-  async function entrarDirectoASunat(empresaId) {
-    const pestana = window.open("", "_blank");
+  async function entrarDirectoASunat(empresaId, nombreVentana = "_blank") {
+    const pestana = window.open("", nombreVentana);
     setEntrandoDirecto((prev) => ({ ...prev, [empresaId]: true }));
     try {
       const { token } = await api.obtenerTokenIngresoDirecto(empresaId);
@@ -674,12 +651,9 @@ function EmpresasPageContenido() {
       {pidiendoReporteTributario && (
         <ModalReporteTributario
           info={pidiendoReporteTributario}
-          onCancelar={() => setPidiendoReporteTributario(null)}
-          onConfirmar={(correo) => {
-            const { empresa } = pidiendoReporteTributario;
-            setPidiendoReporteTributario(null);
-            solicitarReporteTributario(empresa, correo);
-          }}
+          iniciandoSesion={!!entrandoDirecto[pidiendoReporteTributario.empresa.id]}
+          onIniciarSesion={(nombreVentana) => entrarDirectoASunat(pidiendoReporteTributario.empresa.id, nombreVentana)}
+          onCerrar={() => setPidiendoReporteTributario(null)}
         />
       )}
     </div>
@@ -906,7 +880,7 @@ function TarjetaEmpresa({
         <button
           onClick={onSolicitarReporteTributario}
           disabled={solicitandoReporte}
-          title="Solicita el Reporte Tributario para Terceros (informacion reservada) y pide que SUNAT lo envie por correo"
+          title="Abre en SUNAT el formulario del Reporte Tributario para Terceros (informacion reservada) para que lo envies por correo"
           className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-bold text-amber-700 transition-all duration-300 ease-out hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:hover:translate-y-0"
         >
           {solicitandoReporte ? (
@@ -1130,94 +1104,87 @@ function ModalElegirTipoFichaRuc({ info, onCancelar, onElegir }) {
   );
 }
 
-function ModalReporteTributario({ info, onCancelar, onConfirmar }) {
-  const [correo, setCorreo] = useState("");
-  const [limite, setLimite] = useState(null); // {usados_hoy, limite} | null
-  const [cargandoLimite, setCargandoLimite] = useState(true);
+// SUNAT exige desde octubre 2026 una verificacion humana (Cloudflare
+// Turnstile) para enviar el Reporte Tributario, asi que ya no lo manda el
+// robot: se abre en el navegador del propio usuario, en 2 pasos -- 1) el
+// ingreso directo de siempre (inicia la sesion) y 2) este enlace, que con la
+// sesion ya abierta lleva derecho al formulario (probado 20/10/2026). No
+// alcanza con un solo paso: si el enlace va como destino del login, SUNAT le
+// pega su propio "?state=" al final y lo rompe.
+const VENTANA_REPORTE_TRIBUTARIO = "sunat_reporte_tributario";
+const URL_REPORTE_TRIBUTARIO_SUNAT =
+  "https://e-menu.sunat.gob.pe/cl-ti-itmenu/MenuInternet.htm?action=execute&code=10.11.1.1.1&s=ww1";
 
-  useEffect(() => {
-    let cancelado = false;
-    api
-      .obtenerLimiteReporteTributario(info.empresa.id)
-      .then((data) => {
-        if (!cancelado) setLimite(data);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelado) setCargandoLimite(false);
-      });
-    return () => {
-      cancelado = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [info.empresa.id]);
+function ModalReporteTributario({ info, iniciandoSesion, onIniciarSesion, onCerrar }) {
+  const [sesionPedida, setSesionPedida] = useState(false);
 
-  const limiteAlcanzado = limite && limite.usados_hoy >= limite.limite;
+  function iniciarSesion() {
+    setSesionPedida(true);
+    onIniciarSesion(VENTANA_REPORTE_TRIBUTARIO);
+  }
 
-  function onSubmit(e) {
-    e.preventDefault();
-    if (!correo) return;
-    onConfirmar(correo);
+  function abrirFormulario() {
+    window.open(URL_REPORTE_TRIBUTARIO_SUNAT, VENTANA_REPORTE_TRIBUTARIO);
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-6" onClick={onCancelar}>
-      <form
-        onSubmit={onSubmit}
-        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-soft-lg"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-6" onClick={onCerrar}>
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-soft-lg" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-base font-bold text-ink">Reporte Tributario para Terceros -- {info.empresa.razon_social}</h3>
 
-        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
+        <p className="mt-3 text-sm text-slate-600">
+          SUNAT ahora pide comprobar que eres una persona ("Verify you are human") para enviar este reporte, asi que lo
+          envias tu mismo desde SUNAT. Te dejamos en la pantalla correcta:
+        </p>
+
+        <ol className="mt-4 space-y-3">
+          <li className="rounded-lg border border-slate-100 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Paso 1</p>
+            <button
+              type="button"
+              onClick={iniciarSesion}
+              disabled={iniciandoSesion}
+              className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-soft transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-accent-dark disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {iniciandoSesion && <Loader2 size={14} strokeWidth={2} className="animate-spin" />}
+              Iniciar sesion en SUNAT
+            </button>
+            <p className="mt-1.5 text-xs text-slate-400">Se abre una pestana nueva y entra solo (tarda unos segundos).</p>
+          </li>
+          <li className="rounded-lg border border-slate-100 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Paso 2 -- cuando ya veas el Menu SOL</p>
+            <button
+              type="button"
+              onClick={abrirFormulario}
+              className={`mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg px-4 py-2.5 text-sm font-semibold shadow-soft transition-all duration-300 ease-out hover:-translate-y-0.5 ${
+                sesionPedida ? "bg-amber-600 text-white hover:bg-amber-700" : "bg-amber-50 text-amber-700"
+              }`}
+            >
+              <Mail size={14} strokeWidth={2} />
+              Abrir el Reporte Tributario
+            </button>
+            <p className="mt-1.5 text-xs text-slate-400">
+              Ahi marca "Acepto", escribe el correo, completa la verificacion y presiona Enviar.
+            </p>
+          </li>
+        </ol>
+
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
           <p className="font-semibold">Esta informacion es RESERVADA (Art. 85 del Codigo Tributario).</p>
           <ul className="mt-1.5 list-disc space-y-1 pl-4">
             <li>Corresponde a las ultimas declaraciones presentadas (incluye sustitutorias/rectificatorias).</li>
-            <li>Las declaraciones se ven con un desfase referencial de 10 dias despues de presentadas.</li>
             <li>SUNAT permite generar solamente 3 reportes por dia -- el que se envia es el ultimo generado.</li>
           </ul>
         </div>
 
-        <p className="mt-3 text-xs text-slate-400">
-          {cargandoLimite
-            ? "Consultando cuantas veces se solicito hoy..."
-            : limite
-            ? `Ya usaste ${limite.usados_hoy} de ${limite.limite} solicitudes de hoy para esta empresa.`
-            : "SUNAT permite generar solamente 3 reportes por dia por empresa."}
-        </p>
-
-        <div className="mt-4">
-          <label htmlFor="correoReporte" className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-500">
-            Correo al que SUNAT enviara el reporte
-          </label>
-          <input
-            id="correoReporte"
-            type="email"
-            value={correo}
-            onChange={(e) => setCorreo(e.target.value)}
-            required
-            placeholder="correo@ejemplo.com"
-            className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-ink outline-none transition-all duration-300 ease-out focus:border-accent focus:ring-4 focus:ring-accent-light"
-          />
-        </div>
-
-        <div className="mt-5 flex flex-col gap-2">
-          <button
-            type="submit"
-            title={limiteAlcanzado ? "Ya usaste el limite de hoy -- SUNAT devolvera el ultimo reporte ya generado" : undefined}
-            className="flex items-center justify-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white shadow-soft transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-amber-700"
-          >
-            Confirmar y enviar{limiteAlcanzado ? " (limite del dia alcanzado)" : ""}
-          </button>
-          <button
-            type="button"
-            onClick={onCancelar}
-            className="mt-1 flex items-center justify-center rounded-lg px-4 py-2 text-xs font-medium text-slate-400 transition-colors duration-300 ease-out hover:text-slate-600"
-          >
-            Cancelar
-          </button>
-        </div>
-      </form>
+        <button
+          type="button"
+          onClick={onCerrar}
+          className="mt-4 flex w-full items-center justify-center rounded-lg px-4 py-2 text-xs font-medium text-slate-400 transition-colors duration-300 ease-out hover:text-slate-600"
+        >
+          Cerrar
+        </button>
+      </div>
     </div>
   );
 }
