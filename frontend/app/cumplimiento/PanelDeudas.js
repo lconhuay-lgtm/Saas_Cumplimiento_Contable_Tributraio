@@ -1,5 +1,5 @@
 "use client";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -61,7 +61,9 @@ function resumirEmpresa(f) {
   };
 }
 
-export default function PanelDeudas() {
+// enfoque: {empresaId, valores: [num_valor]} | null -- viene de la ventana de
+// "Nuevas deudas en SUNAT": abre esa empresa, resalta esos valores y baja hasta ahi.
+export default function PanelDeudas({ enfoque = null }) {
   const [datos, setDatos] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
@@ -71,11 +73,31 @@ export default function PanelDeudas() {
   const [verHistorial, setVerHistorial] = useState(false);
   const [abiertas, setAbiertas] = useState({});
   const [encolando, setEncolando] = useState(false);
+  const enfoqueDesplazado = useRef(null);
 
   useEffect(() => {
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!enfoque) return;
+    setFiltro("todas");
+    setBusqueda("");
+    setAbiertas((a) => ({ ...a, [enfoque.empresaId]: true }));
+    enfoqueDesplazado.current = null;
+    cargar({ silencioso: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enfoque]);
+
+  useEffect(() => {
+    if (!enfoque || !datos || enfoqueDesplazado.current === enfoque) return;
+    const fila = document.getElementById(`deudas-empresa-${enfoque.empresaId}`);
+    if (fila) {
+      fila.scrollIntoView({ behavior: "smooth", block: "start" });
+      enfoqueDesplazado.current = enfoque;
+    }
+  }, [enfoque, datos, filtro]);
 
   const hayConsultasEnCurso = !!datos?.filas.some((f) => f.consulta_en_curso);
   useEffect(() => {
@@ -163,7 +185,7 @@ export default function PanelDeudas() {
         lineas.push([
           e.ruc, e.razon_social, v.num_valor, `${v.tipo} ${v.tipo_descripcion}`.trim(), v.periodo,
           `${v.cod_tributo} ${v.tributo}`.trim(), fechaIso(v.fecha_emision), fechaIso(v.fecha_notificacion),
-          v.etapa, v.num_expediente_coactivo || "", v.monto_tributo.toFixed(2), v.interes.toFixed(2),
+          v.etapa, v.num_expediente_coactivo || "", v.monto_tributo.toFixed(2), v.tributo_pendiente.toFixed(2), v.interes.toFixed(2),
           v.saldo_total.toFixed(2), v.vigente ? "Vigente" : `Ya no aparece desde ${fechaHora(v.ya_no_aparece_desde)}`,
           fechaHora(v.detectado_en),
         ])
@@ -172,7 +194,7 @@ export default function PanelDeudas() {
     descargarCsv(
       "deudas_valores_pendientes.csv",
       ["RUC", "Razon social", "Nro. valor", "Tipo", "Periodo", "Tributo", "Emision", "Notificacion", "Etapa",
-        "Exp. coactivo", "Tributo insoluto", "Interes", "Saldo total", "Situacion", "Detectado el"],
+        "Exp. coactivo", "Importe original", "Tributo pendiente", "Interes", "Saldo total", "Situacion", "Detectado el"],
       lineas
     );
   }
@@ -291,9 +313,14 @@ export default function PanelDeudas() {
               {visibles.map((e) => {
                 const abierta = !!abiertas[e.empresa_id];
                 const lista = verHistorial ? e.valores : e.vigentes;
+                const resaltados = enfoque?.empresaId === e.empresa_id ? enfoque.valores : [];
                 return (
                   <Fragment key={e.empresa_id}>
-                    <tr className="cursor-pointer hover:bg-slate-50/60" onClick={() => alternar(e.empresa_id)}>
+                    <tr
+                      id={`deudas-empresa-${e.empresa_id}`}
+                      className={`cursor-pointer scroll-mt-24 hover:bg-slate-50/60 ${resaltados.length ? "bg-amber-50/60" : ""}`}
+                      onClick={() => alternar(e.empresa_id)}
+                    >
                       <td className="max-w-[320px] px-4 py-2.5">
                         <div className="flex items-center gap-1.5">
                           {abierta ? <ChevronDown size={14} className="shrink-0 text-slate-400" /> : <ChevronRight size={14} className="shrink-0 text-slate-400" />}
@@ -367,7 +394,7 @@ export default function PanelDeudas() {
                                   <th className="py-1.5 pr-3">Emision</th>
                                   <th className="py-1.5 pr-3">Notificacion</th>
                                   <th className="py-1.5 pr-3">Etapa</th>
-                                  <th className="py-1.5 pr-3 text-right">Insoluto</th>
+                                  <th className="py-1.5 pr-3 text-right" title="Tributo que falta pagar, sin intereses">Tributo</th>
                                   <th className="py-1.5 pr-3 text-right">Interes</th>
                                   <th className="py-1.5 pr-3 text-right">Saldo</th>
                                   <th className="py-1.5">Situacion</th>
@@ -375,8 +402,21 @@ export default function PanelDeudas() {
                               </thead>
                               <tbody className="divide-y divide-slate-200/70">
                                 {lista.map((v) => (
-                                  <tr key={v.num_valor} className={v.vigente ? "text-ink" : "text-slate-400"} title={textoHistorial(v)}>
-                                    <td className="py-1.5 pr-3 font-mono">{v.num_valor}</td>
+                                  <tr
+                                    key={v.num_valor}
+                                    className={`${v.vigente ? "text-ink" : "text-slate-400"} ${
+                                      resaltados.includes(v.num_valor) ? "bg-amber-100/70 font-semibold" : ""
+                                    }`}
+                                    title={textoHistorial(v)}
+                                  >
+                                    <td className="py-1.5 pr-3 font-mono">
+                                      {v.num_valor}
+                                      {resaltados.includes(v.num_valor) && (
+                                        <span className="ml-1.5 rounded-full bg-amber-500 px-1.5 py-0.5 font-sans text-[10px] font-bold uppercase text-white">
+                                          Nuevo
+                                        </span>
+                                      )}
+                                    </td>
                                     <td className="py-1.5 pr-3" title={v.tipo_descripcion}>{v.tipo_descripcion || v.tipo}</td>
                                     <td className="py-1.5 pr-3">{v.periodo}</td>
                                     <td className="max-w-[220px] truncate py-1.5 pr-3" title={`${v.cod_tributo} ${v.tributo}`}>
@@ -400,7 +440,16 @@ export default function PanelDeudas() {
                                         <span className="block text-[10px] text-slate-500">Exp. {v.num_expediente_coactivo}</span>
                                       )}
                                     </td>
-                                    <td className="py-1.5 pr-3 text-right">{soles.format(v.monto_tributo)}</td>
+                                    <td
+                                      className="py-1.5 pr-3 text-right"
+                                      title={
+                                        v.tributo_pendiente !== v.monto_tributo
+                                          ? `Importe original ${soles.format(v.monto_tributo)} (tuvo pagos parciales)`
+                                          : undefined
+                                      }
+                                    >
+                                      {soles.format(v.tributo_pendiente)}
+                                    </td>
                                     <td className="py-1.5 pr-3 text-right">{soles.format(v.interes)}</td>
                                     <td className="py-1.5 pr-3 text-right font-bold">{soles.format(v.saldo_total)}</td>
                                     <td className="py-1.5">

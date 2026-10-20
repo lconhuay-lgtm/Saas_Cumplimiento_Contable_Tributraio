@@ -15,14 +15,15 @@ from app.models import ConsultaSireJob, CronogramaVencimiento, Empresa, Tenant, 
 from app.scheduler_job import empresas_para_refresco_sire
 
 
-def _crudo(num, etapa="En Cobranza Coactiva", cod_eta="03", saldo="899.00000", tipo="Orden de Pago"):
+def _crudo(num, etapa="En Cobranza Coactiva", cod_eta="03", saldo="899.00000", tipo="Orden de Pago", pendiente="890.00000"):
     """Un elemento de ListadoValores con los mismos nombres (y relleno de espacios) que manda SUNAT."""
     return {
         "numVal": f"{num}    ", "desCor": "OP" + " " * 58, "desLar": tipo + " " * 20, "perDoc": "202608",
         "codTri": "3121", "descLarTrib": "RENTA - REGIMEN MYPE TRIBUTARIO      ", "strFecEmi": "23/09/2026",
         "strFecNot": "23/09/2026", "desEst": "Pendiente", "codEta": cod_eta, "desEta": "Cobranza Coactiva    ",
         "desEtaBas": etapa + "    ", "desEtaAlt": "   ", "numExpCoa": "0290064992149    ", "mtoTri": 890.0,
-        "montoInteresSolesAct": "9.00000", "saldoTotal": saldo, "saldoExigible": saldo,
+        "montoTributoSolesAct": pendiente, "montoInteresSolesAct": "9.00000", "saldoTotal": saldo,
+        "saldoExigible": saldo,
     }
 
 
@@ -65,6 +66,7 @@ def test_normalizar_valor():
     assert v["en_cobranza_coactiva"] is True
     assert v["num_expediente_coactivo"] == "0290064992149"
     assert v["saldo_total"] == 899.0
+    assert v["tributo_pendiente"] == 890.0
     assert v["interes"] == 9.0
     sin_coactiva = normalizar_valor({**_crudo("1"), "codEta": "01", "desEtaBas": "Notificado", "desEta": "Cobranza"})
     assert sin_coactiva["en_cobranza_coactiva"] is False
@@ -88,13 +90,19 @@ def test_historial_de_valores(db_session):
     empresa = _empresa(db_session, _tenant(db_session))
     t1 = datetime(2026, 10, 20, 13, 30, tzinfo=timezone.utc)
     lectura1 = [normalizar_valor(_crudo("A1")), normalizar_valor(_crudo("A2", etapa="Notificado", cod_eta="01"))]
-    assert aplicar_lectura_valores(db_session, empresa.id, lectura1, t1) == {"vigentes": 2, "nuevos": 2}
+    # Primera lectura = linea base: no se avisa en la ventana de valores nuevos.
+    assert aplicar_lectura_valores(db_session, empresa.id, lectura1, t1, avisar_nuevos=False) == {"vigentes": 2, "nuevos": 2}
     db_session.commit()
+    assert all(v.notificado_popup for v in db_session.query(ValorDeuda))
 
-    # Dia 2: A2 paso a coactiva con mas saldo, A1 ya no aparece (se pago).
+    # Dia 2: A2 paso a coactiva y tuvo un pago parcial, A1 ya no aparece (se
+    # pago) y aparece A3. Solo A3 va a la ventana.
     t2 = t1 + timedelta(days=1)
-    lectura2 = [normalizar_valor(_crudo("A2", saldo="950.00000"))]
-    assert aplicar_lectura_valores(db_session, empresa.id, lectura2, t2) == {"vigentes": 1, "nuevos": 0}
+    lectura2 = [
+        normalizar_valor(_crudo("A2", saldo="509.00000", pendiente="500.00000")),
+        normalizar_valor(_crudo("A3")),
+    ]
+    assert aplicar_lectura_valores(db_session, empresa.id, lectura2, t2) == {"vigentes": 2, "nuevos": 1}
     db_session.commit()
     valores = {v.num_valor: v for v in db_session.query(ValorDeuda)}
     assert valores["A1"].vigente is False
@@ -103,13 +111,24 @@ def test_historial_de_valores(db_session):
     assert [h["evento"] for h in valores["A2"].historial] == ["nuevo", "cambio_etapa", "cambio_saldo"]
     assert valores["A2"].en_cobranza_coactiva is True
     assert valores["A2"].fecha_emision == date(2026, 9, 23)
+    assert valores["A2"].notificado_popup is True
+    assert valores["A3"].notificado_popup is False
 
-    # Dia 3: A1 vuelve a aparecer (p. ej. se perdio un fraccionamiento).
-    aplicar_lectura_valores(db_session, empresa.id, lectura1, t2 + timedelta(days=1))
+    # Dia 3: solo suben los intereses de A2 -> no es un "cambio de saldo".
+    # A1 vuelve a aparecer (p. ej. se perdio un fraccionamiento) -> se avisa.
+    lectura3 = [
+        normalizar_valor(_crudo("A1")),
+        normalizar_valor(_crudo("A2", saldo="512.00000", pendiente="500.00000")),
+        normalizar_valor(_crudo("A3")),
+    ]
+    aplicar_lectura_valores(db_session, empresa.id, lectura3, t2 + timedelta(days=1))
     db_session.commit()
-    a1 = db_session.query(ValorDeuda).filter(ValorDeuda.num_valor == "A1").one()
-    assert a1.vigente is True and a1.ya_no_aparece_desde is None
-    assert a1.historial[-1]["evento"] == "reaparecio"
+    valores = {v.num_valor: v for v in db_session.query(ValorDeuda)}
+    assert valores["A1"].vigente is True and valores["A1"].ya_no_aparece_desde is None
+    assert valores["A1"].historial[-1]["evento"] == "reaparecio"
+    assert valores["A1"].notificado_popup is False
+    assert [h["evento"] for h in valores["A2"].historial] == ["nuevo", "cambio_etapa", "cambio_saldo"]
+    assert valores["A2"].saldo_total == 512.0
 
 
 def _registrar(client):
@@ -152,6 +171,32 @@ def test_cumplimiento_oculta_empresas_que_no_estan_activas(client, db_session):
 
     sire = client.get("/cumplimiento/sire", headers=headers)
     assert {f["empresa_id"] for f in sire.json()["filas"]} == {activa, sin_leer}
+
+
+def test_ventana_de_valores_nuevos(client, db_session):
+    headers = _registrar(client)
+    empresa_id = _crear_empresa(client, headers, "20555555555")
+    ahora = datetime.now(timezone.utc)
+    aplicar_lectura_valores(db_session, empresa_id, [normalizar_valor(_crudo("BASE"))], ahora, avisar_nuevos=False)
+    aplicar_lectura_valores(
+        db_session, empresa_id,
+        [normalizar_valor(_crudo("BASE")), normalizar_valor(_crudo("NUEVO", tipo="Resolución de Multa", saldo="5519.00000"))],
+        ahora + timedelta(days=1),
+    )
+    db_session.commit()
+
+    grupos = client.get("/deudas/valores-nuevos", headers=headers).json()
+    assert len(grupos) == 1 and grupos[0]["empresa_id"] == empresa_id
+    assert [v["num_valor"] for v in grupos[0]["valores"]] == ["NUEVO"]
+    nuevo = grupos[0]["valores"][0]
+    assert nuevo["tipo_descripcion"] == "Resolución de Multa"
+    assert nuevo["saldo_total"] == 5519.0
+    assert nuevo["en_cobranza_coactiva"] is True
+    assert nuevo["reaparecio"] is False
+
+    resp = client.post("/deudas/valores-nuevos/marcar-vistos", json={"valor_ids": [nuevo["id"]]}, headers=headers)
+    assert resp.json() == {"actualizados": 1}
+    assert client.get("/deudas/valores-nuevos", headers=headers).json() == []
 
 
 def test_refresco_sire_semanal_y_tras_vencimiento(db_session):

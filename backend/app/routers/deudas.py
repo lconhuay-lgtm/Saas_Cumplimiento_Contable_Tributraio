@@ -11,7 +11,10 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import ConsultaDeudasJob, Empresa, Usuario, ValorDeuda
 from app.cumplimiento import ESTADOS_EN_CURSO, encolar_lecturas, filtrar_activas_en_sunat
-from app.schemas import ConsultaDeudasJobResponse, CumplimientoDeudasFila, CumplimientoDeudasResponse, ValorDeudaItem
+from app.schemas import (
+    ConsultaDeudasJobResponse, CumplimientoDeudasFila, CumplimientoDeudasResponse, MarcarValoresVistosRequest,
+    MarcarVistasResponse, ValorDeudaItem, ValoresNuevosGrupo, ValorNuevoItem,
+)
 from app.deps import get_usuario_actual
 from app.queue_conn import cola_consultas
 from app.jobs import ejecutar_consulta_deudas
@@ -105,6 +108,61 @@ def cumplimiento_deudas(
             ultimo_error=job.error if job is not None and job.estado == "error" else None,
         ))
     return CumplimientoDeudasResponse(filas=filas)
+
+
+@router.get("/deudas/valores-nuevos", response_model=list[ValoresNuevosGrupo])
+def listar_valores_nuevos(
+    usuario: Usuario = Depends(get_usuario_actual),
+    db: Session = Depends(get_db),
+):
+    """
+    Ventana emergente al entrar a la app (ModalValoresNuevos.js): valores que
+    aparecieron (o volvieron a aparecer) en SUNAT y nadie vio todavia --
+    mismo patron que /notificaciones/nuevas para el buzon.
+    """
+    filas = (
+        filtrar_activas_en_sunat(
+            filtrar_empresas_visibles(
+                db.query(ValorDeuda, Empresa).join(Empresa, Empresa.id == ValorDeuda.empresa_id), usuario
+            )
+        )
+        .filter(Empresa.activo.is_(True), ValorDeuda.notificado_popup.is_(False), ValorDeuda.vigente.is_(True))
+        .order_by(Empresa.razon_social.asc(), ValorDeuda.saldo_total.desc())
+        .all()
+    )
+    grupos: dict[str, ValoresNuevosGrupo] = {}
+    for valor, empresa in filas:
+        grupo = grupos.setdefault(
+            empresa.id,
+            ValoresNuevosGrupo(empresa_id=empresa.id, ruc=empresa.ruc, razon_social=empresa.razon_social, valores=[]),
+        )
+        item = ValorNuevoItem.model_validate(valor)
+        ultimo_alta = next(
+            (h.get("evento") for h in reversed(valor.historial or []) if h.get("evento") in ("nuevo", "reaparecio")),
+            None,
+        )
+        item.reaparecio = ultimo_alta == "reaparecio"
+        grupo.valores.append(item)
+    return list(grupos.values())
+
+
+@router.post("/deudas/valores-nuevos/marcar-vistos", response_model=MarcarVistasResponse)
+def marcar_valores_vistos(
+    data: MarcarValoresVistosRequest,
+    usuario: Usuario = Depends(get_usuario_actual),
+    db: Session = Depends(get_db),
+):
+    # Acotado a empresas visibles -- nadie marca como vistos valores ajenos mandando ids a mano.
+    ids_empresas_visibles = [e.id for e in filtrar_empresas_visibles(db.query(Empresa.id), usuario).all()]
+    if not ids_empresas_visibles:
+        return MarcarVistasResponse(actualizados=0)
+    actualizados = (
+        db.query(ValorDeuda)
+        .filter(ValorDeuda.id.in_(data.valor_ids), ValorDeuda.empresa_id.in_(ids_empresas_visibles))
+        .update({ValorDeuda.notificado_popup: True}, synchronize_session=False)
+    )
+    db.commit()
+    return MarcarVistasResponse(actualizados=actualizados)
 
 
 @router.post("/cumplimiento/deudas/consultar-todas")

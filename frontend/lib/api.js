@@ -256,6 +256,13 @@ export const api = {
   obtenerCumplimientoDeudas: () => apiFetch(`/cumplimiento/deudas`),
   consultarDeudasTodas: () => apiFetch(`/cumplimiento/deudas/consultar-todas`, { method: "POST" }),
   consultarDeudas: (empresaId) => apiFetch(`/empresas/${empresaId}/deudas/consultar`, { method: "POST" }),
+  // Ventana emergente de valores (deudas) nuevos -- mismo patron que las notificaciones del buzon.
+  listarValoresNuevos: () => apiFetch(`/deudas/valores-nuevos`),
+  marcarValoresVistos: (valorIds) =>
+    apiFetch(`/deudas/valores-nuevos/marcar-vistos`, {
+      method: "POST",
+      body: JSON.stringify({ valor_ids: valorIds }),
+    }),
 
   // Modulo de cronograma SUNAT: sincronizar a mano (por si SUNAT publica
   // una modificacion a mitad de ano), agenda por mes (calendario), y

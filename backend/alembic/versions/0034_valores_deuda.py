@@ -52,6 +52,7 @@ def upgrade() -> None:
         sa.Column("en_cobranza_coactiva", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("num_expediente_coactivo", sa.String(25), nullable=True),
         sa.Column("monto_tributo", sa.Float(), nullable=False, server_default="0"),
+        sa.Column("tributo_pendiente", sa.Float(), nullable=False, server_default="0"),
         sa.Column("interes", sa.Float(), nullable=False, server_default="0"),
         sa.Column("saldo_total", sa.Float(), nullable=False, server_default="0"),
         sa.Column("saldo_exigible", sa.Float(), nullable=False, server_default="0"),
@@ -60,6 +61,7 @@ def upgrade() -> None:
         sa.Column("visto_en", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("ya_no_aparece_desde", sa.DateTime(timezone=True), nullable=True),
         sa.Column("historial", sa.JSON(), nullable=False, server_default="[]"),
+        sa.Column("notificado_popup", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.UniqueConstraint("empresa_id", "num_valor", name="uq_valor_deuda_empresa_numero"),
     )
     op.create_index("ix_valores_deuda_empresa_id", "valores_deuda", ["empresa_id"])

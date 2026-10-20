@@ -22,6 +22,7 @@ import { useTrabajos } from "../contexts/TrabajosContext";
 import { infoEtapa, TITULO_TIPO_TRABAJO } from "../lib/etapasTrabajos";
 import UserMenu from "./UserMenu";
 import ModalNotificacionesNuevas from "./ModalNotificacionesNuevas";
+import ModalValoresNuevos from "./ModalValoresNuevos";
 
 const ENLACES = [
   { href: "/dashboard", label: "Dashboard", Icon: LayoutDashboard },
@@ -42,6 +43,7 @@ export default function Sidebar() {
   const [reenviado, setReenviado] = useState(false);
   const [comprobando, setComprobando] = useState(false);
   const [notificaciones, setNotificaciones] = useState([]);
+  const [valoresNuevos, setValoresNuevos] = useState([]);
   const { trabajosActivos, estadoMasiva } = useTrabajos();
 
   useEffect(() => {
@@ -60,7 +62,30 @@ export default function Sidebar() {
       .listarNotificacionesNuevas()
       .then((grupos) => setNotificaciones(grupos))
       .catch(() => {});
+    // Deudas nuevas en SUNAT (Cumplimiento > Deudas) -- misma mecanica de
+    // "visto" en la base (ValorDeuda.notificado_popup).
+    api
+      .listarValoresNuevos()
+      .then((grupos) => setValoresNuevos(grupos))
+      .catch(() => {});
   }, [usuario?.email_verificado]);
+
+  async function irADeuda(grupo, valores) {
+    setValoresNuevos((actual) => actual.filter((g) => g.empresa_id !== grupo.empresa_id));
+    // Se espera a que quede guardado antes de navegar: la pagina de destino
+    // monta su propio Sidebar y volveria a pedir la lista.
+    await api.marcarValoresVistos(grupo.valores.map((v) => v.id)).catch(() => {});
+    const numeros = valores.map((v) => v.num_valor).join(",");
+    router.push(`/cumplimiento?tab=deudas&empresa=${grupo.empresa_id}&valores=${encodeURIComponent(numeros)}`);
+  }
+
+  function cerrarValoresNuevos() {
+    const ids = valoresNuevos.flatMap((g) => g.valores.map((v) => v.id));
+    if (ids.length > 0) {
+      api.marcarValoresVistos(ids).catch(() => {});
+    }
+    setValoresNuevos([]);
+  }
 
   function irAEmpresa(grupo) {
     api.marcarNotificacionesVistas(grupo.mensajes.map((m) => m.id)).catch(() => {});
@@ -270,6 +295,11 @@ export default function Sidebar() {
         onIrAEmpresa={irAEmpresa}
         onCerrar={cerrarNotificaciones}
       />
+    )}
+
+    {/* Despues de la del buzon, nunca las dos juntas. */}
+    {usuario?.email_verificado && notificaciones.length === 0 && valoresNuevos.length > 0 && (
+      <ModalValoresNuevos grupos={valoresNuevos} onIrADeuda={irADeuda} onCerrar={cerrarValoresNuevos} />
     )}
     </>
   );

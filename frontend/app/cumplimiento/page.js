@@ -1,6 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Sidebar from "../../components/Sidebar";
 import { getToken } from "../../lib/api";
 import PanelSire from "./PanelSire";
@@ -14,13 +14,37 @@ const SUBMODULOS = [
 
 const CLAVE_PESTANA = "cumplimiento:pestana";
 
+// useSearchParams() exige un limite de Suspense en el build (mismo motivo que empresas/page.js).
 export default function CumplimientoPage() {
+  return (
+    <Suspense fallback={null}>
+      <CumplimientoContenido />
+    </Suspense>
+  );
+}
+
+function CumplimientoContenido() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [pestana, setPestana] = useState(null);
+
+  // ?tab=deudas&empresa=<id>&valores=<nro,nro> -- llega desde la ventana de
+  // "Nuevas deudas en SUNAT" (ModalValoresNuevos.js) para abrir esa deuda.
+  const tabPedida = searchParams.get("tab");
+  const empresaEnfocada = searchParams.get("empresa");
+  const valoresEnfocados = searchParams.get("valores") || "";
+  const enfoque = useMemo(
+    () => (empresaEnfocada ? { empresaId: empresaEnfocada, valores: valoresEnfocados.split(",").filter(Boolean) } : null),
+    [empresaEnfocada, valoresEnfocados]
+  );
 
   useEffect(() => {
     if (!getToken()) {
       router.replace("/login");
+      return;
+    }
+    if (SUBMODULOS.some((s) => s.activo && s.id === tabPedida)) {
+      setPestana(tabPedida);
       return;
     }
     let guardada = null;
@@ -29,7 +53,7 @@ export default function CumplimientoPage() {
     } catch {}
     setPestana(SUBMODULOS.some((s) => s.activo && s.id === guardada) ? guardada : "sire");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [tabPedida, empresaEnfocada, valoresEnfocados]);
 
   function elegir(id) {
     setPestana(id);
@@ -73,7 +97,7 @@ export default function CumplimientoPage() {
         </div>
 
         {pestana === "sire" && <PanelSire />}
-        {pestana === "deudas" && <PanelDeudas />}
+        {pestana === "deudas" && <PanelDeudas enfoque={enfoque} />}
       </main>
     </div>
   );

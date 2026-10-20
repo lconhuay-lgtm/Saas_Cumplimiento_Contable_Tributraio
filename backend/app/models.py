@@ -451,7 +451,8 @@ class ValorDeuda(Base):
     etapa_alterna: Mapped[str] = mapped_column(String(80), nullable=False, default="")
     en_cobranza_coactiva: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     num_expediente_coactivo: Mapped[str | None] = mapped_column(String(25), nullable=True)
-    monto_tributo: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    monto_tributo: Mapped[float] = mapped_column(Float, nullable=False, default=0)  # importe original
+    tributo_pendiente: Mapped[float] = mapped_column(Float, nullable=False, default=0)  # sin intereses
     interes: Mapped[float] = mapped_column(Float, nullable=False, default=0)
     saldo_total: Mapped[float] = mapped_column(Float, nullable=False, default=0)
     saldo_exigible: Mapped[float] = mapped_column(Float, nullable=False, default=0)
@@ -460,6 +461,11 @@ class ValorDeuda(Base):
     visto_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
     ya_no_aparece_desde: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     historial: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # False = todavia hay que mostrarlo en la ventana de "valores nuevos" al
+    # entrar a la app (mismo patron que MensajeBuzon.notificado_popup). Los
+    # de la primera lectura de cada empresa nacen en True: son la linea base,
+    # no deudas nuevas.
+    notificado_popup: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="valores_deuda")
 

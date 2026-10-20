@@ -280,6 +280,7 @@ class ValorDeudaItem(BaseModel):
     en_cobranza_coactiva: bool
     num_expediente_coactivo: str | None
     monto_tributo: float
+    tributo_pendiente: float
     interes: float
     saldo_total: float
     saldo_exigible: float
@@ -305,6 +306,35 @@ class CumplimientoDeudasFila(BaseModel):
 
 class CumplimientoDeudasResponse(BaseModel):
     filas: list[CumplimientoDeudasFila]
+
+
+class ValorNuevoItem(BaseModel):
+    """Lo que muestra la ventana emergente de "valores nuevos" por cada deuda."""
+    id: str
+    num_valor: str
+    tipo_descripcion: str
+    periodo: str
+    tributo: str
+    fecha_notificacion: date | None
+    etapa: str
+    en_cobranza_coactiva: bool
+    saldo_total: float
+    detectado_en: datetime
+    reaparecio: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class ValoresNuevosGrupo(BaseModel):
+    empresa_id: str
+    ruc: str
+    razon_social: str
+    valores: list[ValorNuevoItem]
+
+
+class MarcarValoresVistosRequest(BaseModel):
+    valor_ids: list[str] = Field(..., min_length=1)
 
 
 class ReporteTributarioJobResponse(BaseModel):

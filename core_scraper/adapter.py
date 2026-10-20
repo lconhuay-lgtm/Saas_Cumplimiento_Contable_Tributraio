@@ -1580,7 +1580,10 @@ def normalizar_valor(crudo: dict) -> dict:
         "etapa_alterna": _texto(crudo.get("desEtaAlt")),
         "en_cobranza_coactiva": etapa_cod == "03" or "coactiva" in etapa.lower(),
         "num_expediente_coactivo": _texto(crudo.get("numExpCoa")) or None,
-        "monto_tributo": _monto(crudo.get("mtoTri")),
+        "monto_tributo": _monto(crudo.get("mtoTri")),  # importe original del valor
+        # Lo que queda del tributo (sin intereses): baja con pagos parciales
+        # (Bascat 0300014730682: original 1,831 -> pendiente 434).
+        "tributo_pendiente": _monto(crudo.get("montoTributoSolesAct")),
         "interes": _monto(crudo.get("montoInteresSolesAct")),
         "saldo_total": _monto(crudo.get("saldoTotal")),
         "saldo_exigible": _monto(crudo.get("saldoExigible")),

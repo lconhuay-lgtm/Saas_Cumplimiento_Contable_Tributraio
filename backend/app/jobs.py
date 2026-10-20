@@ -908,8 +908,8 @@ def ejecutar_consulta_sire(job_id: str):
 # adapter.consultar_valores_pendientes (ver normalizar_valor).
 _CAMPOS_VALOR_DEUDA = (
     "tipo", "tipo_descripcion", "periodo", "cod_tributo", "tributo", "estado", "etapa_cod", "etapa",
-    "etapa_alterna", "en_cobranza_coactiva", "num_expediente_coactivo", "monto_tributo", "interes",
-    "saldo_total", "saldo_exigible",
+    "etapa_alterna", "en_cobranza_coactiva", "num_expediente_coactivo", "monto_tributo", "tributo_pendiente",
+    "interes", "saldo_total", "saldo_exigible",
 )
 
 
@@ -917,7 +917,7 @@ def _fecha_o_none(iso: str | None):
     return datetime.strptime(iso, "%Y-%m-%d").date() if iso else None
 
 
-def aplicar_lectura_valores(db, empresa_id: str, valores: list[dict], ahora: datetime) -> dict:
+def aplicar_lectura_valores(db, empresa_id: str, valores: list[dict], ahora: datetime, avisar_nuevos: bool = True) -> dict:
     """
     Cruza una lectura COMPLETA de valores pendientes con lo ya guardado: alta
     de los nuevos, cambios de etapa/saldo al historial, y los que ya no
@@ -925,6 +925,9 @@ def aplicar_lectura_valores(db, empresa_id: str, valores: list[dict], ahora: dat
     deudas que pidio el usuario). Solo debe llamarse con una lectura que
     cubrio todo el rango; una parcial marcaria como desaparecidas deudas que
     siguen vigentes.
+
+    avisar_nuevos=False en la primera lectura de la empresa: lo que ya debia
+    es la linea base, no "valores nuevos" para la ventana emergente.
     """
     marca = ahora.isoformat()
     existentes = {v.num_valor: v for v in db.query(ValorDeuda).filter(ValorDeuda.empresa_id == empresa_id)}
@@ -936,19 +939,30 @@ def aplicar_lectura_valores(db, empresa_id: str, valores: list[dict], ahora: dat
         fila = existentes.get(numero)
         eventos = []
         if fila is None:
-            fila = ValorDeuda(empresa_id=empresa_id, num_valor=numero, detectado_en=ahora, historial=[])
+            fila = ValorDeuda(
+                empresa_id=empresa_id, num_valor=numero, detectado_en=ahora, historial=[],
+                notificado_popup=not avisar_nuevos,
+            )
             db.add(fila)
             eventos.append({"fecha": marca, "evento": "nuevo", "detalle": f"{dato['etapa']} -- saldo S/ {dato['saldo_total']:,.2f}"})
             nuevos += 1
         else:
             if not fila.vigente:
                 eventos.append({"fecha": marca, "evento": "reaparecio", "detalle": dato["etapa"]})
-            if fila.etapa != dato["etapa"]:
+                # Una deuda que habia desaparecido y vuelve (p. ej. se perdio
+                # un fraccionamiento) es tan importante como una nueva.
+                fila.notificado_popup = not avisar_nuevos
+            if fila.etapa != dato["etapa"][:80]:
                 eventos.append({"fecha": marca, "evento": "cambio_etapa", "detalle": f"{fila.etapa} -> {dato['etapa']}"})
-            if round(fila.saldo_total or 0, 2) != round(dato["saldo_total"], 2):
+            # Se compara el tributo SIN intereses: los intereses suben casi a
+            # diario y llenarian el historial de "cambios" que no lo son.
+            if round(fila.tributo_pendiente or 0, 2) != round(dato["tributo_pendiente"], 2):
                 eventos.append({
                     "fecha": marca, "evento": "cambio_saldo",
-                    "detalle": f"S/ {fila.saldo_total or 0:,.2f} -> S/ {dato['saldo_total']:,.2f}",
+                    "detalle": (
+                        f"tributo pendiente S/ {fila.tributo_pendiente or 0:,.2f} -> S/ {dato['tributo_pendiente']:,.2f} "
+                        f"(saldo con intereses S/ {dato['saldo_total']:,.2f})"
+                    ),
                 })
         for campo in _CAMPOS_VALOR_DEUDA:
             setattr(fila, campo, dato[campo])
@@ -1049,7 +1063,16 @@ def ejecutar_consulta_deudas(job_id: str):
             return
 
         ahora = datetime.now(timezone.utc)
-        cuenta = aplicar_lectura_valores(db, empresa.id, resultado["valores"], ahora)
+        ya_tenia_lectura = (
+            db.query(ConsultaDeudasJob.id)
+            .filter(
+                ConsultaDeudasJob.empresa_id == empresa.id,
+                ConsultaDeudasJob.estado == "completado",
+                ConsultaDeudasJob.id != job.id,
+            )
+            .first()
+        ) is not None
+        cuenta = aplicar_lectura_valores(db, empresa.id, resultado["valores"], ahora, avisar_nuevos=ya_tenia_lectura)
         job.estado = "completado"
         job.valores_vigentes = cuenta["vigentes"]
         job.valores_nuevos = cuenta["nuevos"]
