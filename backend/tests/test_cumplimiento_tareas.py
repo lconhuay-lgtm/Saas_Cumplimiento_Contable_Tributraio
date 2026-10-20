@@ -19,7 +19,7 @@ _REGLA_POR_TIPO = {"sire": "cronograma_sire"}
 
 def _tarea(db, empresa, tipo, periodo, regla=None):
     ob = EmpresaObligacion(
-        empresa_id=empresa.id, tipo=tipo, nombre=f"{tipo} {periodo}",
+        empresa_id=empresa.id, tipo=tipo, nombre=f"{tipo} {periodo} {regla or ''}".strip(),
         regla_vencimiento=regla or _REGLA_POR_TIPO.get(tipo, "cronograma_sunat"), activa=True,
         dia_fijo=30 if regla == "dia_fijo_mes" else None,
     )
