@@ -1200,8 +1200,18 @@ def generar_reporte_tributario_terceros(
         time.sleep(4)
 
         _reportar("enviando_correo")
-        campo_correo = _buscar_en_algun_frame(driver, By.ID, "txtCorreo")
-        if campo_correo is None:
+        # El Menu SOL tiene OTRO input oculto con id="txtCorreo" (formulario
+        # de datos de contacto) y, desde que SUNAT abre este reporte en un
+        # iframe y no en pestaña aparte, una busqueda directa encontraba ese
+        # primero: se llenaba el campo equivocado y SUNAT respondia
+        # "INFORMACION DE CORREO INCOMPLETA". Se ubica primero btnCorreo
+        # (unico de este formulario) y se toma el txtCorreo de ese mismo frame.
+        boton_enviar = _buscar_en_algun_frame(driver, By.ID, "btnCorreo")
+        if boton_enviar is None:
+            return {"ok": False, "error": "No se encontro el boton 'Enviar' del Reporte Tributario para Terceros", "solicitud_pudo_haberse_enviado": False}
+        try:
+            campo_correo = driver.find_element(By.ID, "txtCorreo")
+        except Exception:
             return {"ok": False, "error": "No aparecio el campo de correo del Reporte Tributario para Terceros", "solicitud_pudo_haberse_enviado": False}
         try:
             campo_correo.clear()
@@ -1220,9 +1230,6 @@ def generar_reporte_tributario_terceros(
                 correo_destino,
             )
         time.sleep(1)
-        boton_enviar = _buscar_en_algun_frame(driver, By.ID, "btnCorreo", timeout=10)
-        if boton_enviar is None:
-            return {"ok": False, "error": "No se encontro el boton 'Enviar' del Reporte Tributario para Terceros", "solicitud_pudo_haberse_enviado": False}
         try:
             boton_enviar.click()
         except Exception:
@@ -1231,7 +1238,22 @@ def generar_reporte_tributario_terceros(
         # solicitud (cuenta contra el limite de 3/dia) aunque algo
         # cosmetico falle despues (ej. leer el texto de confirmacion).
         solicitud_pudo_haberse_enviado = True
-        time.sleep(4)
+        # La pagina valida tokens anti-robot (Cloudflare Turnstile /
+        # reCAPTCHA v3, agregados por SUNAT en 2026) antes de enviar, asi que
+        # la respuesta puede tardar: se espera la confirmacion o el panel de
+        # error (#msgErrorCorreo) en vez de mirar una sola vez a ciegas.
+        error_sunat = ""
+        for _ in range(20):
+            time.sleep(1)
+            texto = driver.find_element(By.TAG_NAME, "body").text
+            if "se está procesando" in texto or "se esta procesando" in texto:
+                break
+            error_sunat = driver.execute_script(
+                "var e=document.getElementById('msgErrorCorreo');"
+                "return (e && !e.classList.contains('hidden')) ? e.innerText.replace('×','').replace('Close','').trim() : '';"
+            )
+            if error_sunat:
+                break
 
         # SUNAT confirma con un mensaje reconocible (confirmado con una
         # captura real, 24/09): "El reporte solicitado se esta
@@ -1251,8 +1273,36 @@ def generar_reporte_tributario_terceros(
         texto_pantalla = driver.find_element(By.TAG_NAME, "body").text
         confirmado = "se está procesando" in texto_pantalla or "se esta procesando" in texto_pantalla
         logger.info(f"Reporte Tributario para Terceros solicitado para {ruc} -> {correo_destino} (confirmado={confirmado})")
+        if not confirmado and error_sunat:
+            logger.warning(f"SUNAT rechazo el envio del Reporte Tributario para Terceros: {error_sunat!r}")
+            return {
+                "ok": False,
+                "error": f"SUNAT rechazo el envio del reporte: {error_sunat}",
+                "solicitud_pudo_haberse_enviado": True,
+            }
+        # enviarCorreo() de SUNAT no envia el formulario hasta obtener un token
+        # de Cloudflare Turnstile; con un navegador automatizado Turnstile pide
+        # marcar "Verify you are human" y el token nunca llega. No se intenta
+        # eludir esa verificacion: el envio queda en manos del usuario.
+        turnstile_pendiente = driver.execute_script(
+            "var t=document.querySelector('[name=\"cf-turnstile-response\"]'); return !!t && !t.value;"
+        )
+        if not confirmado and turnstile_pendiente:
+            logger.warning(f"Reporte Tributario para Terceros de {ruc}: SUNAT exige verificacion humana (Cloudflare Turnstile)")
+            return {
+                "ok": False,
+                "error": (
+                    "SUNAT ahora exige una verificacion humana (\"Verify you are human\") para enviar el "
+                    "Reporte Tributario para Terceros, asi que no se puede automatizar. No se envio nada ni "
+                    "se gasto ninguno de los 3 envios del dia: usa el boton \"Ir a SUNAT\" de esta empresa y "
+                    "solicitalo en Mi RUC y Otros Registros > Envio Reporte Tributario > Reporte Tributario para Terceros."
+                ),
+                "solicitud_pudo_haberse_enviado": False,
+                "verificacion_humana": True,
+            }
         if not confirmado:
-            logger.warning(f"No se encontro el mensaje de confirmacion esperado. Texto en pantalla: {texto_pantalla[:400]!r}")
+            logger.warning(f"No se encontro el mensaje de confirmacion esperado. Texto en pantalla: {texto_pantalla[-600:]!r}")
+            navegador._guardar_captura_error("reporte_tributario_sin_confirmacion")
             return {
                 "ok": False,
                 "error": (

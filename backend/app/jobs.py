@@ -748,6 +748,8 @@ def ejecutar_generar_reporte_tributario(job_id: str):
                         "(cuenta contra el limite diario de SUNAT)"
                     )
                     break
+                if resultado.get("verificacion_humana"):
+                    break
                 if intento < MAX_INTENTOS:
                     time.sleep(ESPERA_ENTRE_INTENTOS_SEG * intento)
         finally:
