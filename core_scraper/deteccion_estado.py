@@ -298,7 +298,12 @@ class DeteccionEstadoMixin:
                 for ventana in self.driver.window_handles:
                     self.driver.switch_to.window(ventana)
                     self._ocultar_ventana_si_corresponde()
-                    if "SUNAT - Menú SOL" in self.driver.title:
+                    # El login (api-seguridad) y la pagina puente OAuth2
+                    # tambien se titulan "SUNAT - Menú SOL..."; sin excluirlas
+                    # se daba por logueada una sesion que no lo estaba.
+                    titulo = self.driver.title
+                    if ("SUNAT - Menú SOL" in titulo and "OAuth2" not in titulo
+                            and "api-seguridad" not in self.driver.current_url):
                         logger.info(
                             f"Encontrada ventana de Menú SOL (intento {intento}, "
                             f"{time.time() - tiempo_inicio_espera:.1f}s de espera)"

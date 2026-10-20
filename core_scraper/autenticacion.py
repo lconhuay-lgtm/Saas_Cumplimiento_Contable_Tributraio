@@ -434,6 +434,7 @@ class AutenticacionMixin:
             campo_ruc = self.wait.until(
                 EC.presence_of_element_located((By.XPATH, xpath_ruc))
             )
+            self._esperar_formulario_login_listo()
             campo_ruc.clear()
             campo_ruc.send_keys(ruc)
             logger.info("RUC ingresado correctamente")
@@ -498,6 +499,8 @@ class AutenticacionMixin:
                 logger.error("SUNAT rechazo el usuario/clave SOL ingresados")
                 return False
 
+            self._rescatar_pagina_bienvenida_congelada()
+
             try:
                 self.driver.maximize_window()
             except Exception as e:
@@ -513,4 +516,47 @@ class AutenticacionMixin:
             logger.error(f"Error al ingresar credenciales: {str(e)}")
             self._guardar_captura_error("ingresar_credenciales")
             return False
+
+    def _esperar_formulario_login_listo(self, timeout=30):
+        """
+        El campo RUC aparece en el DOM ~1s antes de que la pagina termine de
+        cargar, y en ese lapso el campo oculto `state` del LoginForm sigue
+        vacio. Si se envia el login ahi, SUNAT autentica igual pero, sin
+        `state`, redirige a una pagina "Bienvenido a SUNAT" sin salida en vez
+        del Menu SOL. Verificado en vivo (20/10/2026): enviando sin esperar
+        3 de 3 intentos quedaban congelados; esperando esto, 4 de 4 entraron.
+        """
+        js = (
+            "return document.readyState === 'complete'"
+            " && (!window.jQuery || jQuery.active === 0)"
+            " && (!document.LoginForm || !document.LoginForm.state"
+            "     || document.LoginForm.state.value.length > 0);"
+        )
+        try:
+            WebDriverWait(self.driver, timeout).until(lambda d: d.execute_script(js))
+        except TimeoutException:
+            logger.warning(f"El formulario de login no termino de cargar en {timeout}s; se intenta igual")
+        time.sleep(1)
+
+    def _rescatar_pagina_bienvenida_congelada(self):
+        """
+        Red de seguridad si igual se cae en la pagina "Bienvenido a SUNAT"
+        (api-seguridad.sunat.gob.pe/?state=&code=...): la sesion SOL ya quedo
+        abierta, asi que basta con abrir el Menu SOL directamente -- SUNAT
+        reutiliza esa sesion sin pedir la clave de nuevo (verificado en vivo,
+        3 de 3 rescatados).
+        """
+        url = self.driver.current_url
+        if self.driver.title != "Bienvenido a SUNAT" or not url.startswith("https://api-seguridad.sunat.gob.pe/?"):
+            return
+        logger.warning("Login quedo en 'Bienvenido a SUNAT' sin redireccion; abriendo el Menu SOL directamente")
+        self.driver.get(config.URL_MENU_SOL)
+        try:
+            WebDriverWait(self.driver, 30).until(
+                lambda d: d.title == "SUNAT - Menú SOL" and "MenuInternet.htm" in d.current_url
+            )
+            logger.info("Menu SOL recuperado sin volver a ingresar la clave")
+        except TimeoutException:
+            logger.error("No se pudo recuperar el Menu SOL desde la pagina 'Bienvenido a SUNAT'")
+            self._guardar_captura_error("rescate_bienvenida")
 

@@ -36,6 +36,7 @@ EXCEL_PATH = os.environ.get('SUNAT_EXCEL_PATH', '')
 
 # URLs
 URL_SUNAT = "https://www.sunat.gob.pe/"
+URL_MENU_SOL = "https://e-menu.sunat.gob.pe/cl-ti-itmenu/MenuInternet.htm"
 
 # Configuracion del navegador (igual que el original, incluye --guest para
 # perfiles limpios en cada sesion)
