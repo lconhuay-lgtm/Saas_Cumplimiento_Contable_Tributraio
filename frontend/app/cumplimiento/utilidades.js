@@ -1,5 +1,13 @@
 // Compartido por las pestanas de Cumplimiento.
 
+// Periodo que se muestra al entrar a SIRE y Declaracion mensual: el de
+// vencimiento mas cercano, es decir el mes pasado (en octubre se declara y
+// vence septiembre). Asi lo primero que se ve es lo que hay que cumplir ahora.
+export function periodoPorDefecto(hoy = new Date()) {
+  const d = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1);
+  return { anio: d.getFullYear(), mes: d.getMonth() + 1 };
+}
+
 // CSV con ";" y BOM UTF-8: Excel en espanol lo abre con columnas y tildes bien.
 export function descargarCsv(nombreArchivo, encabezado, lineas) {
   const csv = [encabezado, ...lineas]

@@ -12,7 +12,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { api } from "../../lib/api";
-import { descargarCsv } from "./utilidades";
+import { descargarCsv, periodoPorDefecto } from "./utilidades";
 
 const MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Set", "Oct", "Nov", "Dic"];
 const MESES_LARGOS = [
@@ -73,13 +73,14 @@ function detalleCelda(periodo, nombreMes, anio) {
 }
 
 export default function PanelSire() {
-  const [anio, setAnio] = useState(null);
+  const porDefecto = periodoPorDefecto();
+  const [anio, setAnio] = useState(porDefecto.anio);
   const [datos, setDatos] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
   const [aviso, setAviso] = useState("");
   const [libro, setLibro] = useState("ambos");
-  const [mes, setMes] = useState(null);
+  const [mes, setMes] = useState(porDefecto.mes);
   const [filtroEstado, setFiltroEstado] = useState("todas");
   const [busqueda, setBusqueda] = useState("");
   const [encolando, setEncolando] = useState(false);
@@ -230,6 +231,17 @@ export default function PanelSire() {
           <select value={mes || ""} onChange={(e) => setMes(Number(e.target.value))} className={`${selectClase} ml-2`}>
             {MESES_LARGOS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
           </select>
+          {anioActivo === porDefecto.anio && mes === porDefecto.mes ? (
+            <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">Vence este mes</span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => { setAnio(porDefecto.anio); setMes(porDefecto.mes); }}
+              className="ml-2 text-[11px] font-semibold text-accent hover:underline"
+            >
+              Ir al periodo que vence este mes
+            </button>
+          )}
         </label>
         <label className="text-xs font-semibold text-slate-500">
           Registro
