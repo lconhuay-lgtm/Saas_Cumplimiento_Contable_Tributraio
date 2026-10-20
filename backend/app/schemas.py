@@ -197,6 +197,52 @@ class ReporteTributarioCreate(BaseModel):
     correo_destino: EmailStr
 
 
+class ConsultaSireJobResponse(BaseModel):
+    id: str
+    empresa_id: str
+    estado: str
+    etapa: str | None = None
+    periodos_actualizados: int
+    creado_en: datetime
+    iniciado_en: datetime | None
+    finalizado_en: datetime | None
+    error: str | None
+
+    class Config:
+        from_attributes = True
+
+
+class SireEstadoLibro(BaseModel):
+    cod_estado: str
+    des_estado: str
+    presentado: bool
+
+
+class SirePeriodoItem(BaseModel):
+    periodo: str
+    rvie: SireEstadoLibro | None = None
+    rce: SireEstadoLibro | None = None
+    # Fecha maxima del cronograma de Atraso de Registros Electronicos para el
+    # grupo de esta empresa -- separa "pendiente (en plazo)" de "vencido".
+    vence_el: datetime | None = None
+
+
+class CumplimientoSireFila(BaseModel):
+    empresa_id: str
+    ruc: str
+    razon_social: str
+    periodos: list[SirePeriodoItem]
+    actualizado_en: datetime | None
+    consulta_en_curso: bool
+    ultimo_error: str | None = None
+
+
+class CumplimientoSireResponse(BaseModel):
+    anio: int
+    anios_disponibles: list[int]
+    filas: list[CumplimientoSireFila]
+
+
 class ReporteTributarioJobResponse(BaseModel):
     id: str
     empresa_id: str

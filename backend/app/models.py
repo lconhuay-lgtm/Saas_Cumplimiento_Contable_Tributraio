@@ -176,6 +176,8 @@ class Empresa(Base):
     jobs: Mapped[list["ConsultaJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     ficha_ruc_jobs: Mapped[list["FichaRucJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     reporte_tributario_jobs: Mapped[list["ReporteTributarioJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    consulta_sire_jobs: Mapped[list["ConsultaSireJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    sire_estados: Mapped[list["SireEstadoPeriodo"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     canario_checks: Mapped[list["CanarioCheck"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     obligaciones: Mapped[list["EmpresaObligacion"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     tareas: Mapped[list["TareaObligacion"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
@@ -350,6 +352,50 @@ class ReporteTributarioJob(Base):
     error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="reporte_tributario_jobs")
+
+
+class ConsultaSireJob(Base):
+    """Cola/bitacora de lecturas del estado de presentacion de los registros SIRE de una empresa."""
+    __tablename__ = "consulta_sire_jobs"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    solicitado_por: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
+    estado: Mapped[str] = mapped_column(String(20), default="pendiente", nullable=False, index=True)
+    etapa: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    periodos_actualizados: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    iniciado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finalizado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="consulta_sire_jobs")
+
+
+class SireEstadoPeriodo(Base):
+    """
+    Estado de presentacion de un registro electronico SIRE (RVIE = Registro de
+    Ventas e Ingresos, RCE = Registro de Compras) para un periodo, tal como lo
+    devuelve SUNAT en Gestion de Ventas/Compras. SUNAT solo lista los periodos
+    en los que la empresa esta obligada: un periodo ausente = sin obligacion.
+    cod_estado se guarda crudo ("01"/"02" presentado, "03"/"04" no presentado,
+    confirmado contra 4 empresas reales) por si SUNAT agrega matices.
+    """
+    __tablename__ = "sire_estados_periodo"
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "libro", "periodo", name="uq_sire_estado_empresa_libro_periodo"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    libro: Mapped[str] = mapped_column(String(10), nullable=False)  # "RVIE" | "RCE"
+    periodo: Mapped[str] = mapped_column(String(7), nullable=False)  # "YYYY-MM"
+    cod_estado: Mapped[str] = mapped_column(String(5), nullable=False)
+    des_estado: Mapped[str] = mapped_column(String(60), nullable=False)
+    presentado: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="sire_estados")
 
 
 class CanarioCheck(Base):

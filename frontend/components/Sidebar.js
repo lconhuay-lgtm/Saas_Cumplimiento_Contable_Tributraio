@@ -9,6 +9,7 @@ import {
   HeartPulse,
   CalendarDays,
   ListChecks,
+  ClipboardCheck,
   Users,
   Settings,
   MailWarning,
@@ -25,6 +26,7 @@ import ModalNotificacionesNuevas from "./ModalNotificacionesNuevas";
 const ENLACES = [
   { href: "/dashboard", label: "Dashboard", Icon: LayoutDashboard },
   { href: "/empresas", label: "Empresas", Icon: Building2 },
+  { href: "/cumplimiento", label: "Cumplimiento", Icon: ClipboardCheck },
   { href: "/tareas", label: "Tareas", Icon: ListChecks },
   { href: "/cronograma", label: "Cronograma", Icon: CalendarDays },
   { href: "/salud", label: "Salud del sistema", Icon: HeartPulse, soloAdmin: true },

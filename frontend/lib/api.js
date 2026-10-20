@@ -248,6 +248,12 @@ export const api = {
 
   obtenerLimiteReporteTributario: (empresaId) => apiFetch(`/empresas/${empresaId}/reporte-tributario/limite`),
 
+  // Modulo Cumplimiento > SIRE: estado de presentacion del RVIE (ventas) y
+  // RCE (compras) de todas las empresas, mes por mes.
+  obtenerCumplimientoSire: (anio) => apiFetch(`/cumplimiento/sire${anio ? `?anio=${anio}` : ""}`),
+  consultarSireTodas: () => apiFetch(`/cumplimiento/sire/consultar-todas`, { method: "POST" }),
+  consultarSire: (empresaId) => apiFetch(`/empresas/${empresaId}/sire/consultar`, { method: "POST" }),
+
   // Modulo de cronograma SUNAT: sincronizar a mano (por si SUNAT publica
   // una modificacion a mitad de ano), agenda por mes (calendario), y
   // proximos vencimientos (aviso del Dashboard).

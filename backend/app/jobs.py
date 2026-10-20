@@ -14,7 +14,7 @@ from sqlalchemy import or_
 from app.database import SessionLocal
 from app.models import (
     ConsultaJob, FichaRucJob, ReporteTributarioJob, Empresa, CredencialSol, MensajeBuzon, Usuario,
-    TareaObligacion,
+    TareaObligacion, ConsultaSireJob, SireEstadoPeriodo,
 )
 from app.security import descifrar_clave_sol, crear_token_ingreso_directo
 from app.rate_limit import adquirir_slot_global, liberar_slot_global, limite_mensajes_por_consulta
@@ -774,6 +774,120 @@ def ejecutar_generar_reporte_tributario(job_id: str):
         logger.exception(f"Error ejecutando ReporteTributarioJob {job_id}")
         db.rollback()
         job = db.query(ReporteTributarioJob).filter(ReporteTributarioJob.id == job_id).first()
+        if job:
+            job.estado = "error"
+            job.error = str(e)[:1000]
+            job.finalizado_en = datetime.now(timezone.utc)
+            db.commit()
+        _reportar_etapa(None)
+    finally:
+        db.close()
+
+
+def _sire_presentado(cod_estado: str, des_estado: str) -> bool:
+    des = (des_estado or "").strip().lower()
+    if des:
+        return des == "presentado"
+    return cod_estado in ("01", "02")
+
+
+def ejecutar_consulta_sire(job_id: str):
+    """Lee de SUNAT el estado de presentacion de todos los periodos SIRE (RVIE y RCE) de una empresa y los guarda."""
+    db = SessionLocal()
+
+    def _reportar_etapa(etapa: str | None):
+        db_etapa = SessionLocal()
+        try:
+            job_actual = db_etapa.query(ConsultaSireJob).filter(ConsultaSireJob.id == job_id).first()
+            if job_actual:
+                job_actual.etapa = etapa
+                db_etapa.commit()
+        finally:
+            db_etapa.close()
+
+    try:
+        job = db.query(ConsultaSireJob).filter(ConsultaSireJob.id == job_id).first()
+        if not job:
+            logger.error(f"ConsultaSireJob {job_id} no encontrado")
+            return
+
+        job.estado = "en_progreso"
+        job.iniciado_en = datetime.now(timezone.utc)
+        db.commit()
+
+        empresa = db.query(Empresa).filter(Empresa.id == job.empresa_id).first()
+        credencial = (
+            db.query(CredencialSol).filter(CredencialSol.empresa_id == job.empresa_id).first()
+            if empresa else None
+        )
+        if not empresa or not credencial:
+            job.estado = "error"
+            job.error = "Empresa o credenciales no encontradas"
+            job.finalizado_en = datetime.now(timezone.utc)
+            db.commit()
+            return
+
+        clave_en_claro = descifrar_clave_sol(credencial.clave_cifrada, credencial.dek_cifrada)
+
+        from adapter import consultar_estado_sire
+
+        token_slot = adquirir_slot_global()
+        try:
+            resultado = None
+            for intento in range(1, MAX_INTENTOS + 1):
+                resultado = consultar_estado_sire(
+                    ruc=empresa.ruc,
+                    usuario_sol=credencial.usuario_sol,
+                    clave_sol=clave_en_claro,
+                    razon_social=empresa.razon_social,
+                    headless=False,
+                    on_progreso=_reportar_etapa,
+                )
+                if resultado["ok"]:
+                    break
+                logger.warning(f"SIRE intento {intento}/{MAX_INTENTOS} fallo para {empresa.ruc}: {resultado['error']}")
+                if intento < MAX_INTENTOS:
+                    time.sleep(ESPERA_ENTRE_INTENTOS_SEG * intento)
+        finally:
+            liberar_slot_global(token_slot)
+
+        if not resultado["ok"]:
+            job.estado = "error"
+            job.error = (resultado["error"] or "Error desconocido")[:1000]
+            job.finalizado_en = datetime.now(timezone.utc)
+            db.commit()
+            _reportar_etapa(None)
+            return
+
+        ahora = datetime.now(timezone.utc)
+        existentes = {
+            (e.libro, e.periodo): e
+            for e in db.query(SireEstadoPeriodo).filter(SireEstadoPeriodo.empresa_id == empresa.id)
+        }
+        actualizados = 0
+        for libro, periodos in resultado["libros"].items():
+            for p in periodos:
+                fila = existentes.get((libro, p["periodo"]))
+                if fila is None:
+                    fila = SireEstadoPeriodo(empresa_id=empresa.id, libro=libro, periodo=p["periodo"])
+                    db.add(fila)
+                fila.cod_estado = p["cod_estado"][:5]
+                fila.des_estado = p["des_estado"][:60]
+                fila.presentado = _sire_presentado(p["cod_estado"], p["des_estado"])
+                fila.actualizado_en = ahora
+                actualizados += 1
+
+        job.estado = "completado"
+        job.periodos_actualizados = actualizados
+        job.finalizado_en = ahora
+        db.commit()
+        _reportar_etapa(None)
+        logger.info(f"ConsultaSireJob {job_id} completado para {empresa.ruc}: {actualizados} periodo(s)")
+
+    except Exception as e:
+        logger.exception(f"Error ejecutando ConsultaSireJob {job_id}")
+        db.rollback()
+        job = db.query(ConsultaSireJob).filter(ConsultaSireJob.id == job_id).first()
         if job:
             job.estado = "error"
             job.error = str(e)[:1000]

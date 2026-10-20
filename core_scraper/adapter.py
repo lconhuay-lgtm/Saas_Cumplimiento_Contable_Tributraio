@@ -22,6 +22,7 @@ import time
 import base64
 import logging
 import hashlib
+import json
 from urllib.parse import urlparse, parse_qs, urljoin
 
 import config
@@ -1317,5 +1318,129 @@ def generar_reporte_tributario_terceros(
     except Exception as e:
         logger.error(f"Error solicitando el Reporte Tributario para Terceros de {ruc}: {e}")
         return {"ok": False, "error": str(e), "solicitud_pudo_haberse_enviado": solicitud_pudo_haberse_enviado}
+    finally:
+        navegador.close_browser()
+
+
+# Codigos de libro que usa la API interna del SIRE (los mismos que pide la
+# pantalla de Gestion de Ventas / Gestion de Compras de SUNAT).
+LIBROS_SIRE = {"RVIE": "140000", "RCE": "080000"}
+_URL_PERIODOS_SIRE = "https://api-sire.sunat.gob.pe/v1/contribuyente/migeigv/libros/rvierce/padron/web/omisos/{cod}/periodos"
+# Menu SOL: SIRE > Registros Electronicos > Registro de Ventas e Ingresos > Gestion de Ventas e Ingresos.
+_MENU_GESTION_VENTAS_SIRE = ("nivel1_60", "nivel2_60_2", "nivel3_60_2_1", "nivel4_60_2_1_1_1")
+
+
+def consultar_estado_sire(
+    ruc: str,
+    usuario_sol: str,
+    clave_sol: str,
+    razon_social: str = "",
+    headless: bool = True,
+    on_progreso=None,
+) -> dict:
+    """
+    SOLO LECTURA: abre "Gestion de Ventas e Ingresos Electronicos" del SIRE
+    (para que SUNAT emita el token de la app en sessionStorage) y pide, con
+    ese mismo token, los listados de periodos que la propia pantalla usa para
+    su selector de Periodo -- uno para el RVIE y otro para el RCE. Asi se
+    obtienen TODOS los periodos de todos los anios en una sola sesion, sin
+    tocar ningun boton del SIRE (Aceptar propuesta, Generar, etc.).
+
+    Returns:
+        {"ok": bool, "error": str | None,
+         "libros": {"RVIE": [{"periodo": "2026-09", "cod_estado": "02", "des_estado": "Presentado"}, ...],
+                    "RCE": [...]}}
+    """
+    def _reportar(etapa: str):
+        if on_progreso is None:
+            return
+        try:
+            on_progreso(etapa)
+        except Exception as e:
+            logger.warning(f"El callback de progreso fallo (no es grave, se sigue igual): {e}")
+
+    empresa = {"ruc": ruc, "usuario": usuario_sol, "clave": clave_sol, "razon_social": razon_social}
+    navegador = SunatWebNavigator(empresa=empresa, headless=headless)
+    try:
+        if not navegador.initialize_browser():
+            return {"ok": False, "error": "No se pudo iniciar el navegador", "libros": {}}
+
+        _reportar("iniciando_sesion")
+        navegador.driver.get(config.URL_SUNAT)
+        time.sleep(3)
+
+        _reportar("autenticando")
+        if not navegador._hacer_clicks_sunat(empresa):
+            return {"ok": False, "error": "No se pudo iniciar sesion en SUNAT", "libros": {}}
+
+        driver = navegador.driver
+        driver.switch_to.default_content()
+
+        _reportar("abriendo_sire")
+        for elid in _MENU_GESTION_VENTAS_SIRE:
+            elementos = driver.find_elements(By.ID, elid)
+            if not elementos:
+                return {"ok": False, "error": "El Menu SOL de esta empresa no muestra el SIRE (Registros Electronicos)", "libros": {}}
+            driver.execute_script("arguments[0].click();", elementos[0])
+            time.sleep(2)
+
+        frame_sire = None
+        for _ in range(30):
+            frame_sire = next(
+                (f for f in driver.find_elements(By.TAG_NAME, "iframe")
+                 if "code=60.2.1.1.1" in (f.get_attribute("src") or "")),
+                None,
+            )
+            if frame_sire:
+                break
+            time.sleep(1)
+        if frame_sire is None:
+            return {"ok": False, "error": "No se abrio la pantalla de Gestion de Ventas del SIRE", "libros": {}}
+        driver.switch_to.frame(frame_sire)
+
+        try:
+            WebDriverWait(driver, 45).until(
+                lambda d: d.execute_script("return !!sessionStorage.getItem('SUNAT.token')")
+            )
+        except Exception:
+            navegador._guardar_captura_error("sire_sin_token")
+            return {"ok": False, "error": "El SIRE no termino de cargar (sin sesion de la aplicacion)", "libros": {}}
+
+        _reportar("leyendo_periodos")
+        driver.set_script_timeout(60)
+        libros = {}
+        for libro, cod in LIBROS_SIRE.items():
+            status, cuerpo = driver.execute_async_script(
+                """
+                var done = arguments[arguments.length - 1];
+                fetch(arguments[0], {headers: {
+                    'Authorization': 'Bearer ' + sessionStorage.getItem('SUNAT.token'),
+                    'Accept': 'application/json'}})
+                  .then(function (r) { return r.text().then(function (t) { done([r.status, t]); }); })
+                  .catch(function (e) { done([0, String(e)]); });
+                """,
+                _URL_PERIODOS_SIRE.format(cod=cod),
+            )
+            if status != 200:
+                return {"ok": False, "error": f"SUNAT respondio HTTP {status} al pedir los periodos del {libro}", "libros": {}}
+            periodos = []
+            for anio in json.loads(cuerpo or "[]"):
+                for p in anio.get("lisPeriodos") or []:
+                    per = str(p.get("perTributario") or "")
+                    if len(per) != 6:
+                        continue
+                    periodos.append({
+                        "periodo": f"{per[:4]}-{per[4:]}",
+                        "cod_estado": str(p.get("codEstado") or ""),
+                        "des_estado": str(p.get("desEstado") or ""),
+                    })
+            libros[libro] = periodos
+            logger.info(f"SIRE {ruc}: {libro} -> {len(periodos)} periodo(s)")
+
+        return {"ok": True, "error": None, "libros": libros}
+
+    except Exception as e:
+        logger.error(f"Error consultando el SIRE de {ruc}: {e}")
+        return {"ok": False, "error": str(e), "libros": {}}
     finally:
         navegador.close_browser()
