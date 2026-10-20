@@ -20,6 +20,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
@@ -35,6 +36,7 @@ const ETIQUETAS_TIPO = {
   cts: "CTS",
   itan: "ITAN",
   sire: "SIRE",
+  deuda: "Deuda SUNAT",
   otro: "Otro",
 };
 
@@ -48,6 +50,7 @@ const PUNTO_TIPO = {
   cts: "bg-sky-500",
   itan: "bg-rose-500",
   sire: "bg-cyan-500",
+  deuda: "bg-red-600",
   otro: "bg-slate-400",
 };
 
@@ -768,6 +771,15 @@ function FilaTarea({ tarea: t, modoSeleccion, seleccionada, onAlternarSeleccion,
               <History size={13} strokeWidth={2} className="shrink-0 text-violet-500" />
             </span>
           )}
+          {t.verificado_sunat_en && (
+            <span
+              title={t.observaciones || "Completada automaticamente al verificar en SUNAT"}
+              className="flex shrink-0 items-center gap-0.5 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-emerald-700"
+            >
+              <ShieldCheck size={10} strokeWidth={2.5} />
+              Verificado en SUNAT
+            </span>
+          )}
         </div>
         <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-slate-500">
           <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${PUNTO_TIPO[t.tipo] || PUNTO_TIPO.otro}`} />
@@ -1050,6 +1062,12 @@ function PanelTarea({ modo, tarea, empresas, onCerrar, onGuardada }) {
                   </button>
                 )}
               </div>
+              {!esNueva && tarea.verificado_sunat_en && (
+                <p className="mt-2 flex items-center gap-1 text-xs font-medium text-emerald-700">
+                  <ShieldCheck size={12} strokeWidth={2} />
+                  Completada sola el {formatoFecha(tarea.verificado_sunat_en)} al verificarla en SUNAT (detalle en Notas)
+                </p>
+              )}
               {!esNueva && tarea.aplazada && (
                 <p className="mt-2 flex items-center gap-1 text-xs text-violet-600">
                   <History size={12} strokeWidth={2} />

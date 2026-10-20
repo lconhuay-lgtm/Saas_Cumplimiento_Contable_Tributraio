@@ -91,7 +91,8 @@ def test_historial_de_valores(db_session):
     t1 = datetime(2026, 10, 20, 13, 30, tzinfo=timezone.utc)
     lectura1 = [normalizar_valor(_crudo("A1")), normalizar_valor(_crudo("A2", etapa="Notificado", cod_eta="01"))]
     # Primera lectura = linea base: no se avisa en la ventana de valores nuevos.
-    assert aplicar_lectura_valores(db_session, empresa.id, lectura1, t1, avisar_nuevos=False) == {"vigentes": 2, "nuevos": 2}
+    cuenta = aplicar_lectura_valores(db_session, empresa.id, lectura1, t1, avisar_nuevos=False)
+    assert (cuenta["vigentes"], cuenta["nuevos"], cuenta["para_avisar"]) == (2, 2, [])
     db_session.commit()
     assert all(v.notificado_popup for v in db_session.query(ValorDeuda))
 
@@ -102,7 +103,10 @@ def test_historial_de_valores(db_session):
         normalizar_valor(_crudo("A2", saldo="509.00000", pendiente="500.00000")),
         normalizar_valor(_crudo("A3")),
     ]
-    assert aplicar_lectura_valores(db_session, empresa.id, lectura2, t2) == {"vigentes": 2, "nuevos": 1}
+    cuenta = aplicar_lectura_valores(db_session, empresa.id, lectura2, t2)
+    assert (cuenta["vigentes"], cuenta["nuevos"]) == (2, 1)
+    assert [v.num_valor for v in cuenta["para_avisar"]] == ["A3"]
+    assert cuenta["desaparecidos"] == ["A1"]
     db_session.commit()
     valores = {v.num_valor: v for v in db_session.query(ValorDeuda)}
     assert valores["A1"].vigente is False

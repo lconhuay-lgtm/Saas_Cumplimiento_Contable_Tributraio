@@ -239,6 +239,62 @@ def enviar_notificacion_mensajes_nuevos(
         logger.error(f"No se pudo enviar el correo de mensajes nuevos a {destinatario}: {e}")
 
 
+def enviar_aviso_deudas_nuevas(
+    destinatario: str, razon_social: str, ruc: str, valores: list[dict], embargos: list[dict], link: str
+) -> None:
+    """
+    Aviso INMEDIATO de deudas nuevas en SUNAT (Cumplimiento > Deudas): valores
+    que aparecieron o volvieron a aparecer, y embargos notificados nuevos.
+    Nunca para la primera lectura de la empresa (es la linea base). Mismo
+    doble modo y misma politica de nunca lanzar excepcion que el resto.
+
+    valores: [{"tipo_descripcion", "num_valor", "periodo", "tributo", "etapa",
+               "en_cobranza_coactiva", "saldo_total"}]
+    embargos: [{"rc_embargo", "nombre_tercero", "monto_embargado", "estado"}]
+    """
+    if not valores and not embargos:
+        return
+    urgente = bool(embargos) or any(v["en_cobranza_coactiva"] for v in valores)
+    partes = []
+    if valores:
+        partes.append(f"{len(valores)} deuda(s) nueva(s)")
+    if embargos:
+        partes.append(f"{len(embargos)} embargo(s) nuevo(s)")
+    asunto = f"{'URGENTE -- ' if urgente else ''}Anzen Sol -- {' y '.join(partes)} en SUNAT: {razon_social}"
+    lineas = [f"SUNAT registra novedades de deuda para {razon_social} ({ruc}):", ""]
+    if valores:
+        total = sum(v["saldo_total"] for v in valores)
+        lineas.append(f"DEUDAS NUEVAS (total S/ {total:,.2f}):")
+        for v in valores:
+            lineas.append(
+                f"  - {v['tipo_descripcion'] or 'Valor'} N° {v['num_valor']} -- periodo {v['periodo']} -- "
+                f"{v['tributo']} -- saldo S/ {v['saldo_total']:,.2f}"
+            )
+            if v["en_cobranza_coactiva"]:
+                lineas.append(f"    EN COBRANZA COACTIVA ({v['etapa']}): riesgo de embargo, atender cuanto antes.")
+        lineas.append("")
+    if embargos:
+        lineas.append("EMBARGOS NOTIFICADOS NUEVOS:")
+        for e in embargos:
+            lineas.append(
+                f"  - RC {e['rc_embargo']} -- en {e['nombre_tercero'] or 'tercero'} -- "
+                f"monto S/ {e['monto_embargado']:,.2f} -- {e['estado']}"
+            )
+        lineas.append("")
+    lineas.append("Ya quedo una tarea creada en el modulo Tareas para darle seguimiento.")
+    lineas.append(f"Ver el detalle:\n{link}")
+    cuerpo = "\n".join(lineas)
+
+    if _modo_prueba_activo():
+        _guardar_modo_prueba(destinatario, asunto, cuerpo)
+        return
+    try:
+        _enviar_smtp(destinatario, asunto, cuerpo)
+        logger.info(f"Aviso de deudas nuevas enviado a {destinatario} ({razon_social})")
+    except Exception as e:
+        logger.error(f"No se pudo enviar el aviso de deudas nuevas a {destinatario}: {e}")
+
+
 def enviar_recordatorio_tareas(destinatario: str, nombre_tenant: str, tareas: list[dict], dias_antes: int) -> None:
     """
     Recordatorio de tareas (IGV-Renta/Planilla/AFP/etc.) que vencen dentro

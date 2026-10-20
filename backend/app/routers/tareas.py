@@ -50,6 +50,7 @@ ETIQUETAS_TIPO_AVANCE = {
     "cts": "CTS",
     "itan": "ITAN",
     "sire": "SIRE",
+    "deuda": "Deuda SUNAT",
     "otro": "Otro",
 }
 
@@ -79,6 +80,7 @@ def _a_respuesta_tarea(tarea: TareaObligacion, empresa: Empresa) -> TareaObligac
         prioridad=tarea.prioridad,
         proceso=tarea.proceso,
         fecha_completado=tarea.fecha_completado,
+        verificado_sunat_en=tarea.verificado_sunat_en,
         observaciones=tarea.observaciones,
         creado_en=tarea.creado_en,
     )

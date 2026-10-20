@@ -15,14 +15,15 @@ from app.database import SessionLocal
 from app.models import (
     ConsultaJob, FichaRucJob, ReporteTributarioJob, Empresa, CredencialSol, MensajeBuzon, Usuario,
     TareaObligacion, ConsultaSireJob, SireEstadoPeriodo, ConsultaDeudasJob, ValorDeuda,
-    ConsultaDeclaracionesJob, DeclaracionSunat,
+    ConsultaDeclaracionesJob, DeclaracionSunat, EmbargoNotificado, RecCoactiva,
 )
 from app.security import descifrar_clave_sol, crear_token_ingreso_directo
 from app.rate_limit import adquirir_slot_global, liberar_slot_global, limite_mensajes_por_consulta
 from app.almacenamiento import guardar_documento, guardar_documento_bytes, AlmacenamientoError
 from app.clasificacion import clasificar_tipo
-from app.email_utils import enviar_notificacion_mensajes_nuevos
+from app.email_utils import enviar_aviso_deudas_nuevas, enviar_notificacion_mensajes_nuevos
 from app.cronograma_sunat import _PATRONES_SIN_OBLIGACIONES
+from app.tareas import revisar_obligacion_plame, sincronizar_tareas_con_sunat
 
 MAX_INTENTOS = 2
 ESPERA_ENTRE_INTENTOS_SEG = 15
@@ -884,6 +885,8 @@ def ejecutar_consulta_sire(job_id: str):
                 fila.actualizado_en = ahora
                 actualizados += 1
 
+        db.flush()
+        sincronizar_tareas_con_sunat(db, empresa.id)
         job.estado = "completado"
         job.periodos_actualizados = actualizados
         job.finalizado_en = ahora
@@ -935,6 +938,7 @@ def aplicar_lectura_valores(db, empresa_id: str, valores: list[dict], ahora: dat
     existentes = {v.num_valor: v for v in db.query(ValorDeuda).filter(ValorDeuda.empresa_id == empresa_id)}
     vistos = set()
     nuevos = 0
+    para_avisar: list[ValorDeuda] = []
     for dato in valores:
         numero = dato["num_valor"][:20]
         vistos.add(numero)
@@ -948,12 +952,16 @@ def aplicar_lectura_valores(db, empresa_id: str, valores: list[dict], ahora: dat
             db.add(fila)
             eventos.append({"fecha": marca, "evento": "nuevo", "detalle": f"{dato['etapa']} -- saldo S/ {dato['saldo_total']:,.2f}"})
             nuevos += 1
+            if avisar_nuevos:
+                para_avisar.append(fila)
         else:
             if not fila.vigente:
                 eventos.append({"fecha": marca, "evento": "reaparecio", "detalle": dato["etapa"]})
                 # Una deuda que habia desaparecido y vuelve (p. ej. se perdio
                 # un fraccionamiento) es tan importante como una nueva.
                 fila.notificado_popup = not avisar_nuevos
+                if avisar_nuevos:
+                    para_avisar.append(fila)
             if fila.etapa != dato["etapa"][:80]:
                 eventos.append({"fecha": marca, "evento": "cambio_etapa", "detalle": f"{fila.etapa} -> {dato['etapa']}"})
             # Se compara el tributo SIN intereses: los intereses suben casi a
@@ -983,6 +991,7 @@ def aplicar_lectura_valores(db, empresa_id: str, valores: list[dict], ahora: dat
             # Se reasigna (no .append) para que SQLAlchemy detecte el cambio en la columna JSON.
             fila.historial = list(fila.historial or []) + eventos
 
+    desaparecidos = []
     for numero, fila in existentes.items():
         if numero not in vistos and fila.vigente:
             fila.vigente = False
@@ -991,7 +1000,184 @@ def aplicar_lectura_valores(db, empresa_id: str, valores: list[dict], ahora: dat
                 "fecha": marca, "evento": "ya_no_aparece",
                 "detalle": f"ultimo saldo S/ {fila.saldo_total or 0:,.2f}",
             }]
-    return {"vigentes": len(vistos), "nuevos": nuevos}
+            desaparecidos.append(numero)
+    return {
+        "vigentes": len(vistos), "nuevos": nuevos,
+        # Para el correo y la tarea automatica (nunca en la linea base).
+        "para_avisar": para_avisar,
+        # Para completar solas las tareas que se crearon por esos valores.
+        "desaparecidos": desaparecidos,
+    }
+
+
+def aplicar_lectura_embargos(db, empresa_id: str, embargos: list[dict], ahora: datetime, avisar_nuevos: bool = True) -> dict:
+    """
+    Alta/actualizacion de los embargos notificados (SUNAT devuelve el
+    historial completo en cada lectura). Devuelve los nuevos que siguen
+    activos (para avisar; nunca en la linea base) y los que pasaron a
+    Levantado (para completar sus tareas).
+    """
+    db.flush()
+    existentes = {e.rc_embargo: e for e in db.query(EmbargoNotificado).filter(EmbargoNotificado.empresa_id == empresa_id)}
+    nuevos_activos: list[EmbargoNotificado] = []
+    levantados: list[str] = []
+    for dato in embargos:
+        rc = dato["rc_embargo"][:25]
+        fila = existentes.get(rc)
+        estado = (dato["estado"] or "")[:60]
+        if fila is None:
+            fila = EmbargoNotificado(empresa_id=empresa_id, rc_embargo=rc, detectado_en=ahora)
+            db.add(fila)
+            existentes[rc] = fila
+            if avisar_nuevos and not embargo_levantado(estado):
+                nuevos_activos.append(fila)
+        elif not embargo_levantado(fila.estado) and embargo_levantado(estado):
+            levantados.append(rc)
+        fila.ruc_tercero = (dato["ruc_tercero"] or "")[:15]
+        fila.nombre_tercero = (dato["nombre_tercero"] or "")[:150]
+        fila.fecha_registro = _fecha_o_none(dato.get("fecha_registro"))
+        fila.fecha_notificacion = _fecha_o_none(dato.get("fecha_notificacion"))
+        fila.estado = estado
+        fila.monto_embargado = dato["monto_embargado"]
+        fila.monto_entregado = dato["monto_entregado"]
+        fila.monto_pendiente = dato["monto_pendiente"]
+        fila.rc_levantamiento = (dato.get("rc_levantamiento") or None) and dato["rc_levantamiento"][:25]
+        fila.fecha_levantamiento = _fecha_o_none(dato.get("fecha_levantamiento"))
+        fila.imposibilidad = (dato.get("imposibilidad") or "")[:150]
+        fila.visto_en = ahora
+    return {"nuevos_activos": nuevos_activos, "levantados": levantados}
+
+
+def embargo_levantado(estado: str | None) -> bool:
+    return "levant" in (estado or "").lower()
+
+
+def aplicar_lectura_recs(db, empresa_id: str, recs: list[dict], ahora: datetime) -> None:
+    db.flush()
+    existentes = {r.num_rec: r for r in db.query(RecCoactiva).filter(RecCoactiva.empresa_id == empresa_id)}
+    for dato in recs:
+        numero = dato["num_rec"][:25]
+        fila = existentes.get(numero)
+        if fila is None:
+            fila = RecCoactiva(empresa_id=empresa_id, num_rec=numero)
+            db.add(fila)
+            existentes[numero] = fila
+        fila.dependencia = (dato["dependencia"] or "")[:120]
+        fila.estado = (dato["estado"] or "")[:60]
+        fila.fecha_emision = _fecha_o_none(dato.get("fecha_emision"))
+        fila.fecha_notificacion = _fecha_o_none(dato.get("fecha_notificacion"))
+        fila.actualizado_en = ahora
+
+
+def _destinatarios_empresa(db, empresa: Empresa) -> list[Usuario]:
+    """Mismo criterio que _notificar_mensajes_nuevos: admins del tenant + el miembro que tiene asignada la empresa."""
+    return (
+        db.query(Usuario)
+        .filter(Usuario.tenant_id == empresa.tenant_id)
+        .filter(Usuario.forma_notificacion == "correo")
+        .filter(or_(Usuario.rol == "admin", Usuario.id == empresa.asignado_a_usuario_id))
+        .all()
+    )
+
+
+def _vencimiento_tarea_valor(valor: ValorDeuda, hoy: datetime) -> datetime:
+    """
+    En coactiva: 2 dias (riesgo de embargo). Si no: SUNAT da 7 dias habiles
+    desde la notificacion de una orden de pago antes de pasarla a coactiva
+    -- se usa la fecha de notificacion + 7, nunca antes de manana.
+    """
+    if valor.en_cobranza_coactiva:
+        return hoy + timedelta(days=2)
+    if valor.fecha_notificacion:
+        n = valor.fecha_notificacion
+        limite = datetime(n.year, n.month, n.day, 17, tzinfo=timezone.utc) + timedelta(days=7)
+        return max(limite, hoy + timedelta(days=1))
+    return hoy + timedelta(days=5)
+
+
+def avisar_novedades_deuda(db, empresa: Empresa, valores: list[ValorDeuda], embargos: list[EmbargoNotificado]) -> None:
+    """
+    Por cada deuda nueva (o que volvio a aparecer) y cada embargo nuevo
+    activo: una tarea en el modulo Tareas y un correo inmediato al
+    responsable. Nunca debe tumbar el job: el correo va en try.
+    """
+    if not valores and not embargos:
+        return
+    hoy = datetime.now(timezone.utc)
+    for v in valores:
+        db.add(TareaObligacion(
+            empresa_id=empresa.id,
+            titulo=(
+                f"Atender {v.tipo_descripcion or 'valor'} N° {v.num_valor} -- {v.tributo} "
+                f"(periodo {v.periodo}) -- S/ {v.saldo_total:,.2f}"
+            )[:300],
+            tipo="deuda",
+            fecha_vencimiento=_vencimiento_tarea_valor(v, hoy),
+            prioridad="urgente" if v.en_cobranza_coactiva else "alta",
+            proceso="automatica",
+            referencia_sunat=f"valor:{v.num_valor}",
+            observaciones=(
+                f"Creada automaticamente: SUNAT muestra este valor como pendiente ({v.etapa or v.estado})."
+                + (f" Expediente coactivo {v.num_expediente_coactivo}." if v.num_expediente_coactivo else "")
+                + " Se completara sola cuando deje de figurar como pendiente en SUNAT."
+            )[:2000],
+        ))
+    for e in embargos:
+        db.add(TareaObligacion(
+            empresa_id=empresa.id,
+            titulo=f"Embargo notificado RC {e.rc_embargo} en {e.nombre_tercero or 'tercero'} -- S/ {e.monto_embargado:,.2f}"[:300],
+            tipo="deuda",
+            fecha_vencimiento=hoy + timedelta(days=1),
+            prioridad="urgente",
+            proceso="automatica",
+            referencia_sunat=f"embargo:{e.rc_embargo}",
+            observaciones=(
+                f"Creada automaticamente: SUNAT registra un embargo en forma de retencion ({e.estado}). "
+                "Se completara sola cuando SUNAT lo muestre como Levantado."
+            ),
+        ))
+    try:
+        numeros = ",".join(v.num_valor for v in valores)
+        link = f"{FRONTEND_URL}/cumplimiento?tab=deudas&empresa={empresa.id}" + (f"&valores={numeros}" if numeros else "")
+        datos_valores = [
+            {
+                "tipo_descripcion": v.tipo_descripcion, "num_valor": v.num_valor, "periodo": v.periodo,
+                "tributo": v.tributo, "etapa": v.etapa, "en_cobranza_coactiva": v.en_cobranza_coactiva,
+                "saldo_total": v.saldo_total,
+            }
+            for v in valores
+        ]
+        datos_embargos = [
+            {"rc_embargo": e.rc_embargo, "nombre_tercero": e.nombre_tercero, "monto_embargado": e.monto_embargado, "estado": e.estado}
+            for e in embargos
+        ]
+        for usuario in _destinatarios_empresa(db, empresa):
+            enviar_aviso_deudas_nuevas(usuario.email, empresa.razon_social, empresa.ruc, datos_valores, datos_embargos, link)
+    except Exception:
+        logger.exception(f"No se pudo enviar el aviso de deudas nuevas de {empresa.ruc}")
+
+
+def completar_tareas_por_referencia(db, empresa_id: str, referencias: list[str], motivo: str) -> int:
+    """Completa las tareas automaticas de deuda/embargo cuando SUNAT ya no las muestra pendientes. No hace commit."""
+    if not referencias:
+        return 0
+    ahora = datetime.now(timezone.utc)
+    tareas = (
+        db.query(TareaObligacion)
+        .filter(
+            TareaObligacion.empresa_id == empresa_id,
+            TareaObligacion.estado == "pendiente",
+            TareaObligacion.referencia_sunat.in_(referencias),
+        )
+        .all()
+    )
+    for t in tareas:
+        t.estado = "completado"
+        t.fecha_completado = ahora
+        t.verificado_sunat_en = ahora
+        nota = f"Completada automaticamente: {motivo}."
+        t.observaciones = (f"{t.observaciones}\n{nota}" if t.observaciones else nota)[:2000]
+    return len(tareas)
 
 
 def ejecutar_consulta_deudas(job_id: str):
@@ -1075,6 +1261,33 @@ def ejecutar_consulta_deudas(job_id: str):
             .first()
         ) is not None
         cuenta = aplicar_lectura_valores(db, empresa.id, resultado["valores"], ahora, avisar_nuevos=ya_tenia_lectura)
+        completar_tareas_por_referencia(
+            db, empresa.id, [f"valor:{n}" for n in cuenta["desaparecidos"]],
+            "el valor ya no figura como pendiente en SUNAT (pagado, fraccionado o anulado)",
+        )
+        embargos_nuevos = []
+        if resultado.get("embargos") is not None:
+            # La primera lectura de embargos tambien es linea base aunque los
+            # valores ya se leyeran antes (los embargos se agregaron despues).
+            ya_tenia_embargos = (
+                db.query(ConsultaDeudasJob.id)
+                .filter(
+                    ConsultaDeudasJob.empresa_id == empresa.id,
+                    ConsultaDeudasJob.embargos_leidos.is_(True),
+                    ConsultaDeudasJob.id != job.id,
+                )
+                .first()
+            ) is not None
+            novedades = aplicar_lectura_embargos(db, empresa.id, resultado["embargos"], ahora, avisar_nuevos=ya_tenia_embargos)
+            job.embargos_leidos = True
+            embargos_nuevos = novedades["nuevos_activos"]
+            completar_tareas_por_referencia(
+                db, empresa.id, [f"embargo:{rc}" for rc in novedades["levantados"]], "SUNAT muestra el embargo como Levantado",
+            )
+        if resultado.get("recs") is not None:
+            aplicar_lectura_recs(db, empresa.id, resultado["recs"], ahora)
+        db.flush()
+        avisar_novedades_deuda(db, empresa, cuenta["para_avisar"], embargos_nuevos)
         job.estado = "completado"
         job.valores_vigentes = cuenta["vigentes"]
         job.valores_nuevos = cuenta["nuevos"]
@@ -1211,6 +1424,9 @@ def ejecutar_consulta_declaraciones(job_id: str):
         leidos = aplicar_lectura_declaraciones(
             db, empresa.id, resultado["declaraciones"], resultado["desde"], resultado["hasta"], ahora
         )
+        db.flush()
+        sincronizar_tareas_con_sunat(db, empresa.id)
+        revisar_obligacion_plame(db, empresa.id)
         job.estado = "completado"
         job.formularios_leidos = leidos
         job.finalizado_en = ahora

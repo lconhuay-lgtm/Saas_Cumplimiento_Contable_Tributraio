@@ -289,6 +289,38 @@ class ValorDeudaItem(BaseModel):
     visto_en: datetime
     ya_no_aparece_desde: datetime | None
     historial: list[EventoValorDeuda]
+    # Estado de la REC de su expediente coactivo, si SUNAT la lista (Activo, Suspension temporal...).
+    rec_estado: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class EmbargoItem(BaseModel):
+    rc_embargo: str
+    ruc_tercero: str
+    nombre_tercero: str
+    fecha_registro: date | None
+    fecha_notificacion: date | None
+    estado: str
+    monto_embargado: float
+    monto_entregado: float
+    monto_pendiente: float
+    rc_levantamiento: str | None
+    fecha_levantamiento: date | None
+    imposibilidad: str
+    detectado_en: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RecItem(BaseModel):
+    num_rec: str
+    dependencia: str
+    estado: str
+    fecha_emision: date | None
+    fecha_notificacion: date | None
 
     class Config:
         from_attributes = True
@@ -299,6 +331,8 @@ class CumplimientoDeudasFila(BaseModel):
     ruc: str
     razon_social: str
     valores: list[ValorDeudaItem]
+    embargos: list[EmbargoItem] = []
+    recs: list[RecItem] = []
     actualizado_en: datetime | None  # ultima lectura completa a SUNAT
     consulta_en_curso: bool
     ultimo_error: str | None = None
@@ -709,6 +743,8 @@ class TareaObligacionResponse(BaseModel):
     prioridad: str
     proceso: str
     fecha_completado: datetime | None
+    # Se completo sola porque SUNAT ya registra lo presentado (ver app.tareas.sincronizar_tareas_con_sunat).
+    verificado_sunat_en: datetime | None = None
     observaciones: str | None
     creado_en: datetime
 

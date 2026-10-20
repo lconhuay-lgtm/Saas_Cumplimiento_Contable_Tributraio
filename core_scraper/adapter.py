@@ -1592,6 +1592,114 @@ def normalizar_valor(crudo: dict) -> dict:
     }
 
 
+# Menu SOL: Revision de mis deudas > Consultas de Cobranza > Consulta de Embargos Notificados.
+_MENU_EMBARGOS = ("nivel1_15", "nivel2_15_7", "nivel3_15_7_1", "nivel4_15_7_1_1_1")
+# El boton Buscar de esa pantalla exige un filtro, pero es solo validacion del
+# navegador: sin filtros el servidor devuelve TODO el historial de embargos
+# de la empresa en una sola respuesta (confirmado con Bascat 20/10/2026).
+_URL_EMBARGOS = (
+    "/ol-ti-itembtercero/mantMonto.htm?accion=buscarEmbNotificadosDeudor"
+    "&rcEmbargo=&rucTercero=&estado=0&fecInicial=&fecFinal="
+)
+# Menu SOL: Revision de mis deudas > Valores > Consulta de REC.
+_MENU_REC = ("nivel1_15", "nivel2_15_1", "nivel3_15_1_1", "nivel4_15_1_1_1_3")
+_URL_RECS = "/ol-ti-itreccentral/expcoa/listarRECs/"
+# La consulta de REC acepta rangos de hasta 180 dias de fecha de emision.
+_DIAS_POR_CONSULTA_REC = 180
+_REC_DESDE = datetime(2023, 1, 1)
+
+_JS_FETCH_JSON = """
+var done = arguments[arguments.length - 1];
+fetch(arguments[0], {method: 'POST', credentials: 'include', headers: {'Content-Type': 'application/json'}, body: arguments[1]})
+  .then(function (r) { return r.text().then(function (t) { done([r.status, t]); }); })
+  .catch(function (e) { done([0, String(e)]); });
+"""
+
+
+def _rc_o_none(valor) -> str | None:
+    texto = _texto(valor)
+    return None if texto in ("", "0") else texto
+
+
+def normalizar_embargo(crudo: dict) -> dict:
+    return {
+        "rc_embargo": _texto(crudo.get("rcEmbargo")),
+        "ruc_tercero": _texto(crudo.get("numRucTer")),
+        "nombre_tercero": _texto(crudo.get("nomTercero")),
+        "fecha_registro": _fecha_iso(crudo.get("fecRegistro")),
+        "fecha_notificacion": _fecha_iso(crudo.get("fecNotif")),
+        "estado": _texto(crudo.get("estado")),
+        "monto_embargado": _monto(crudo.get("monEmbargado")),
+        "monto_entregado": _monto(crudo.get("monEntregado")),
+        "monto_pendiente": _monto(crudo.get("monPendiente")),
+        "rc_levantamiento": _rc_o_none(crudo.get("rcLevantamiento")),
+        "fecha_levantamiento": _fecha_iso(crudo.get("fecLev")),
+        "imposibilidad": _texto(crudo.get("desImposibilidad")),
+    }
+
+
+def normalizar_rec(crudo: dict) -> dict:
+    return {
+        "num_rec": _texto(crudo.get("num_exp_coa")),
+        "dependencia": _texto(crudo.get("desc_dep")),
+        "estado": _texto(crudo.get("est_rec")),
+        "fecha_emision": _fecha_iso(crudo.get("fec_emi")),
+        "fecha_notificacion": _fecha_iso(crudo.get("fec_not")),
+    }
+
+
+def _leer_embargos_notificados(navegador) -> list[dict] | None:
+    try:
+        error_menu = _abrir_opcion_menu_sol(navegador, _MENU_EMBARGOS, "15.7.1.1.1", "la Consulta de Embargos Notificados")
+        if error_menu:
+            logger.warning(f"Embargos: {error_menu}")
+            return None
+        time.sleep(3)
+        status, cuerpo = navegador.driver.execute_async_script(_JS_FETCH_JSON, _URL_EMBARGOS, "")
+        datos = json.loads(cuerpo) if status == 200 else None
+        if not isinstance(datos, dict) or "listaEmbNotificados" not in datos:
+            logger.warning(f"Embargos: respuesta inesperada (HTTP {status}): {str(cuerpo)[:200]}")
+            return None
+        embargos = [normalizar_embargo(e) for e in datos.get("listaEmbNotificados") or []]
+        return [e for e in embargos if e["rc_embargo"]]
+    except Exception as e:
+        logger.warning(f"No se pudieron leer los embargos notificados: {e}")
+        return None
+
+
+def _leer_recs(navegador, ruc: str) -> list[dict] | None:
+    try:
+        error_menu = _abrir_opcion_menu_sol(navegador, _MENU_REC, "15.1.1.1.3", "la Consulta de REC")
+        if error_menu:
+            logger.warning(f"REC: {error_menu}")
+            return None
+        time.sleep(3)
+        recs: dict[str, dict] = {}
+        inicio = _REC_DESDE
+        hoy = datetime.now()
+        while inicio <= hoy:
+            fin = min(inicio + timedelta(days=_DIAS_POR_CONSULTA_REC - 1), hoy)
+            cuerpo = json.dumps({
+                "cod_dep": "9999", "num_ruc": ruc, "num_rec": "", "cod_est_rec": "9999", "cod_tip_rec": "9999",
+                "fecDesde": inicio.strftime("%d/%m/%Y"), "fecHasta": fin.strftime("%d/%m/%Y"), "flagsol": "1",
+            })
+            status, texto = navegador.driver.execute_async_script(_JS_FETCH_JSON, _URL_RECS, cuerpo)
+            datos = json.loads(texto) if status == 200 else None
+            if not isinstance(datos, dict) or datos.get("estadoRespuesta") != 1:
+                logger.warning(f"REC: respuesta inesperada (HTTP {status}): {str(texto)[:200]}")
+                return None
+            for crudo in datos.get("datos") or []:
+                rec = normalizar_rec(crudo)
+                if rec["num_rec"]:
+                    recs[rec["num_rec"]] = rec
+            inicio = fin + timedelta(days=1)
+            time.sleep(0.3)
+        return list(recs.values())
+    except Exception as e:
+        logger.warning(f"No se pudieron leer las REC: {e}")
+        return None
+
+
 def consultar_valores_pendientes(
     ruc: str,
     usuario_sol: str,
@@ -1684,7 +1792,17 @@ def consultar_valores_pendientes(
             time.sleep(0.5)
 
         logger.info(f"Valores pendientes {ruc}: {len(por_numero)} valor(es) entre {desde} y {hasta}")
-        return {"ok": True, "error": None, "desde": desde, "hasta": hasta, "valores": list(por_numero.values())}
+
+        # Embargos y REC: en la MISMA sesion (sin otro ingreso a SUNAT). Un
+        # fallo aca no invalida los valores ya leidos: se devuelve None y el
+        # llamador deja lo guardado de esos dos como estaba.
+        _reportar("leyendo_embargos")
+        embargos = _leer_embargos_notificados(navegador)
+        recs = _leer_recs(navegador, ruc)
+        return {
+            "ok": True, "error": None, "desde": desde, "hasta": hasta, "valores": list(por_numero.values()),
+            "embargos": embargos, "recs": recs,
+        }
 
     except Exception as e:
         logger.error(f"Error consultando los valores pendientes de {ruc}: {e}")

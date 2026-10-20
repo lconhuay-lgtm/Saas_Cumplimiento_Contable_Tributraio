@@ -12,7 +12,9 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.models import Empresa, EmpresaObligacion, TareaObligacion, CronogramaVencimiento
+from app.models import (
+    Empresa, EmpresaObligacion, TareaObligacion, CronogramaVencimiento, DeclaracionSunat, SireEstadoPeriodo,
+)
 from app.cronograma_sunat import grupo_para_empresa, empresas_para_cronograma
 
 logger = logging.getLogger("app.tareas")
@@ -25,6 +27,7 @@ ETIQUETAS_TIPO = {
     "cts": "CTS",
     "itan": "ITAN",
     "sire": "SIRE",
+    "deuda": "Deuda SUNAT",
     "otro": "Otro",
 }
 
@@ -184,5 +187,130 @@ def generar_tareas_mes(db: Session, tenant_id: str, anio: int, mes: int) -> dict
             creadas += 1
 
     db.commit()
+    # Si SUNAT ya registra lo presentado (p. ej. la tarea se genero tarde),
+    # la tarea nace completada en vez de quedar pendiente.
+    for empresa in empresas:
+        sincronizar_tareas_con_sunat(db, empresa.id)
+    db.commit()
     logger.info(f"Tareas generadas para {periodo}: {creadas} creada(s), {sin_regla} sin fecha calculable.")
     return {"periodo": periodo, "tareas_creadas": creadas, "obligaciones_sin_regla": sin_regla}
+
+
+# PLAME: quien la presento en el ultimo anio tiene trabajadores (o
+# pensionistas/4ta con retencion) y queda obligada mes a mes.
+MESES_PLAME_RECIENTE = 12
+NOMBRE_PLAME_DETECTADA = "PLAME -- Planilla (detectada en SUNAT)"
+
+
+def revisar_obligacion_plame(db: Session, empresa_id: str) -> str | None:
+    """
+    No todas las empresas declaran PLAME, y hasta ahora dependia de que
+    alguien marcara la casilla al registrar la empresa. Con lo que lee
+    "Declaracion mensual": si SUNAT registra un 0601 en los ultimos 12
+    meses y la empresa no tiene NINGUNA obligacion de planilla, se le crea
+    (regla cronograma_sunat, como la de la casilla) para que se generen sus
+    tareas y el cuadro la controle. Nunca desactiva ni reactiva una que el
+    usuario configuro: si la apago a mano, se respeta. No hace commit.
+    Devuelve "creada" o None.
+    """
+    ya_tiene = (
+        db.query(EmpresaObligacion.id)
+        .filter(EmpresaObligacion.empresa_id == empresa_id, EmpresaObligacion.tipo == "planilla")
+        .first()
+    )
+    if ya_tiene:
+        return None
+    hoy = datetime.now(timezone.utc)
+    meses = hoy.year * 12 + hoy.month - 1 - MESES_PLAME_RECIENTE
+    desde = f"{meses // 12}-{meses % 12 + 1:02d}"
+    reciente = (
+        db.query(DeclaracionSunat.id)
+        .filter(
+            DeclaracionSunat.empresa_id == empresa_id,
+            DeclaracionSunat.formulario == "0601",
+            DeclaracionSunat.periodo >= desde,
+        )
+        .first()
+    )
+    if not reciente:
+        return None
+    db.add(EmpresaObligacion(
+        empresa_id=empresa_id, tipo="planilla", nombre=NOMBRE_PLAME_DETECTADA,
+        regla_vencimiento="cronograma_sunat", activa=True,
+    ))
+    logger.info(f"Empresa {empresa_id}: presenta PLAME en SUNAT y no tenia la obligacion -- creada automaticamente")
+    return "creada"
+
+
+# Declaracion que, si SUNAT la registra para el periodo, da por cumplida la
+# tarea de ese tipo. AFP no esta: se declara en AFPnet, no en SUNAT.
+FORMULARIOS_POR_TIPO_TAREA = {"igv_renta": ("0621",), "planilla": ("0601",)}
+TIPOS_VERIFICABLES_EN_SUNAT = (*FORMULARIOS_POR_TIPO_TAREA, "sire")
+
+
+def _fecha_es(d) -> str:
+    return d.strftime("%d/%m/%Y")
+
+
+def sincronizar_tareas_con_sunat(db: Session, empresa_id: str) -> int:
+    """
+    Completa solas las tareas pendientes de IGV-Renta, Planilla (PLAME) y
+    SIRE cuyo periodo SUNAT ya registra como presentado -- con lo que leen
+    las pestanas "Declaracion mensual" (DeclaracionSunat) y "SIRE"
+    (SireEstadoPeriodo) de Cumplimiento. No hace commit. Devuelve cuantas
+    completo.
+    """
+    pendientes = (
+        db.query(TareaObligacion)
+        .filter(
+            TareaObligacion.empresa_id == empresa_id,
+            TareaObligacion.estado == "pendiente",
+            TareaObligacion.periodo.isnot(None),
+            TareaObligacion.tipo.in_(TIPOS_VERIFICABLES_EN_SUNAT),
+            TareaObligacion.verificado_sunat_en.is_(None),
+        )
+        .all()
+    )
+    ahora = datetime.now(timezone.utc)
+    completadas = 0
+    for tarea in pendientes:
+        fecha = None
+        detalle = None
+        if tarea.tipo in FORMULARIOS_POR_TIPO_TAREA:
+            declaracion = (
+                db.query(DeclaracionSunat)
+                .filter(
+                    DeclaracionSunat.empresa_id == empresa_id,
+                    DeclaracionSunat.periodo == tarea.periodo,
+                    DeclaracionSunat.formulario.in_(FORMULARIOS_POR_TIPO_TAREA[tarea.tipo]),
+                )
+                .order_by(DeclaracionSunat.fecha_presentacion.asc())
+                .first()
+            )
+            if declaracion is not None:
+                if declaracion.fecha_presentacion:
+                    d = declaracion.fecha_presentacion
+                    fecha = datetime(d.year, d.month, d.day, 17, tzinfo=timezone.utc)
+                detalle = (
+                    f"SUNAT registra el formulario {declaracion.formulario} (N° de orden {declaracion.num_orden})"
+                    + (f" presentado el {_fecha_es(declaracion.fecha_presentacion)}" if declaracion.fecha_presentacion else "")
+                )
+        else:
+            libros = (
+                db.query(SireEstadoPeriodo)
+                .filter(SireEstadoPeriodo.empresa_id == empresa_id, SireEstadoPeriodo.periodo == tarea.periodo)
+                .all()
+            )
+            if libros and all(l.presentado for l in libros):
+                detalle = f"SUNAT registra presentado el SIRE ({', '.join(sorted(l.libro for l in libros))}) del periodo"
+        if detalle is None:
+            continue
+        tarea.estado = "completado"
+        tarea.fecha_completado = fecha or ahora
+        tarea.verificado_sunat_en = ahora
+        nota = f"Completada automaticamente: {detalle}."
+        tarea.observaciones = (f"{tarea.observaciones}\n{nota}" if tarea.observaciones else nota)[:2000]
+        completadas += 1
+    if completadas:
+        logger.info(f"Empresa {empresa_id}: {completadas} tarea(s) completada(s) al verificar en SUNAT")
+    return completadas

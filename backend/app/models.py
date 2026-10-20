@@ -181,6 +181,8 @@ class Empresa(Base):
     consulta_deudas_jobs: Mapped[list["ConsultaDeudasJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     valores_deuda: Mapped[list["ValorDeuda"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     consulta_declaraciones_jobs: Mapped[list["ConsultaDeclaracionesJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    embargos: Mapped[list["EmbargoNotificado"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    recs: Mapped[list["RecCoactiva"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     declaraciones: Mapped[list["DeclaracionSunat"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     canario_checks: Mapped[list["CanarioCheck"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     obligaciones: Mapped[list["EmpresaObligacion"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
@@ -413,6 +415,9 @@ class ConsultaDeudasJob(Base):
     etapa: Mapped[str | None] = mapped_column(String(30), nullable=True)
     valores_vigentes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     valores_nuevos: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Si esta lectura tambien leyo los embargos notificados: la primera que lo
+    # hace es la linea base de embargos (no se avisa lo que ya existia).
+    embargos_leidos: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
     iniciado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finalizado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -470,6 +475,57 @@ class ValorDeuda(Base):
     notificado_popup: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="valores_deuda")
+
+
+class EmbargoNotificado(Base):
+    """
+    Embargo (en forma de retencion a un tercero: banco, cliente...) tal como
+    lo lista SUNAT en Consultas de Cobranza > Consulta de Embargos
+    Notificados. Se lee junto con los valores pendientes. Nunca se borra;
+    "activo" = estado distinto de Levantado.
+    """
+    __tablename__ = "embargos_notificados"
+    __table_args__ = (UniqueConstraint("empresa_id", "rc_embargo", name="uq_embargo_empresa_rc"),)
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    rc_embargo: Mapped[str] = mapped_column(String(25), nullable=False)
+    ruc_tercero: Mapped[str] = mapped_column(String(15), nullable=False, default="")
+    nombre_tercero: Mapped[str] = mapped_column(String(150), nullable=False, default="")
+    fecha_registro: Mapped[date | None] = mapped_column(Date, nullable=True)
+    fecha_notificacion: Mapped[date | None] = mapped_column(Date, nullable=True)
+    estado: Mapped[str] = mapped_column(String(60), nullable=False, default="")
+    monto_embargado: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    monto_entregado: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    monto_pendiente: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    rc_levantamiento: Mapped[str | None] = mapped_column(String(25), nullable=True)
+    fecha_levantamiento: Mapped[date | None] = mapped_column(Date, nullable=True)
+    imposibilidad: Mapped[str] = mapped_column(String(150), nullable=False, default="")
+    detectado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    visto_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="embargos")
+
+
+class RecCoactiva(Base):
+    """
+    Resolucion de Ejecucion Coactiva (REC) tal como la lista SUNAT en
+    Revision de mis deudas > Valores > Consulta de REC. num_rec es el mismo
+    numero que ValorDeuda.num_expediente_coactivo, asi se cruza con la deuda.
+    """
+    __tablename__ = "recs_coactiva"
+    __table_args__ = (UniqueConstraint("empresa_id", "num_rec", name="uq_rec_empresa_numero"),)
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    num_rec: Mapped[str] = mapped_column(String(25), nullable=False)
+    dependencia: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    estado: Mapped[str] = mapped_column(String(60), nullable=False, default="")
+    fecha_emision: Mapped[date | None] = mapped_column(Date, nullable=True)
+    fecha_notificacion: Mapped[date | None] = mapped_column(Date, nullable=True)
+    actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="recs")
 
 
 class ConsultaDeclaracionesJob(Base):
@@ -708,6 +764,15 @@ class TareaObligacion(Base):
     prioridad: Mapped[str] = mapped_column(String(20), default="media", nullable=False)  # baja|media|alta|urgente
     proceso: Mapped[str] = mapped_column(String(20), default="manual", nullable=False)  # automatica|manual
     fecha_completado: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Cuando la tarea se dio por completada sola porque SUNAT ya registra la
+    # declaracion (0621/0601) o el SIRE presentado -- ver
+    # app.tareas.sincronizar_tareas_con_sunat. Si despues alguien la reabre a
+    # mano, no se vuelve a completar sola.
+    verificado_sunat_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Tareas creadas solas por una deuda o un embargo nuevo en SUNAT:
+    # "valor:<num_valor>" / "embargo:<rc_embargo>" -- sirve para completarlas
+    # solas cuando el valor deja de figurar o el embargo se levanta.
+    referencia_sunat: Mapped[str | None] = mapped_column(String(60), nullable=True, index=True)
     observaciones: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     # Cuando se le mando el correo de "vence pronto" -- None todavia no se
     # envio. Evita reenviar el mismo aviso cada dia mientras siga pendiente

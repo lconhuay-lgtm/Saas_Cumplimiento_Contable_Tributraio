@@ -9,11 +9,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import ConsultaDeudasJob, Empresa, Usuario, ValorDeuda
+from app.models import ConsultaDeudasJob, EmbargoNotificado, Empresa, RecCoactiva, Usuario, ValorDeuda
 from app.cumplimiento import ESTADOS_EN_CURSO, encolar_lecturas, filtrar_activas_en_sunat
 from app.schemas import (
-    ConsultaDeudasJobResponse, CumplimientoDeudasFila, CumplimientoDeudasResponse, MarcarValoresVistosRequest,
-    MarcarVistasResponse, ValorDeudaItem, ValoresNuevosGrupo, ValorNuevoItem,
+    ConsultaDeudasJobResponse, CumplimientoDeudasFila, CumplimientoDeudasResponse, EmbargoItem, MarcarValoresVistosRequest,
+    MarcarVistasResponse, RecItem, ValorDeudaItem, ValoresNuevosGrupo, ValorNuevoItem,
 )
 from app.deps import get_usuario_actual
 from app.queue_conn import cola_consultas
@@ -79,6 +79,16 @@ def cumplimiento_deudas(
         .order_by(ValorDeuda.vigente.desc(), ValorDeuda.periodo.desc(), ValorDeuda.num_valor)
     ):
         valores_por_empresa.setdefault(v.empresa_id, []).append(v)
+    embargos_por_empresa: dict[str, list[EmbargoNotificado]] = {}
+    for e in (
+        db.query(EmbargoNotificado)
+        .filter(EmbargoNotificado.empresa_id.in_(ids))
+        .order_by(EmbargoNotificado.fecha_registro.desc())
+    ):
+        embargos_por_empresa.setdefault(e.empresa_id, []).append(e)
+    recs_por_empresa: dict[str, list[RecCoactiva]] = {}
+    for r in db.query(RecCoactiva).filter(RecCoactiva.empresa_id.in_(ids)).order_by(RecCoactiva.fecha_emision.desc()):
+        recs_por_empresa.setdefault(r.empresa_id, []).append(r)
 
     en_curso = {
         eid for (eid,) in db.query(ConsultaDeudasJob.empresa_id)
@@ -98,11 +108,19 @@ def cumplimiento_deudas(
     filas = []
     for e in empresas:
         job = ultimo_job.get(e.id)
+        estado_rec = {r.num_rec: r.estado for r in recs_por_empresa.get(e.id, [])}
+        valores = []
+        for v in valores_por_empresa.get(e.id, []):
+            item = ValorDeudaItem.model_validate(v)
+            item.rec_estado = estado_rec.get(v.num_expediente_coactivo or "")
+            valores.append(item)
         filas.append(CumplimientoDeudasFila(
             empresa_id=e.id,
             ruc=e.ruc,
             razon_social=e.razon_social,
-            valores=[ValorDeudaItem.model_validate(v) for v in valores_por_empresa.get(e.id, [])],
+            valores=valores,
+            embargos=[EmbargoItem.model_validate(x) for x in embargos_por_empresa.get(e.id, [])],
+            recs=[RecItem.model_validate(x) for x in recs_por_empresa.get(e.id, [])],
             actualizado_en=ultima_lectura_ok.get(e.id),
             consulta_en_curso=e.id in en_curso,
             ultimo_error=job.error if job is not None and job.estado == "error" else None,

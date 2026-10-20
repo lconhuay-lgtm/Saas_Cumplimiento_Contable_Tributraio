@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Download,
   Gavel,
+  Landmark,
   Loader2,
   RefreshCw,
   Search,
@@ -17,9 +18,14 @@ import { descargarCsv } from "./utilidades";
 const FILTROS = [
   { id: "con_deuda", label: "Con deuda vigente" },
   { id: "coactiva", label: "En cobranza coactiva" },
+  { id: "embargo", label: "Con embargo activo" },
   { id: "sin_deuda", label: "Sin deuda" },
   { id: "todas", label: "Todas" },
 ];
+
+function embargoActivo(e) {
+  return !/levant/i.test(e.estado || "");
+}
 
 const EVENTOS = {
   nuevo: "Aparecio",
@@ -51,6 +57,7 @@ function textoHistorial(v) {
 function resumirEmpresa(f) {
   const vigentes = f.valores.filter((v) => v.vigente);
   const coactiva = vigentes.filter((v) => v.en_cobranza_coactiva);
+  const embargosActivos = (f.embargos || []).filter(embargoActivo);
   return {
     ...f,
     vigentes,
@@ -58,6 +65,8 @@ function resumirEmpresa(f) {
     saldo: vigentes.reduce((s, v) => s + v.saldo_total, 0),
     coactiva,
     saldoCoactiva: coactiva.reduce((s, v) => s + v.saldo_total, 0),
+    embargosActivos,
+    montoEmbargado: embargosActivos.reduce((s, x) => s + x.monto_pendiente, 0),
   };
 }
 
@@ -149,13 +158,15 @@ export default function PanelDeudas({ enfoque = null }) {
   const empresas = useMemo(() => (datos ? datos.filas.map(resumirEmpresa) : []), [datos]);
 
   const totales = useMemo(() => {
-    const t = { saldo: 0, valores: 0, coactiva: 0, saldoCoactiva: 0, empresasConDeuda: 0, historicos: 0 };
+    const t = { saldo: 0, valores: 0, coactiva: 0, saldoCoactiva: 0, empresasConDeuda: 0, historicos: 0, embargos: 0, montoEmbargado: 0 };
     empresas.forEach((e) => {
       t.saldo += e.saldo;
       t.valores += e.vigentes.length;
       t.coactiva += e.coactiva.length;
       t.saldoCoactiva += e.saldoCoactiva;
       t.historicos += e.historicos.length;
+      t.embargos += e.embargosActivos.length;
+      t.montoEmbargado += e.montoEmbargado;
       if (e.vigentes.length) t.empresasConDeuda += 1;
     });
     return t;
@@ -168,6 +179,7 @@ export default function PanelDeudas({ enfoque = null }) {
         if (q && !e.razon_social.toLowerCase().includes(q) && !e.ruc.includes(q)) return false;
         if (filtro === "con_deuda") return e.vigentes.length > 0;
         if (filtro === "coactiva") return e.coactiva.length > 0;
+        if (filtro === "embargo") return e.embargosActivos.length > 0;
         if (filtro === "sin_deuda") return e.vigentes.length === 0;
         return true;
       })
@@ -208,6 +220,13 @@ export default function PanelDeudas({ enfoque = null }) {
       alerta: totales.coactiva > 0,
       filtro: "coactiva",
     },
+    {
+      titulo: "Embargos activos",
+      valor: totales.embargos,
+      nota: totales.embargos ? `${soles.format(totales.montoEmbargado)} pendiente de entrega` : "ningun embargo vigente",
+      alerta: totales.embargos > 0,
+      filtro: "embargo",
+    },
     { titulo: "Empresas con deuda", valor: `${totales.empresasConDeuda} de ${empresas.length}`, nota: "con al menos un valor pendiente", filtro: "con_deuda" },
     { titulo: "Ya no aparecen", valor: totales.historicos, nota: "pagados, fraccionados o anulados (historial)" },
   ];
@@ -217,8 +236,9 @@ export default function PanelDeudas({ enfoque = null }) {
       <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-3xl text-sm text-slate-600">
           Valores pendientes de pago (ordenes de pago, multas, resoluciones) de cada empresa desde enero 2020 hasta el
-          mes pasado, leidos de SUNAT en "Revision de mis deudas". Se revisa solo todos los dias a las 8:30 a.m. y guarda
-          el historial, incluso de las deudas que ya no aparecen.
+          mes pasado, ademas de los embargos notificados, leidos de SUNAT en "Revision de mis deudas". Se revisa solo
+          todos los dias a las 8:30 a.m. y guarda el historial, incluso de las deudas que ya no aparecen. Cada deuda o
+          embargo nuevo crea una tarea y avisa por correo.
         </p>
         <div className="flex items-center gap-2">
           <button
@@ -248,7 +268,7 @@ export default function PanelDeudas({ enfoque = null }) {
       {error && <div className="mt-5 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>}
       {aviso && <div className="mt-5 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2.5 text-sm text-sky-700">{aviso}</div>}
 
-      <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-5">
         {tarjetas.map((t) => (
           <button
             key={t.titulo}
@@ -306,6 +326,7 @@ export default function PanelDeudas({ enfoque = null }) {
                 <th className="px-3 py-3 text-right">Valores vigentes</th>
                 <th className="px-3 py-3 text-right">Deuda vigente</th>
                 <th className="px-3 py-3 text-left">Cobranza coactiva</th>
+                <th className="px-3 py-3 text-left">Embargos</th>
                 <th className="px-3 py-3 text-right">Lectura</th>
               </tr>
             </thead>
@@ -351,6 +372,20 @@ export default function PanelDeudas({ enfoque = null }) {
                           <span className="text-xs text-slate-400">No</span>
                         )}
                       </td>
+                      <td className="px-3 py-2.5">
+                        {e.embargosActivos.length > 0 ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-red-600 px-2 py-0.5 text-xs font-bold text-white">
+                            <Landmark size={12} strokeWidth={2} />
+                            {e.embargosActivos.length} activo(s)
+                          </span>
+                        ) : (e.embargos || []).length > 0 ? (
+                          <span className="text-xs text-slate-500" title="Embargos anteriores ya levantados">
+                            {e.embargos.length} levantado(s)
+                          </span>
+                        ) : (
+                          <span className="text-xs text-slate-400">No</span>
+                        )}
+                      </td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-right text-xs text-slate-500" onClick={(ev) => ev.stopPropagation()}>
                         <div className="flex items-center justify-end gap-2">
                           {e.ultimo_error && (
@@ -376,7 +411,7 @@ export default function PanelDeudas({ enfoque = null }) {
                     </tr>
                     {abierta && (
                       <tr>
-                        <td colSpan={5} className="bg-slate-50/70 px-4 py-3">
+                        <td colSpan={6} className="space-y-4 bg-slate-50/70 px-4 py-3">
                           {!lista.length ? (
                             <p className="text-xs text-slate-500">
                               {e.actualizado_en
@@ -437,7 +472,10 @@ export default function PanelDeudas({ enfoque = null }) {
                                         v.etapa || "—"
                                       )}
                                       {v.num_expediente_coactivo && (
-                                        <span className="block text-[10px] text-slate-500">Exp. {v.num_expediente_coactivo}</span>
+                                        <span className="block text-[10px] text-slate-500">
+                                          Exp. {v.num_expediente_coactivo}
+                                          {v.rec_estado && ` · REC: ${v.rec_estado}`}
+                                        </span>
                                       )}
                                     </td>
                                     <td
@@ -464,6 +502,8 @@ export default function PanelDeudas({ enfoque = null }) {
                               </tbody>
                             </table>
                           )}
+                          {(e.embargos || []).length > 0 && <TablaEmbargos embargos={e.embargos} />}
+                          {(e.recs || []).length > 0 && <TablaRecs recs={e.recs} />}
                         </td>
                       </tr>
                     )}
@@ -481,5 +521,92 @@ export default function PanelDeudas({ enfoque = null }) {
         generales, anticipos de renta ni regalias mineras.
       </p>
     </>
+  );
+}
+
+// Embargos en forma de retencion (bancos, clientes...) de "Consulta de Embargos Notificados".
+function TablaEmbargos({ embargos }) {
+  return (
+    <div>
+      <p className="mb-1.5 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-500">
+        <Landmark size={12} strokeWidth={2} />
+        Embargos notificados
+      </p>
+      <table className="w-full border-collapse text-xs">
+        <thead>
+          <tr className="text-left font-semibold uppercase tracking-wide text-slate-500">
+            <th className="py-1.5 pr-3">Retenido en</th>
+            <th className="py-1.5 pr-3">RC embargo</th>
+            <th className="py-1.5 pr-3">Registro</th>
+            <th className="py-1.5 pr-3">Estado</th>
+            <th className="py-1.5 pr-3 text-right">Embargado</th>
+            <th className="py-1.5 pr-3 text-right">Entregado</th>
+            <th className="py-1.5 pr-3 text-right">Pendiente</th>
+            <th className="py-1.5">Levantamiento</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-200/70">
+          {embargos.map((x) => {
+            const activo = embargoActivo(x);
+            return (
+              <tr key={x.rc_embargo} className={activo ? "text-ink" : "text-slate-400"}>
+                <td className="max-w-[220px] py-1.5 pr-3">
+                  <span className="block truncate" title={x.nombre_tercero}>{x.nombre_tercero || "—"}</span>
+                  <span className="text-[10px] text-slate-500">RUC {x.ruc_tercero}</span>
+                </td>
+                <td className="py-1.5 pr-3 font-mono">{x.rc_embargo}</td>
+                <td className="py-1.5 pr-3">{fechaIso(x.fecha_registro || x.fecha_notificacion)}</td>
+                <td className="py-1.5 pr-3">
+                  <span className={`rounded-full px-1.5 py-0.5 font-bold ${activo ? "bg-red-50 text-red-700" : "bg-slate-100 text-slate-500"}`}>
+                    {x.estado || "—"}
+                  </span>
+                  {x.imposibilidad && <span className="block text-[10px] text-slate-500">{x.imposibilidad}</span>}
+                </td>
+                <td className="py-1.5 pr-3 text-right">{soles.format(x.monto_embargado)}</td>
+                <td className="py-1.5 pr-3 text-right">{soles.format(x.monto_entregado)}</td>
+                <td className="py-1.5 pr-3 text-right font-bold">{soles.format(x.monto_pendiente)}</td>
+                <td className="py-1.5">
+                  {x.fecha_levantamiento ? `${fechaIso(x.fecha_levantamiento)}${x.rc_levantamiento ? ` · RC ${x.rc_levantamiento}` : ""}` : "—"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Resoluciones de Ejecucion Coactiva de "Consulta de REC" (su numero es el expediente coactivo de la deuda).
+function TablaRecs({ recs }) {
+  return (
+    <div>
+      <p className="mb-1.5 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-500">
+        <Gavel size={12} strokeWidth={2} />
+        Resoluciones de ejecucion coactiva (REC)
+      </p>
+      <table className="w-full border-collapse text-xs">
+        <thead>
+          <tr className="text-left font-semibold uppercase tracking-wide text-slate-500">
+            <th className="py-1.5 pr-3">N° REC / expediente</th>
+            <th className="py-1.5 pr-3">Estado</th>
+            <th className="py-1.5 pr-3">Emision</th>
+            <th className="py-1.5 pr-3">Notificacion</th>
+            <th className="py-1.5">Dependencia</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-200/70">
+          {recs.map((r) => (
+            <tr key={r.num_rec} className="text-ink">
+              <td className="py-1.5 pr-3 font-mono">{r.num_rec}</td>
+              <td className="py-1.5 pr-3 font-semibold">{r.estado || "—"}</td>
+              <td className="py-1.5 pr-3">{fechaIso(r.fecha_emision)}</td>
+              <td className="py-1.5 pr-3">{fechaIso(r.fecha_notificacion)}</td>
+              <td className="py-1.5">{r.dependencia || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
