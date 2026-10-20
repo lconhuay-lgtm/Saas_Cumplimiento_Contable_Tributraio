@@ -22,7 +22,9 @@ import time
 import base64
 import logging
 import hashlib
+import html as html_lib
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse, parse_qs, urljoin
 
@@ -1686,6 +1688,155 @@ def consultar_valores_pendientes(
 
     except Exception as e:
         logger.error(f"Error consultando los valores pendientes de {ruc}: {e}")
+        return {**resultado_vacio, "error": str(e)}
+    finally:
+        navegador.close_browser()
+
+
+# Menu SOL: Mis declaraciones informativas > Consulto mis declaraciones y pagos >
+# Declaraciones y pagos > Consulta general.
+_MENU_CONSULTA_DECLARACIONES = ("nivel1_12", "nivel2_12_8", "nivel3_12_8_1", "nivel4_12_8_1_1_2")
+_URL_CONSULTA_DECLARACIONES = "/cl-ti-itconsdecdetinf/consultaS01Alias"
+# Encabezado de la pantalla de resultados -- sale aunque el rango no tenga
+# ninguna declaracion; si falta, la respuesta no es la consulta (sesion
+# vencida, pagina de error).
+_MARCA_RESULTADO_DECLARACIONES = "DETALLE DE DECLARACIONES Y PAGOS"
+
+
+def _texto_celda(fragmento: str) -> str:
+    return re.sub(r"\s+", " ", html_lib.unescape(re.sub(r"<[^>]+>", " ", fragmento))).strip()
+
+
+def _importe_es_pe(texto: str) -> float:
+    """'17.522,00' -> 17522.0 (formato de miles con punto y decimales con coma de esta pantalla)."""
+    try:
+        return round(float(texto.replace(".", "").replace(",", ".")), 2)
+    except ValueError:
+        return 0.0
+
+
+def extraer_declaraciones(html_texto: str) -> list[dict] | None:
+    """
+    Filas de la tabla "Periodo | N° Form | N° Orden | Descripcion | Fecha de Pres. |
+    Banco | Codigo-Tributo | (detalle) | Importe pagado" de la Consulta general.
+    None si la respuesta no es esa pantalla.
+    """
+    if _MARCA_RESULTADO_DECLARACIONES not in html_texto:
+        return None
+    filas = []
+    for fila in re.findall(r"<tr[^>]*>(.*?)</tr>", html_texto, re.S | re.I):
+        celdas = [_texto_celda(c) for c in re.findall(r"<td[^>]*>(.*?)</td>", fila, re.S | re.I)]
+        if len(celdas) != 10 or not re.fullmatch(r"\d{6}", celdas[1]) or not re.fullmatch(r"\d{3,4}", celdas[2]):
+            continue
+        periodo, formulario, num_orden, descripcion, fecha, banco, tributo, _detalle, importe = celdas[1:10]
+        filas.append({
+            "periodo": f"{periodo[:4]}-{periodo[4:]}",
+            "formulario": formulario.zfill(4),
+            "num_orden": num_orden,
+            "descripcion": descripcion,
+            "fecha_presentacion": _fecha_iso(fecha),
+            "banco": "" if banco == "-" else banco,
+            "cod_tributo": "" if tributo == "-" else tributo,
+            "importe_pagado": _importe_es_pe(importe),
+        })
+    return filas
+
+
+def consultar_declaraciones(
+    ruc: str,
+    usuario_sol: str,
+    clave_sol: str,
+    razon_social: str = "",
+    headless: bool = True,
+    on_progreso=None,
+    desde: str = PERIODO_INICIO_VALORES,
+) -> dict:
+    """
+    SOLO LECTURA: "Consulta general" de declaraciones y pagos por periodo
+    tributario (formularios 0621, 0601 PLAME, boletas 1662, etc.), con la misma
+    sesion y el mismo POST de su boton Buscar, en tramos de 6 meses (limite de
+    la pantalla) desde `desde` hasta el mes pasado.
+
+    Returns:
+        {"ok": bool, "error": str | None, "desde": "AAAAMM", "hasta": "AAAAMM",
+         "declaraciones": [{"periodo", "formulario", "num_orden", "descripcion",
+                            "fecha_presentacion", "banco", "cod_tributo", "importe_pagado"}]}
+    """
+    def _reportar(etapa: str):
+        if on_progreso is None:
+            return
+        try:
+            on_progreso(etapa)
+        except Exception as e:
+            logger.warning(f"El callback de progreso fallo (no es grave, se sigue igual): {e}")
+
+    hasta = _ultimo_periodo_consultable_valores()
+    resultado_vacio = {"ok": False, "error": None, "desde": desde, "hasta": hasta, "declaraciones": []}
+    empresa = {"ruc": ruc, "usuario": usuario_sol, "clave": clave_sol, "razon_social": razon_social}
+    navegador = SunatWebNavigator(empresa=empresa, headless=headless)
+    try:
+        if not navegador.initialize_browser():
+            return {**resultado_vacio, "error": "No se pudo iniciar el navegador"}
+
+        _reportar("iniciando_sesion")
+        navegador.driver.get(config.URL_SUNAT)
+        time.sleep(3)
+
+        _reportar("autenticando")
+        if not navegador._hacer_clicks_sunat(empresa):
+            return {**resultado_vacio, "error": error_inicio_sesion(navegador), "credenciales_rechazadas": navegador.credenciales_rechazadas}
+
+        _reportar("abriendo_declaraciones")
+        error_menu = _abrir_opcion_menu_sol(
+            navegador, _MENU_CONSULTA_DECLARACIONES, "12.8.1.1.2", "la Consulta general de declaraciones y pagos"
+        )
+        if error_menu:
+            return {**resultado_vacio, "error": error_menu}
+        driver = navegador.driver
+        try:
+            WebDriverWait(driver, 40).until(lambda d: d.find_elements(By.NAME, "consultageneral"))
+        except Exception:
+            navegador._guardar_captura_error("declaraciones_sin_formulario")
+            return {**resultado_vacio, "error": "La Consulta general de declaraciones no termino de cargar"}
+
+        _reportar("leyendo_declaraciones")
+        driver.set_script_timeout(90)
+        vistas: dict[tuple, dict] = {}
+        for ini, fin in tramos_periodos(desde, hasta):
+            status, cuerpo_b64 = driver.execute_async_script(
+                """
+                var done = arguments[arguments.length - 1];
+                var cuerpo = new URLSearchParams({
+                    accion: 'consultageneral', busquedapor: 'periodo', declaracion: '1', formu2: 'TODOS',
+                    importepagado: '1', adesde: arguments[1], mdesde: arguments[2], ahasta: arguments[3],
+                    mhasta: arguments[4], fec_preini: '', fec_prefin: ''});
+                fetch(arguments[0], {method: 'POST', body: cuerpo, credentials: 'include'})
+                  .then(function (r) { return r.arrayBuffer().then(function (buf) {
+                      var bytes = new Uint8Array(buf), bin = '';
+                      for (var i = 0; i < bytes.length; i += 8192) {
+                          bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+                      }
+                      done([r.status, btoa(bin)]);
+                  }); })
+                  .catch(function (e) { done([0, '']); });
+                """,
+                _URL_CONSULTA_DECLARACIONES, ini[:4], ini[4:], fin[:4], fin[4:],
+            )
+            # Esta pantalla viene en Latin-1 (confirmado con Bascat 20/10/2026).
+            filas = extraer_declaraciones(base64.b64decode(cuerpo_b64 or "").decode("cp1252", errors="replace")) if status == 200 else None
+            if filas is None:
+                logger.warning(f"Declaraciones {ruc}: el tramo {ini}-{fin} no devolvio la consulta (HTTP {status})")
+                navegador._guardar_captura_error("declaraciones_tramo_sin_resultado")
+                return {**resultado_vacio, "error": f"SUNAT no devolvio las declaraciones del tramo {ini}-{fin} (HTTP {status})"}
+            for fila in filas:
+                vistas[(fila["formulario"], fila["num_orden"], fila["cod_tributo"])] = fila
+            time.sleep(0.5)
+
+        logger.info(f"Declaraciones {ruc}: {len(vistas)} formulario(s) entre {desde} y {hasta}")
+        return {"ok": True, "error": None, "desde": desde, "hasta": hasta, "declaraciones": list(vistas.values())}
+
+    except Exception as e:
+        logger.error(f"Error consultando las declaraciones de {ruc}: {e}")
         return {**resultado_vacio, "error": str(e)}
     finally:
         navegador.close_browser()

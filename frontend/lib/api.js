@@ -256,6 +256,9 @@ export const api = {
   obtenerCumplimientoDeudas: () => apiFetch(`/cumplimiento/deudas`),
   consultarDeudasTodas: () => apiFetch(`/cumplimiento/deudas/consultar-todas`, { method: "POST" }),
   consultarDeudas: (empresaId) => apiFetch(`/empresas/${empresaId}/deudas/consultar`, { method: "POST" }),
+  obtenerCumplimientoDeclaraciones: (anio) => apiFetch(`/cumplimiento/declaraciones${anio ? `?anio=${anio}` : ""}`),
+  consultarDeclaracionesTodas: () => apiFetch(`/cumplimiento/declaraciones/consultar-todas`, { method: "POST" }),
+  consultarDeclaraciones: (empresaId) => apiFetch(`/empresas/${empresaId}/declaraciones/consultar`, { method: "POST" }),
   // Ventana emergente de valores (deudas) nuevos -- mismo patron que las notificaciones del buzon.
   listarValoresNuevos: () => apiFetch(`/deudas/valores-nuevos`),
   marcarValoresVistos: (valorIds) =>

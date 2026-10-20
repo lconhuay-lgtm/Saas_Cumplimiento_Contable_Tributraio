@@ -15,6 +15,7 @@ from app.database import SessionLocal
 from app.models import (
     ConsultaJob, FichaRucJob, ReporteTributarioJob, Empresa, CredencialSol, MensajeBuzon, Usuario,
     TareaObligacion, ConsultaSireJob, SireEstadoPeriodo, ConsultaDeudasJob, ValorDeuda,
+    ConsultaDeclaracionesJob, DeclaracionSunat,
 )
 from app.security import descifrar_clave_sol, crear_token_ingreso_directo
 from app.rate_limit import adquirir_slot_global, liberar_slot_global, limite_mensajes_por_consulta
@@ -1089,6 +1090,138 @@ def ejecutar_consulta_deudas(job_id: str):
         logger.exception(f"Error ejecutando ConsultaDeudasJob {job_id}")
         db.rollback()
         job = db.query(ConsultaDeudasJob).filter(ConsultaDeudasJob.id == job_id).first()
+        if job:
+            job.estado = "error"
+            job.error = str(e)[:1000]
+            job.finalizado_en = datetime.now(timezone.utc)
+            db.commit()
+        _reportar_etapa(None)
+    finally:
+        db.close()
+
+
+def aplicar_lectura_declaraciones(db, empresa_id: str, filas: list[dict], desde: str, hasta: str, ahora: datetime) -> int:
+    """
+    Reemplaza lo guardado del rango leido (desde..hasta, "AAAAMM") por la
+    lectura COMPLETA de SUNAT: alta/actualizacion de cada formulario y baja
+    de los que ya no figuran en ese rango (SUNAT a veces corrige o anula un
+    formulario mal registrado). Fuera del rango no se toca nada.
+    """
+    rango = (f"{desde[:4]}-{desde[4:]}", f"{hasta[:4]}-{hasta[4:]}")
+    db.flush()
+    existentes = {
+        (d.formulario, d.num_orden, d.cod_tributo): d
+        for d in db.query(DeclaracionSunat).filter(
+            DeclaracionSunat.empresa_id == empresa_id,
+            DeclaracionSunat.periodo >= rango[0],
+            DeclaracionSunat.periodo <= rango[1],
+        )
+    }
+    vistas = set()
+    for f in filas:
+        clave = (f["formulario"][:6], f["num_orden"][:20], f["cod_tributo"][:10])
+        vistas.add(clave)
+        fila = existentes.get(clave)
+        if fila is None:
+            fila = DeclaracionSunat(empresa_id=empresa_id, formulario=clave[0], num_orden=clave[1], cod_tributo=clave[2])
+            db.add(fila)
+        fila.periodo = f["periodo"][:7]
+        fila.descripcion = (f["descripcion"] or "")[:120]
+        fila.fecha_presentacion = _fecha_o_none(f.get("fecha_presentacion"))
+        fila.banco = (f["banco"] or "")[:80]
+        fila.importe_pagado = f["importe_pagado"]
+        fila.actualizado_en = ahora
+    for clave, fila in existentes.items():
+        if clave not in vistas:
+            db.delete(fila)
+    return len(vistas)
+
+
+def ejecutar_consulta_declaraciones(job_id: str):
+    """Lee de SUNAT las declaraciones y pagos (2020 -> mes pasado) de una empresa para el cuadro de Declaracion mensual."""
+    db = SessionLocal()
+
+    def _reportar_etapa(etapa: str | None):
+        db_etapa = SessionLocal()
+        try:
+            job_actual = db_etapa.query(ConsultaDeclaracionesJob).filter(ConsultaDeclaracionesJob.id == job_id).first()
+            if job_actual:
+                job_actual.etapa = etapa
+                db_etapa.commit()
+        finally:
+            db_etapa.close()
+
+    try:
+        job = db.query(ConsultaDeclaracionesJob).filter(ConsultaDeclaracionesJob.id == job_id).first()
+        if not job:
+            logger.error(f"ConsultaDeclaracionesJob {job_id} no encontrado")
+            return
+
+        job.estado = "en_progreso"
+        job.iniciado_en = datetime.now(timezone.utc)
+        db.commit()
+
+        empresa = db.query(Empresa).filter(Empresa.id == job.empresa_id).first()
+        credencial = (
+            db.query(CredencialSol).filter(CredencialSol.empresa_id == job.empresa_id).first()
+            if empresa else None
+        )
+        if not empresa or not credencial:
+            job.estado = "error"
+            job.error = "Empresa o credenciales no encontradas"
+            job.finalizado_en = datetime.now(timezone.utc)
+            db.commit()
+            return
+
+        clave_en_claro = descifrar_clave_sol(credencial.clave_cifrada, credencial.dek_cifrada)
+
+        from adapter import consultar_declaraciones
+
+        token_slot = adquirir_slot_global()
+        try:
+            resultado = None
+            for intento in range(1, MAX_INTENTOS + 1):
+                resultado = consultar_declaraciones(
+                    ruc=empresa.ruc,
+                    usuario_sol=credencial.usuario_sol,
+                    clave_sol=clave_en_claro,
+                    razon_social=empresa.razon_social,
+                    headless=False,
+                    on_progreso=_reportar_etapa,
+                )
+                if resultado["ok"]:
+                    break
+                logger.warning(f"Declaraciones intento {intento}/{MAX_INTENTOS} fallo para {empresa.ruc}: {resultado['error']}")
+                if resultado.get("credenciales_rechazadas"):
+                    break
+                if intento < MAX_INTENTOS:
+                    time.sleep(ESPERA_ENTRE_INTENTOS_SEG * intento)
+        finally:
+            liberar_slot_global(token_slot)
+
+        if not resultado["ok"]:
+            job.estado = "error"
+            job.error = (resultado["error"] or "Error desconocido")[:1000]
+            job.finalizado_en = datetime.now(timezone.utc)
+            db.commit()
+            _reportar_etapa(None)
+            return
+
+        ahora = datetime.now(timezone.utc)
+        leidos = aplicar_lectura_declaraciones(
+            db, empresa.id, resultado["declaraciones"], resultado["desde"], resultado["hasta"], ahora
+        )
+        job.estado = "completado"
+        job.formularios_leidos = leidos
+        job.finalizado_en = ahora
+        db.commit()
+        _reportar_etapa(None)
+        logger.info(f"ConsultaDeclaracionesJob {job_id} completado para {empresa.ruc}: {leidos} formulario(s)")
+
+    except Exception as e:
+        logger.exception(f"Error ejecutando ConsultaDeclaracionesJob {job_id}")
+        db.rollback()
+        job = db.query(ConsultaDeclaracionesJob).filter(ConsultaDeclaracionesJob.id == job_id).first()
         if job:
             job.estado = "error"
             job.error = str(e)[:1000]

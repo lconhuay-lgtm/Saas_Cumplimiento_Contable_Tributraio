@@ -180,6 +180,8 @@ class Empresa(Base):
     sire_estados: Mapped[list["SireEstadoPeriodo"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     consulta_deudas_jobs: Mapped[list["ConsultaDeudasJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     valores_deuda: Mapped[list["ValorDeuda"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    consulta_declaraciones_jobs: Mapped[list["ConsultaDeclaracionesJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    declaraciones: Mapped[list["DeclaracionSunat"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     canario_checks: Mapped[list["CanarioCheck"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     obligaciones: Mapped[list["EmpresaObligacion"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     tareas: Mapped[list["TareaObligacion"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
@@ -468,6 +470,51 @@ class ValorDeuda(Base):
     notificado_popup: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="valores_deuda")
+
+
+class ConsultaDeclaracionesJob(Base):
+    """Cola/bitacora de lecturas de la Consulta general de declaraciones y pagos de una empresa."""
+    __tablename__ = "consulta_declaraciones_jobs"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    solicitado_por: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
+    estado: Mapped[str] = mapped_column(String(20), default="pendiente", nullable=False, index=True)
+    etapa: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    formularios_leidos: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    iniciado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finalizado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="consulta_declaraciones_jobs")
+
+
+class DeclaracionSunat(Base):
+    """
+    Un formulario presentado ante SUNAT tal como lo lista "Consulta general de
+    declaraciones y pagos" por periodo tributario: declaraciones (0621
+    IGV-Renta, 0601 PLAME...) y pagos (boletas 1662, 1661...). Alimenta la
+    pestana "Declaracion mensual" de Cumplimiento.
+    """
+    __tablename__ = "declaraciones_sunat"
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "formulario", "num_orden", "cod_tributo", name="uq_declaracion_empresa_form_orden"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    periodo: Mapped[str] = mapped_column(String(7), nullable=False, index=True)  # "YYYY-MM"
+    formulario: Mapped[str] = mapped_column(String(6), nullable=False)  # "0621", "0601", "1662"...
+    num_orden: Mapped[str] = mapped_column(String(20), nullable=False)
+    descripcion: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    fecha_presentacion: Mapped[date | None] = mapped_column(Date, nullable=True)
+    banco: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    cod_tributo: Mapped[str] = mapped_column(String(10), nullable=False, default="")
+    importe_pagado: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="declaraciones")
 
 
 class CanarioCheck(Base):

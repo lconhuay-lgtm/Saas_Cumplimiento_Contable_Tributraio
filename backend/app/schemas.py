@@ -308,6 +308,63 @@ class CumplimientoDeudasResponse(BaseModel):
     filas: list[CumplimientoDeudasFila]
 
 
+class ConsultaDeclaracionesJobResponse(BaseModel):
+    id: str
+    empresa_id: str
+    estado: str
+    etapa: str | None = None
+    formularios_leidos: int
+    creado_en: datetime
+    iniciado_en: datetime | None
+    finalizado_en: datetime | None
+    error: str | None
+
+    class Config:
+        from_attributes = True
+
+
+class DeclaracionItem(BaseModel):
+    formulario: str
+    num_orden: str
+    descripcion: str
+    fecha_presentacion: date | None
+    banco: str
+    cod_tributo: str
+    importe_pagado: float
+
+    class Config:
+        from_attributes = True
+
+
+class DeclaracionPeriodoItem(BaseModel):
+    periodo: str
+    # Vencimiento del cronograma mensual para el grupo de la empresa (solo
+    # hay cronograma cargado del anio en curso): separa "pendiente" de "omiso".
+    vence_el: datetime | None = None
+    formularios: list[DeclaracionItem]
+
+
+class CumplimientoDeclaracionesFila(BaseModel):
+    empresa_id: str
+    ruc: str
+    razon_social: str
+    periodos: list[DeclaracionPeriodoItem]
+    # Por formulario controlado ("0621", "0601"): desde que periodo se espera
+    # que lo presente ("YYYY-MM"), "0000-00" si se espera siempre (obligacion
+    # activa sin historial), o None si no le aplica.
+    obligado_desde: dict[str, str | None]
+    actualizado_en: datetime | None
+    consulta_en_curso: bool
+    ultimo_error: str | None = None
+
+
+class CumplimientoDeclaracionesResponse(BaseModel):
+    anio: int
+    anios_disponibles: list[int]
+    ultimo_periodo_consultable: str  # "YYYY-MM": los meses posteriores todavia no se pueden declarar
+    filas: list[CumplimientoDeclaracionesFila]
+
+
 class ValorNuevoItem(BaseModel):
     """Lo que muestra la ventana emergente de "valores nuevos" por cada deuda."""
     id: str

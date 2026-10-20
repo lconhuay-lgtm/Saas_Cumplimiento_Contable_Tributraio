@@ -53,7 +53,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.scheduler_job import (
     encolar_chequeo_nocturno, enviar_resumenes_diarios, ejecutar_chequeo_canario, enviar_recordatorios_vencimiento,
-    encolar_deudas_diario, encolar_sire_programado,
+    encolar_deudas_diario, encolar_sire_programado, encolar_declaraciones_programado,
 )
 from app.database import SessionLocal
 from app.cronograma_sunat import asegurar_cronograma_vigente
@@ -94,6 +94,10 @@ DEUDAS_HORA_UTC = int(os.environ.get("DEUDAS_HORA_UTC", "13"))
 DEUDAS_MINUTO_UTC = int(os.environ.get("DEUDAS_MINUTO_UTC", "30"))
 SIRE_HORA_UTC = int(os.environ.get("SIRE_HORA_UTC", "15"))
 SIRE_MINUTO_UTC = int(os.environ.get("SIRE_MINUTO_UTC", "30"))
+#   DECLARACIONES_HORA_UTC=16:30 -> 11:30 hora Peru (misma regla que el SIRE,
+#                                   con el cronograma mensual)
+DECLARACIONES_HORA_UTC = int(os.environ.get("DECLARACIONES_HORA_UTC", "16"))
+DECLARACIONES_MINUTO_UTC = int(os.environ.get("DECLARACIONES_MINUTO_UTC", "30"))
 
 
 def job_chequeo(etiqueta: str):
@@ -179,6 +183,14 @@ def job_sire_programado():
         logger.info(f"Lectura programada del SIRE encolada: {encolar_sire_programado()}")
     except Exception:
         logger.exception("Fallo la lectura programada del SIRE")
+
+
+def job_declaraciones_programado():
+    logger.info("Encolando la lectura programada de declaraciones...")
+    try:
+        logger.info(f"Lectura programada de declaraciones encolada: {encolar_declaraciones_programado()}")
+    except Exception:
+        logger.exception("Fallo la lectura programada de declaraciones")
 
 
 def job_limpieza_diagnosticos():
@@ -329,6 +341,11 @@ if __name__ == "__main__":
         CronTrigger(hour=SIRE_HORA_UTC, minute=SIRE_MINUTO_UTC),
         id="sire_programado",
     )
+    scheduler.add_job(
+        job_declaraciones_programado,
+        CronTrigger(hour=DECLARACIONES_HORA_UTC, minute=DECLARACIONES_MINUTO_UTC),
+        id="declaraciones_programado",
+    )
     logger.info(
         "Scheduler arrancado. Chequeos diarios a las "
         f"{horarios_iniciales['chequeo1_hora']:02d}:{horarios_iniciales['chequeo1_minuto']:02d} UTC y "
@@ -343,6 +360,7 @@ if __name__ == "__main__":
         "Recordatorio por correo de tareas por vencer a las 06:00 UTC. "
         f"Lectura de deudas a las {DEUDAS_HORA_UTC:02d}:{DEUDAS_MINUTO_UTC:02d} UTC y "
         f"del SIRE (las que lo necesitan) a las {SIRE_HORA_UTC:02d}:{SIRE_MINUTO_UTC:02d} UTC. "
+        f"Declaraciones (las que lo necesitan) a las {DECLARACIONES_HORA_UTC:02d}:{DECLARACIONES_MINUTO_UTC:02d} UTC. "
         "(para probar sin esperar, usa los endpoints /admin/chequeo-nocturno, "
         "/admin/enviar-resumenes, /admin/canario/ejecutar, /admin/limpieza-diagnosticos "
         "y POST /cronograma/sincronizar; para tareas, POST /tareas/generar)"

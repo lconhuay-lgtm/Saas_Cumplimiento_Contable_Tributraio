@@ -23,9 +23,11 @@ from sqlalchemy import func
 
 from app.database import SessionLocal
 from app.models import Empresa, Tenant, CredencialSol, ConsultaJob, CanarioCheck, TareaObligacion
-from app.models import Usuario, ConsultaDeudasJob, ConsultaSireJob, CronogramaVencimiento
+from app.models import Usuario, ConsultaDeudasJob, ConsultaSireJob, ConsultaDeclaracionesJob, CronogramaVencimiento
 from app.queue_conn import cola_consultas, redis_conn
-from app.jobs import ejecutar_consulta_buzon, ejecutar_consulta_deudas, ejecutar_consulta_sire
+from app.jobs import (
+    ejecutar_consulta_buzon, ejecutar_consulta_deudas, ejecutar_consulta_sire, ejecutar_consulta_declaraciones,
+)
 from app.cumplimiento import empresas_de_tenants_activos, encolar_lecturas, filtrar_activas_en_sunat
 from app.cronograma_sunat import grupo_para_empresa
 from app.email_utils import enviar_resumen_diario, enviar_alerta_canario, enviar_recordatorio_tareas
@@ -136,28 +138,29 @@ def encolar_deudas_diario() -> dict:
         db.close()
 
 
-# SIRE: se relee una empresa si su ultima lectura buena tiene mas de estos
-# dias, o si ayer/anteayer vencio su plazo del cronograma SIRE (asi el
-# cuadro refleja enseguida quien presento a tiempo y quien no).
+# SIRE y Declaracion mensual: se relee una empresa si su ultima lectura buena
+# tiene mas de estos dias, o si ayer/anteayer vencio su plazo del cronograma
+# que corresponde (asi el cuadro refleja enseguida quien presento a tiempo y
+# quien no) -- sin gastar un ingreso a SUNAT diario por empresa.
 DIAS_REFRESCO_SIRE = int(os.environ.get("DIAS_REFRESCO_SIRE", 7))
-_DIAS_TRAS_VENCIMIENTO_SIRE = 2
+_DIAS_TRAS_VENCIMIENTO = 2
 _ZONA_LIMA = timezone(timedelta(hours=-5))
 
 
-def empresas_para_refresco_sire(db, hoy=None) -> list[Empresa]:
+def empresas_para_refresco(db, modelo_job, tipo_cronograma: str, hoy=None) -> list[Empresa]:
     hoy = hoy or datetime.now(_ZONA_LIMA).date()
     empresas = filtrar_activas_en_sunat(empresas_de_tenants_activos(db)).order_by(Empresa.razon_social).all()
     ultima_lectura = dict(
-        db.query(ConsultaSireJob.empresa_id, func.max(ConsultaSireJob.finalizado_en))
-        .filter(ConsultaSireJob.estado == "completado")
-        .group_by(ConsultaSireJob.empresa_id)
+        db.query(modelo_job.empresa_id, func.max(modelo_job.finalizado_en))
+        .filter(modelo_job.estado == "completado")
+        .group_by(modelo_job.empresa_id)
         .all()
     )
     vencimientos_recientes: dict[str, list] = {}
     for grupo, fecha in db.query(CronogramaVencimiento.grupo, CronogramaVencimiento.fecha_vencimiento).filter(
-        CronogramaVencimiento.tipo == "sire",
+        CronogramaVencimiento.tipo == tipo_cronograma,
         CronogramaVencimiento.fecha_vencimiento >= datetime.combine(
-            hoy - timedelta(days=_DIAS_TRAS_VENCIMIENTO_SIRE), datetime.min.time(), tzinfo=timezone.utc
+            hoy - timedelta(days=_DIAS_TRAS_VENCIMIENTO), datetime.min.time(), tzinfo=timezone.utc
         ),
         CronogramaVencimiento.fecha_vencimiento < datetime.combine(hoy, datetime.min.time(), tzinfo=timezone.utc),
     ):
@@ -178,12 +181,28 @@ def empresas_para_refresco_sire(db, hoy=None) -> list[Empresa]:
     return elegidas
 
 
+def empresas_para_refresco_sire(db, hoy=None) -> list[Empresa]:
+    return empresas_para_refresco(db, ConsultaSireJob, "sire", hoy)
+
+
 def encolar_sire_programado() -> dict:
-    """Modulo Cumplimiento > SIRE: lectura diaria SOLO de las empresas que lo necesitan (ver empresas_para_refresco_sire)."""
+    """Modulo Cumplimiento > SIRE: lectura diaria SOLO de las empresas que lo necesitan (ver empresas_para_refresco)."""
     db = SessionLocal()
     try:
         resultado = encolar_lecturas(db, empresas_para_refresco_sire(db), ConsultaSireJob, ejecutar_consulta_sire)
         logger.info(f"Lectura programada del SIRE: {resultado}")
+        return resultado
+    finally:
+        db.close()
+
+
+def encolar_declaraciones_programado() -> dict:
+    """Modulo Cumplimiento > Declaracion mensual: igual que el SIRE, pero con el cronograma mensual."""
+    db = SessionLocal()
+    try:
+        empresas = empresas_para_refresco(db, ConsultaDeclaracionesJob, "mensual")
+        resultado = encolar_lecturas(db, empresas, ConsultaDeclaracionesJob, ejecutar_consulta_declaraciones)
+        logger.info(f"Lectura programada de declaraciones: {resultado}")
         return resultado
     finally:
         db.close()

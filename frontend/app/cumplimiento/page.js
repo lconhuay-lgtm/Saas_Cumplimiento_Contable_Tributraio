@@ -5,11 +5,12 @@ import Sidebar from "../../components/Sidebar";
 import { getToken } from "../../lib/api";
 import PanelSire from "./PanelSire";
 import PanelDeudas from "./PanelDeudas";
+import PanelDeclaraciones from "./PanelDeclaraciones";
 
 const SUBMODULOS = [
   { id: "sire", label: "SIRE (Registros Electronicos)", activo: true },
+  { id: "dj", label: "Declaracion mensual", activo: true },
   { id: "deudas", label: "Deudas (valores pendientes)", activo: true },
-  { id: "dj", label: "Declaracion mensual", activo: false },
 ];
 
 const CLAVE_PESTANA = "cumplimiento:pestana";
@@ -97,6 +98,7 @@ function CumplimientoContenido() {
         </div>
 
         {pestana === "sire" && <PanelSire />}
+        {pestana === "dj" && <PanelDeclaraciones />}
         {pestana === "deudas" && <PanelDeudas enfoque={enfoque} />}
       </main>
     </div>
