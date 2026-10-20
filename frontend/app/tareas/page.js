@@ -1,22 +1,27 @@
 "use client";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
-  ListChecks,
-  Plus,
-  X,
-  Loader2,
-  RefreshCw,
+  AlertTriangle,
   Building2,
-  CheckCircle2,
-  Circle,
-  MinusCircle,
-  Clock,
-  ChevronLeft,
-  ChevronRight,
+  CalendarClock,
   CheckCheck,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Circle,
+  Clock,
+  Flag,
   History,
+  ListChecks,
+  Loader2,
+  MinusCircle,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  X,
 } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
 import ConfirmDialog from "../../components/ConfirmDialog";
@@ -33,72 +38,44 @@ const ETIQUETAS_TIPO = {
   otro: "Otro",
 };
 
-const COLOR_TIPO = {
-  igv_renta: "bg-emerald-50 text-emerald-700",
-  planilla: "bg-accent-light text-accent",
-  afp: "bg-violet-50 text-violet-700",
-  sbs: "bg-amber-50 text-amber-700",
-  cts: "bg-sky-50 text-sky-700",
-  itan: "bg-rose-50 text-rose-700",
-  sire: "bg-cyan-50 text-cyan-700",
-  otro: "bg-slate-100 text-slate-600",
+// Un punto de color por tipo (en vez de una etiqueta grande) -- deja que el
+// titulo y la fecha sean lo que mas se lee en cada fila.
+const PUNTO_TIPO = {
+  igv_renta: "bg-emerald-500",
+  planilla: "bg-accent",
+  afp: "bg-violet-500",
+  sbs: "bg-amber-500",
+  cts: "bg-sky-500",
+  itan: "bg-rose-500",
+  sire: "bg-cyan-500",
+  otro: "bg-slate-400",
 };
 
-const COLOR_PRIORIDAD = {
-  baja: "bg-slate-100 text-slate-600",
-  media: "bg-blue-50 text-blue-700",
-  alta: "bg-amber-100 text-amber-800",
-  urgente: "bg-red-100 text-red-700",
-};
+const PRIORIDADES = [
+  { valor: "baja", etiqueta: "Baja", color: "text-slate-400" },
+  { valor: "media", etiqueta: "Media", color: "text-sky-500" },
+  { valor: "alta", etiqueta: "Alta", color: "text-amber-500" },
+  { valor: "urgente", etiqueta: "Urgente", color: "text-red-600" },
+];
+const COLOR_PRIORIDAD = Object.fromEntries(PRIORIDADES.map((p) => [p.valor, p.color]));
 
-const ETIQUETAS_FILTRO = [
+const PESTANAS = [
   { valor: "pendiente", etiqueta: "Pendientes" },
-  { valor: "vencida", etiqueta: "Vencidas" },
-  { valor: "aplazada", etiqueta: "Aplazadas" },
   { valor: "completado", etiqueta: "Completadas" },
   { valor: "no_aplica", etiqueta: "No aplica" },
   { valor: "", etiqueta: "Todas" },
 ];
 
-// Mismo patron de paginacion que el Dashboard (10 por pagina) -- la lista
-// de tareas pendientes se acumula con el tiempo y sin esto crecia sin
-// limite, obligando a un scroll muy largo para ver todo.
-const POR_PAGINA_TAREAS = 10;
-
-function usePaginacion(lista, porPagina) {
-  const [pagina, setPagina] = useState(1);
-  const totalPaginas = Math.max(1, Math.ceil(lista.length / porPagina));
-  const paginaSegura = Math.min(pagina, totalPaginas);
-  const itemsPagina = lista.slice((paginaSegura - 1) * porPagina, paginaSegura * porPagina);
-  return { paginaSegura, totalPaginas, itemsPagina, setPagina };
-}
-
-function ControlesPaginacion({ paginaSegura, totalPaginas, total, setPagina }) {
-  if (totalPaginas <= 1) return null;
-  return (
-    <div className="mt-3 flex items-center justify-between gap-2 text-xs text-slate-500">
-      <button
-        onClick={() => setPagina((p) => Math.max(1, p - 1))}
-        disabled={paginaSegura <= 1}
-        className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 font-medium text-slate-600 hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        <ChevronLeft size={13} strokeWidth={1.5} />
-        Anterior
-      </button>
-      <span>
-        Pagina {paginaSegura} de {totalPaginas} ({total} en total)
-      </span>
-      <button
-        onClick={() => setPagina((p) => Math.min(totalPaginas, p + 1))}
-        disabled={paginaSegura >= totalPaginas}
-        className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 font-medium text-slate-600 hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        Siguiente
-        <ChevronRight size={13} strokeWidth={1.5} />
-      </button>
-    </div>
-  );
-}
+// Las pendientes se agrupan por urgencia (como Todoist/Linear) en vez de una
+// lista plana paginada: lo vencido arriba, despues hoy, la semana, etc.
+const GRUPOS = [
+  { id: "vencidas", etiqueta: "Vencidas", punto: "bg-red-500", texto: "text-red-600" },
+  { id: "hoy", etiqueta: "Vencen hoy", punto: "bg-amber-500", texto: "text-amber-600" },
+  { id: "semana", etiqueta: "Proximos 7 dias", punto: "bg-sky-500", texto: "text-sky-600" },
+  { id: "despues", etiqueta: "Mas adelante", punto: "bg-slate-300", texto: "text-slate-500" },
+  { id: "sin_fecha", etiqueta: "Sin fecha", punto: "bg-slate-200", texto: "text-slate-400" },
+];
+const VISIBLES_POR_GRUPO = 8;
 
 function formatoFecha(fechaIso) {
   if (!fechaIso) return null;
@@ -114,6 +91,38 @@ function diasRestantes(fechaIso) {
   return Math.round((fecha - hoy) / 86400000);
 }
 
+function grupoDe(tarea) {
+  const dias = diasRestantes(tarea.fecha_vencimiento);
+  if (dias == null) return "sin_fecha";
+  if (dias < 0) return "vencidas";
+  if (dias === 0) return "hoy";
+  if (dias <= 7) return "semana";
+  return "despues";
+}
+
+function sumarMeses(fechaIsoODia, meses) {
+  const base = fechaIsoODia ? new Date(`${fechaIsoODia.slice(0, 10)}T00:00:00`) : new Date();
+  base.setMonth(base.getMonth() + meses);
+  return base.toISOString().slice(0, 10);
+}
+
+function sumarDias(fechaIsoODia, dias) {
+  const base = fechaIsoODia ? new Date(`${fechaIsoODia.slice(0, 10)}T00:00:00`) : new Date();
+  base.setDate(base.getDate() + dias);
+  return base.toISOString().slice(0, 10);
+}
+
+function textoVencimiento(tarea) {
+  const dias = diasRestantes(tarea.fecha_vencimiento);
+  if (dias == null) return { texto: "Sin fecha", clase: "bg-slate-100 text-slate-500" };
+  if (tarea.estado !== "pendiente") return { texto: formatoFecha(tarea.fecha_vencimiento), clase: "bg-slate-100 text-slate-500" };
+  if (dias < 0) return { texto: `Vencio hace ${Math.abs(dias)} d`, clase: "bg-red-50 text-red-700" };
+  if (dias === 0) return { texto: "Vence hoy", clase: "bg-amber-50 text-amber-700" };
+  if (dias === 1) return { texto: "Vence manana", clase: "bg-amber-50 text-amber-700" };
+  if (dias <= 7) return { texto: `En ${dias} dias`, clase: "bg-sky-50 text-sky-700" };
+  return { texto: formatoFecha(tarea.fecha_vencimiento), clase: "bg-slate-100 text-slate-600" };
+}
+
 // useSearchParams() exige un limite de Suspense en el build de produccion
 // (next build) -- mismo fix que empresas/page.js (Fase R4).
 export default function TareasPage() {
@@ -127,44 +136,44 @@ export default function TareasPage() {
 function TareasPageContenido() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [tareas, setTareas] = useState([]);
-  const [empresas, setEmpresas] = useState([]);
-  const [cargando, setCargando] = useState(true);
-  const [error, setError] = useState("");
-  // El Dashboard enlaza aca con ?estado=vencida para llegar directo con el
-  // filtro activado (ver TarjetaMetricaColor "Tareas vencidas").
-  const [filtroEstado, setFiltroEstado] = useState(searchParams.get("estado") || "pendiente");
-  // Cartera: "" = todas, "yo" = solo las de mi cartera, o el id de otro
-  // usuario del tenant (para que un socio/admin vea la cartera de alguien
-  // mas puntual).
+  // El Dashboard enlaza aca con ?estado=vencida (o aplazada) para llegar
+  // directo a esas tareas: ahora son un filtro dentro de "Pendientes".
+  const estadoInicial = searchParams.get("estado");
+  const [pestana, setPestana] = useState(
+    estadoInicial && PESTANAS.some((p) => p.valor === estadoInicial) ? estadoInicial : "pendiente"
+  );
+  const [soloGrupo, setSoloGrupo] = useState(estadoInicial === "vencida" ? "vencidas" : null);
+  const [soloAplazadas, setSoloAplazadas] = useState(estadoInicial === "aplazada");
+  const [busqueda, setBusqueda] = useState("");
+  const [filtroTipo, setFiltroTipo] = useState("");
+  // Cartera: "" = todas, "yo" = solo las de mi cartera, o el id de otro usuario del tenant.
   const [filtroAsignado, setFiltroAsignado] = useState("");
+
+  const [pendientes, setPendientes] = useState([]);
+  const [otras, setOtras] = useState([]);
+  const [avance, setAvance] = useState(null);
+  const [empresas, setEmpresas] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
   const [miUsuarioId, setMiUsuarioId] = useState(null);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
   const [generando, setGenerando] = useState(false);
-  const [mostrarNueva, setMostrarNueva] = useState(false);
-  const [tareaSeleccionada, setTareaSeleccionada] = useState(null);
-  // Seleccion multiple para completar varias tareas de un tiron -- a
-  // pedido: antes habia que entrar tarea por tarea, muy tedioso con una
-  // cartera grande. Se guardan los ids en un Set (no el indice de pagina,
-  // asi la seleccion sobrevive al cambiar de pagina).
-  const [seleccionadas, setSeleccionadas] = useState(new Set());
-  const [completandoMasivo, setCompletandoMasivo] = useState(false);
-  // Mientras no este activo, cada fila muestra SOLO el circulo (completar
-  // esa tarea sola, de un clic) -- a pedido: tener el circulo Y un
-  // checkbox juntos en cada fila todo el tiempo confundia ("dos senales").
-  // Activando este modo, el circulo se reemplaza por el checkbox de
-  // seleccion en toda la lista, para que solo haya un control visible por
-  // fila a la vez.
+  const [panel, setPanel] = useState(null); // {modo: "nueva"} | {modo: "editar", tarea} | null
   const [modoSeleccion, setModoSeleccion] = useState(false);
+  const [seleccionadas, setSeleccionadas] = useState(new Set());
+  const [procesandoMasivo, setProcesandoMasivo] = useState(false);
+  const [aviso, setAviso] = useState(null); // {texto, deshacer?}
+  const temporizadorAviso = useRef(null);
 
   useEffect(() => {
     if (!getToken()) {
       router.replace("/login");
       return;
     }
-    cargarEmpresas();
+    api.listarEmpresas().then(setEmpresas).catch(() => {});
     api.me().then((yo) => setMiUsuarioId(yo.id)).catch(() => {});
     api.listarUsuarios().then(setUsuarios).catch(() => {});
+    api.obtenerAvanceCumplimiento().then(setAvance).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -173,27 +182,29 @@ function TareasPageContenido() {
     cargarTareas();
     setSeleccionadas(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtroEstado, filtroAsignado, miUsuarioId]);
+  }, [pestana, filtroAsignado, miUsuarioId]);
 
-  async function cargarEmpresas() {
-    try {
-      const data = await api.listarEmpresas();
-      setEmpresas(data);
-    } catch (err) {
-      // silencioso -- solo hace falta para el selector de "Nueva tarea"
-    }
+  useEffect(() => () => clearTimeout(temporizadorAviso.current), []);
+
+  function filtrosCartera() {
+    if (filtroAsignado === "yo" && miUsuarioId) return { asignadoAUsuarioId: miUsuarioId };
+    if (filtroAsignado && filtroAsignado !== "yo") return { asignadoAUsuarioId: filtroAsignado };
+    return {};
   }
 
-  async function cargarTareas() {
-    setCargando(true);
+  async function cargarTareas({ silencioso = false } = {}) {
+    if (!silencioso) setCargando(true);
     setError("");
     try {
-      const filtros = {};
-      if (filtroEstado) filtros.estado = filtroEstado;
-      if (filtroAsignado === "yo" && miUsuarioId) filtros.asignadoAUsuarioId = miUsuarioId;
-      else if (filtroAsignado && filtroAsignado !== "yo") filtros.asignadoAUsuarioId = filtroAsignado;
-      const data = await api.listarTareas(filtros);
-      setTareas(data);
+      const cartera = filtrosCartera();
+      // Las pendientes se piden siempre: alimentan los indicadores de arriba
+      // aunque se este mirando otra pestana.
+      const [listaPendientes, listaOtras] = await Promise.all([
+        api.listarTareas({ ...cartera, estado: "pendiente" }),
+        pestana === "pendiente" ? Promise.resolve([]) : api.listarTareas({ ...cartera, estado: pestana || undefined }),
+      ]);
+      setPendientes(listaPendientes);
+      setOtras(listaOtras);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -201,17 +212,53 @@ function TareasPageContenido() {
     }
   }
 
+  function mostrarAviso(texto, deshacer = null) {
+    clearTimeout(temporizadorAviso.current);
+    setAviso({ texto, deshacer });
+    temporizadorAviso.current = setTimeout(() => setAviso(null), 6000);
+  }
+
+  // Completar es de un clic y se refleja al instante; si el servidor falla
+  // se revierte. El aviso de abajo permite deshacerlo.
+  async function cambiarEstado(tarea, nuevoEstado, { avisar = true } = {}) {
+    const reemplazar = (lista) => lista.map((t) => (t.id === tarea.id ? { ...t, estado: nuevoEstado } : t));
+    setPendientes(reemplazar);
+    setOtras(reemplazar);
+    try {
+      await api.actualizarTarea(tarea.id, { estado: nuevoEstado });
+      if (avisar && nuevoEstado === "completado") {
+        mostrarAviso(`"${tarea.titulo}" completada`, () => cambiarEstado(tarea, "pendiente", { avisar: false }));
+      }
+      cargarTareas({ silencioso: true });
+      api.obtenerAvanceCumplimiento().then(setAvance).catch(() => {});
+    } catch (err) {
+      cargarTareas({ silencioso: true });
+      alert(err.message);
+    }
+  }
+
+  async function aplazarUnMes(tarea) {
+    try {
+      const nueva = sumarMeses(tarea.fecha_vencimiento, 1);
+      await api.actualizarTarea(tarea.id, { fecha_vencimiento: new Date(nueva).toISOString() });
+      mostrarAviso(`"${tarea.titulo}" se aplazo al ${formatoFecha(new Date(nueva).toISOString())}`);
+      cargarTareas({ silencioso: true });
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
   async function generarDelMes() {
     setGenerando(true);
     try {
       const hoy = new Date();
-      const resultado = await api.generarTareas(hoy.getFullYear(), hoy.getMonth() + 1);
-      alert(
-        resultado.tareas_creadas === 0
-          ? "No hay tareas nuevas para generar este mes (ya estaban creadas, o no hay obligaciones configuradas)."
-          : `Se generaron ${resultado.tareas_creadas} tarea(s) nueva(s) para el periodo ${resultado.periodo}.`
+      const r = await api.generarTareas(hoy.getFullYear(), hoy.getMonth() + 1);
+      mostrarAviso(
+        r.tareas_creadas === 0
+          ? "No hay tareas nuevas para este mes (ya estaban creadas o no hay obligaciones configuradas)."
+          : `Se generaron ${r.tareas_creadas} tarea(s) nueva(s) del periodo ${r.periodo}.`
       );
-      await cargarTareas();
+      await cargarTareas({ silencioso: true });
     } catch (err) {
       alert(err.message);
     } finally {
@@ -219,16 +266,7 @@ function TareasPageContenido() {
     }
   }
 
-  async function cambiarEstado(tarea, nuevoEstado) {
-    try {
-      await api.actualizarTarea(tarea.id, { estado: nuevoEstado });
-      await cargarTareas();
-    } catch (err) {
-      alert(err.message);
-    }
-  }
-
-  function toggleSeleccion(id) {
+  function alternarSeleccion(id) {
     setSeleccionadas((prev) => {
       const copia = new Set(prev);
       if (copia.has(id)) copia.delete(id);
@@ -237,100 +275,217 @@ function TareasPageContenido() {
     });
   }
 
-  function toggleSeleccionPagina(idsPagina, marcarTodas) {
-    setSeleccionadas((prev) => {
-      const copia = new Set(prev);
-      for (const id of idsPagina) {
-        if (marcarTodas) copia.add(id);
-        else copia.delete(id);
-      }
-      return copia;
-    });
-  }
-
-  async function completarSeleccionadas() {
+  async function aplicarASeleccionadas(cambio, textoHecho) {
     if (seleccionadas.size === 0) return;
-    setCompletandoMasivo(true);
+    setProcesandoMasivo(true);
     try {
       const ids = [...seleccionadas];
-      const resultados = await Promise.allSettled(
-        ids.map((id) => api.actualizarTarea(id, { estado: "completado" }))
-      );
+      const resultados = await Promise.allSettled(ids.map((id) => api.actualizarTarea(id, cambio)));
       const fallidas = resultados.filter((r) => r.status === "rejected").length;
       setSeleccionadas(new Set());
-      await cargarTareas();
-      if (fallidas > 0) {
-        alert(`Se completaron ${ids.length - fallidas} de ${ids.length} tareas. ${fallidas} fallaron -- intenta de nuevo con esas.`);
-      }
+      setModoSeleccion(false);
+      await cargarTareas({ silencioso: true });
+      api.obtenerAvanceCumplimiento().then(setAvance).catch(() => {});
+      mostrarAviso(
+        fallidas > 0
+          ? `${ids.length - fallidas} de ${ids.length} tareas ${textoHecho}. ${fallidas} fallaron, intenta de nuevo con esas.`
+          : `${ids.length} tarea(s) ${textoHecho}.`
+      );
     } finally {
-      setCompletandoMasivo(false);
+      setProcesandoMasivo(false);
     }
   }
 
-  const tareasOrdenadas = useMemo(() => {
-    return [...tareas].sort((a, b) => {
-      if (!a.fecha_vencimiento && !b.fecha_vencimiento) return 0;
-      if (!a.fecha_vencimiento) return 1;
-      if (!b.fecha_vencimiento) return -1;
-      return new Date(a.fecha_vencimiento) - new Date(b.fecha_vencimiento);
-    });
-  }, [tareas]);
+  const listaBase = pestana === "pendiente" ? pendientes : otras;
 
-  const { paginaSegura, totalPaginas, itemsPagina: tareasPagina, setPagina } = usePaginacion(
-    tareasOrdenadas,
-    POR_PAGINA_TAREAS
+  const tiposPresentes = useMemo(
+    () => Array.from(new Set([...pendientes, ...otras].map((t) => t.tipo))).filter(Boolean),
+    [pendientes, otras]
   );
+
+  const filtradas = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    return listaBase.filter((t) => {
+      if (q && !`${t.titulo} ${t.empresa_razon_social} ${t.empresa_ruc}`.toLowerCase().includes(q)) return false;
+      if (filtroTipo && t.tipo !== filtroTipo) return false;
+      if (pestana === "pendiente" && soloAplazadas && !t.aplazada) return false;
+      if (pestana === "pendiente" && soloGrupo === "vencidas" && grupoDe(t) !== "vencidas") return false;
+      if (pestana === "pendiente" && soloGrupo === "semana" && !["hoy", "semana"].includes(grupoDe(t))) return false;
+      return true;
+    });
+  }, [listaBase, busqueda, filtroTipo, soloAplazadas, soloGrupo, pestana]);
+
+  const indicadores = useMemo(() => {
+    const r = { vencidas: 0, semana: 0, total: pendientes.length };
+    pendientes.forEach((t) => {
+      const g = grupoDe(t);
+      if (g === "vencidas") r.vencidas += 1;
+      if (g === "hoy" || g === "semana") r.semana += 1;
+    });
+    return r;
+  }, [pendientes]);
+
+  const porGrupo = useMemo(() => {
+    const grupos = Object.fromEntries(GRUPOS.map((g) => [g.id, []]));
+    filtradas.forEach((t) => grupos[grupoDe(t)].push(t));
+    Object.values(grupos).forEach((lista) =>
+      lista.sort((a, b) => new Date(a.fecha_vencimiento || 0) - new Date(b.fecha_vencimiento || 0))
+    );
+    return grupos;
+  }, [filtradas]);
+
+  const otrasOrdenadas = useMemo(
+    () =>
+      [...filtradas].sort(
+        (a, b) =>
+          new Date(b.fecha_completado || b.fecha_vencimiento || b.creado_en) -
+          new Date(a.fecha_completado || a.fecha_vencimiento || a.creado_en)
+      ),
+    [filtradas]
+  );
+
+  const avancePct = avance?.total ? Math.round(avance.total.avance) : null;
+  const hayFiltros = busqueda || filtroTipo || soloAplazadas || soloGrupo;
 
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="min-w-0 flex-1 px-8 pb-8 pt-24 xl:px-12">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <main className="min-w-0 flex-1 px-8 pb-28 pt-24 xl:px-12">
+        <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight text-ink">Tareas</h1>
-            <p className="mt-1 text-sm text-slate-600">
-              Agenda de obligaciones por empresa -- Planilla, AFP, SBS y pendientes sueltos
-            </p>
+            <p className="mt-1 text-sm text-slate-600">Tu agenda de obligaciones por empresa, ordenada por urgencia</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
               onClick={generarDelMes}
               disabled={generando}
-              title="Genera las tareas del mes actual para todas las obligaciones activas configuradas"
-              className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition-all duration-300 ease-out hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+              title="Crea las tareas del mes actual a partir de las obligaciones configuradas en cada empresa"
+              className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-all duration-300 ease-out hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {generando ? <Loader2 size={15} strokeWidth={1.5} className="animate-spin" /> : <RefreshCw size={15} strokeWidth={1.5} />}
+              {generando ? <Loader2 size={15} strokeWidth={1.75} className="animate-spin" /> : <RefreshCw size={15} strokeWidth={1.75} />}
               Generar tareas del mes
             </button>
             <button
-              onClick={() => setMostrarNueva(true)}
+              onClick={() => setPanel({ modo: "nueva" })}
               className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white shadow-soft transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-accent-dark"
             >
-              <Plus size={15} strokeWidth={1.5} />
+              <Plus size={15} strokeWidth={2} />
               Nueva tarea
             </button>
           </div>
         </div>
 
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap gap-1.5">
-            {ETIQUETAS_FILTRO.map(({ valor, etiqueta }) => (
+        {/* Indicadores: ademas de informar, filtran la lista con un clic. */}
+        <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <TarjetaIndicador
+            titulo="Vencidas"
+            valor={indicadores.vencidas}
+            nota={indicadores.vencidas ? "requieren atencion" : "nada vencido"}
+            Icono={AlertTriangle}
+            tono={indicadores.vencidas ? "rojo" : "neutro"}
+            activa={pestana === "pendiente" && soloGrupo === "vencidas"}
+            onClick={() => {
+              setPestana("pendiente");
+              setSoloGrupo(soloGrupo === "vencidas" ? null : "vencidas");
+            }}
+          />
+          <TarjetaIndicador
+            titulo="Vencen en 7 dias"
+            valor={indicadores.semana}
+            nota="incluye las de hoy"
+            Icono={CalendarClock}
+            tono={indicadores.semana ? "ambar" : "neutro"}
+            activa={pestana === "pendiente" && soloGrupo === "semana"}
+            onClick={() => {
+              setPestana("pendiente");
+              setSoloGrupo(soloGrupo === "semana" ? null : "semana");
+            }}
+          />
+          <TarjetaIndicador
+            titulo="Pendientes"
+            valor={indicadores.total}
+            nota="en total"
+            Icono={ListChecks}
+            tono="neutro"
+            activa={pestana === "pendiente" && !soloGrupo}
+            onClick={() => {
+              setPestana("pendiente");
+              setSoloGrupo(null);
+            }}
+          />
+          <div className="surface-card p-4">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-slate-500">
+                Avance {avance?.periodo ? `del periodo ${avance.periodo}` : "del periodo"}
+              </p>
+              <CheckCheck size={16} strokeWidth={1.75} className="text-emerald-500" />
+            </div>
+            <p className="mt-1 text-2xl font-extrabold text-ink">{avancePct != null ? `${avancePct}%` : "—"}</p>
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+              <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${avancePct || 0}%` }} />
+            </div>
+            {avance?.total && (
+              <p className="mt-1.5 text-xs text-slate-500">
+                {avance.total.completados} de {avance.total.total} completadas
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Pestanas + filtros en una sola barra. */}
+        <div className="mt-6 flex flex-wrap items-center gap-3 border-b border-slate-200">
+          <div className="flex gap-1">
+            {PESTANAS.map((p) => (
               <button
-                key={valor || "todas"}
-                onClick={() => setFiltroEstado(valor)}
-                className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors duration-300 ease-out ${
-                  filtroEstado === valor ? "bg-accent text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                key={p.valor || "todas"}
+                onClick={() => {
+                  setPestana(p.valor);
+                  setSoloGrupo(null);
+                  setSoloAplazadas(false);
+                }}
+                className={`-mb-px border-b-2 px-3 py-2.5 text-sm font-semibold transition-colors ${
+                  pestana === p.valor ? "border-accent text-accent" : "border-transparent text-slate-500 hover:text-ink"
                 }`}
               >
-                {etiqueta}
+                {p.etiqueta}
+                {p.valor === "pendiente" && (
+                  <span className="ml-1.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
+                    {pendientes.length}
+                  </span>
+                )}
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <Search size={14} strokeWidth={1.75} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar tarea, empresa o RUC"
+              className="w-64 rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-sm text-ink focus:border-accent focus:outline-none"
+            />
+          </div>
+          <select
+            value={filtroTipo}
+            onChange={(e) => setFiltroTipo(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-600 focus:border-accent focus:outline-none"
+          >
+            <option value="">Todos los tipos</option>
+            {tiposPresentes.map((t) => (
+              <option key={t} value={t}>
+                {ETIQUETAS_TIPO[t] || t}
+              </option>
+            ))}
+          </select>
           <select
             value={filtroAsignado}
             onChange={(e) => setFiltroAsignado(e.target.value)}
             title="Cartera: filtrar por quien tiene asignada la empresa de cada tarea"
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 outline-none"
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-600 focus:border-accent focus:outline-none"
           >
             <option value="">Todas las carteras</option>
             <option value="yo">Mi cartera</option>
@@ -340,468 +495,621 @@ function TareasPageContenido() {
               </option>
             ))}
           </select>
-        </div>
-
-        {error && (
-          <div className="mt-6 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>
-        )}
-
-        {!cargando && tareasPagina.length > 0 && (
-          !modoSeleccion ? (
-            <div className="mt-4 flex justify-end">
-              <button
-                onClick={() => setModoSeleccion(true)}
-                className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition-colors duration-300 ease-out hover:border-accent hover:text-accent"
-              >
-                <CheckCheck size={13} strokeWidth={1.5} />
-                Seleccionar varias
-              </button>
-            </div>
-          ) : (
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-accent/30 bg-accent-light/40 px-4 py-2.5 text-xs">
-              <label className="flex items-center gap-2 font-medium text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={tareasPagina.every((t) => seleccionadas.has(t.id))}
-                  onChange={(e) => toggleSeleccionPagina(tareasPagina.map((t) => t.id), e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-accent focus:ring-accent"
-                />
-                Seleccionar todas en esta pagina
-              </label>
-              <div className="flex items-center gap-2">
-                {seleccionadas.size > 0 && (
-                  <>
-                    <span className="font-medium text-slate-600">
-                      {seleccionadas.size} seleccionada{seleccionadas.size === 1 ? "" : "s"}
-                    </span>
-                    <button
-                      onClick={completarSeleccionadas}
-                      disabled={completandoMasivo}
-                      className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 font-semibold text-white transition-all duration-300 ease-out hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {completandoMasivo ? (
-                        <Loader2 size={13} strokeWidth={1.5} className="animate-spin" />
-                      ) : (
-                        <CheckCheck size={13} strokeWidth={1.5} />
-                      )}
-                      Completar seleccionadas
-                    </button>
-                  </>
-                )}
-                <button
-                  onClick={() => {
-                    setModoSeleccion(false);
-                    setSeleccionadas(new Set());
-                  }}
-                  className="rounded-lg px-2.5 py-1.5 font-medium text-slate-500 hover:bg-slate-100"
-                >
-                  Salir de seleccion
-                </button>
-              </div>
-            </div>
-          )
-        )}
-
-        {cargando ? (
-          <p className="mt-8 text-sm text-slate-500">Cargando...</p>
-        ) : tareasOrdenadas.length === 0 ? (
-          <div className="surface-card mt-6 p-10 text-center">
-            <ListChecks size={28} strokeWidth={1.2} className="mx-auto text-slate-300" />
-            <p className="mt-3 text-sm text-slate-500">
-              No hay tareas en este filtro. Configura obligaciones desde el detalle de cada empresa, o presiona
-              &quot;Generar tareas del mes&quot; si ya tenes alguna configurada.
-            </p>
-          </div>
-        ) : (
-          <div className="surface-card mt-6 divide-y divide-slate-100 overflow-hidden">
-            {tareasPagina.map((t) => {
-              const dias = diasRestantes(t.fecha_vencimiento);
-              return (
-                <div key={t.id} className="flex items-center gap-3 px-5 py-4 transition-colors duration-300 ease-out hover:bg-slate-50">
-                  {modoSeleccion ? (
-                    <input
-                      type="checkbox"
-                      checked={seleccionadas.has(t.id)}
-                      onChange={() => toggleSeleccion(t.id)}
-                      className="h-4 w-4 shrink-0 rounded border-slate-300 text-accent focus:ring-accent"
-                      aria-label="Seleccionar tarea"
-                    />
-                  ) : (
-                    <div className="flex shrink-0 items-center gap-1">
-                      <button
-                        onClick={() => cambiarEstado(t, t.estado === "completado" ? "pendiente" : "completado")}
-                        title={t.estado === "completado" ? "Marcar pendiente" : "Marcar completada"}
-                        className="flex items-center justify-center rounded-lg p-1.5 text-slate-400 transition-colors duration-300 ease-out hover:bg-slate-100 hover:text-emerald-600"
-                      >
-                        {t.estado === "completado" ? (
-                          <CheckCircle2 size={20} strokeWidth={1.5} className="text-emerald-500" />
-                        ) : (
-                          <Circle size={20} strokeWidth={1.5} />
-                        )}
-                      </button>
-                    </div>
-                  )}
-
-                  <button onClick={() => setTareaSeleccionada(t)} className="min-w-0 flex-1 text-left">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className={`text-sm ${t.estado === "completado" ? "text-slate-400 line-through" : "font-medium text-ink"}`}>
-                        {t.titulo}
-                      </span>
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${COLOR_TIPO[t.tipo] || COLOR_TIPO.otro}`}>
-                        {ETIQUETAS_TIPO[t.tipo] || t.tipo}
-                      </span>
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${COLOR_PRIORIDAD[t.prioridad] || COLOR_PRIORIDAD.media}`}>
-                        {t.prioridad}
-                      </span>
-                      {t.aplazada && (
-                        <span
-                          title={`Vencimiento original: ${formatoFecha(t.fecha_vencimiento_original)}`}
-                          className="flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-700"
-                        >
-                          <History size={10} strokeWidth={2} />
-                          Aplazada
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
-                      <Building2 size={12} strokeWidth={1.5} className="shrink-0" />
-                      <span className="truncate">{t.empresa_razon_social}</span>
-                      <span className="text-slate-300">&middot;</span>
-                      <span>{t.empresa_ruc}</span>
-                    </div>
-                  </button>
-
-                  <div className="shrink-0 text-right">
-                    {t.fecha_vencimiento ? (
-                      <>
-                        <div className="text-sm font-semibold text-ink">{formatoFecha(t.fecha_vencimiento)}</div>
-                        {t.estado === "pendiente" && dias != null && (
-                          <div className={`text-xs ${dias < 0 ? "text-red-600" : dias <= 3 ? "text-amber-600" : "text-slate-400"}`}>
-                            {dias < 0 ? `vencio hace ${Math.abs(dias)}d` : dias === 0 ? "vence hoy" : `en ${dias}d`}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="flex items-center gap-1 text-xs font-medium text-amber-600">
-                        <Clock size={12} strokeWidth={1.5} />
-                        Sin fecha
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-        {!cargando && tareasOrdenadas.length > 0 && (
-          <ControlesPaginacion
-            paginaSegura={paginaSegura}
-            totalPaginas={totalPaginas}
-            total={tareasOrdenadas.length}
-            setPagina={setPagina}
-          />
-        )}
-      </main>
-
-      {mostrarNueva && (
-        <ModalNuevaTarea
-          empresas={empresas}
-          onClose={() => setMostrarNueva(false)}
-          onCreada={() => {
-            setMostrarNueva(false);
-            cargarTareas();
-          }}
-        />
-      )}
-
-      {tareaSeleccionada && (
-        <ModalEditarTarea
-          tarea={tareaSeleccionada}
-          onClose={() => setTareaSeleccionada(null)}
-          onGuardada={() => {
-            setTareaSeleccionada(null);
-            cargarTareas();
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function ModalNuevaTarea({ empresas, onClose, onCreada }) {
-  const [empresaId, setEmpresaId] = useState(empresas[0]?.id || "");
-  const [titulo, setTitulo] = useState("");
-  const [tipo, setTipo] = useState("otro");
-  const [prioridad, setPrioridad] = useState("media");
-  const [fechaVencimiento, setFechaVencimiento] = useState("");
-  const [observaciones, setObservaciones] = useState("");
-  const [error, setError] = useState("");
-  const [guardando, setGuardando] = useState(false);
-
-  async function onSubmit(e) {
-    e.preventDefault();
-    if (!empresaId) {
-      setError("Selecciona una empresa.");
-      return;
-    }
-    setError("");
-    setGuardando(true);
-    try {
-      await api.crearTareaManual({
-        empresa_id: empresaId,
-        titulo,
-        tipo,
-        prioridad,
-        fecha_vencimiento: fechaVencimiento ? new Date(fechaVencimiento).toISOString() : null,
-        observaciones: observaciones || null,
-      });
-      onCreada();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setGuardando(false);
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-6" onClick={onClose}>
-      <form
-        onSubmit={onSubmit}
-        className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-soft-lg"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold text-ink">Nueva tarea</h2>
-          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-ink">
-            <X size={18} strokeWidth={1.5} />
+          {pestana === "pendiente" && (
+            <button
+              onClick={() => setSoloAplazadas(!soloAplazadas)}
+              className={`flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                soloAplazadas ? "bg-violet-600 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              <History size={12} strokeWidth={2} />
+              Solo aplazadas
+            </button>
+          )}
+          {hayFiltros && (
+            <button
+              onClick={() => {
+                setBusqueda("");
+                setFiltroTipo("");
+                setSoloAplazadas(false);
+                setSoloGrupo(null);
+              }}
+              className="text-xs font-medium text-slate-500 hover:text-ink"
+            >
+              Limpiar filtros
+            </button>
+          )}
+          <button
+            onClick={() => {
+              setModoSeleccion(!modoSeleccion);
+              setSeleccionadas(new Set());
+            }}
+            className={`ml-auto flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+              modoSeleccion ? "bg-accent text-white" : "border border-slate-200 bg-white text-slate-600 hover:border-accent hover:text-accent"
+            }`}
+          >
+            <CheckCheck size={13} strokeWidth={1.75} />
+            {modoSeleccion ? "Terminar seleccion" : "Seleccionar varias"}
           </button>
         </div>
 
-        {error && (
-          <div className="mt-4 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>
-        )}
+        {error && <div className="mt-4 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>}
 
-        <div className="mt-4 space-y-3">
-          <div>
-            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Empresa</label>
-            <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} required className="campo-input">
-              <option value="">Selecciona...</option>
-              {empresas.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.razon_social} -- {e.ruc}
-                </option>
+        <div className="mt-4">
+          {cargando ? (
+            <div className="surface-card space-y-3 p-5">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="flex animate-pulse items-center gap-3">
+                  <div className="h-5 w-5 rounded-full bg-slate-100" />
+                  <div className="h-3 flex-1 rounded bg-slate-100" />
+                  <div className="h-5 w-20 rounded-full bg-slate-100" />
+                </div>
               ))}
-            </select>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Titulo</label>
-            <input value={titulo} onChange={(e) => setTitulo(e.target.value)} required placeholder="Responder esquela de SUNAT" className="campo-input" />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Tipo</label>
-              <select value={tipo} onChange={(e) => setTipo(e.target.value)} className="campo-input">
-                {Object.entries(ETIQUETAS_TIPO).map(([valor, etiqueta]) => (
-                  <option key={valor} value={valor}>{etiqueta}</option>
-                ))}
-              </select>
             </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Prioridad</label>
-              <select value={prioridad} onChange={(e) => setPrioridad(e.target.value)} className="campo-input">
-                <option value="baja">Baja</option>
-                <option value="media">Media</option>
-                <option value="alta">Alta</option>
-                <option value="urgente">Urgente</option>
-              </select>
+          ) : filtradas.length === 0 ? (
+            <EstadoVacio pestana={pestana} hayFiltros={!!hayFiltros} onNueva={() => setPanel({ modo: "nueva" })} />
+          ) : pestana === "pendiente" ? (
+            <div className="space-y-4">
+              {GRUPOS.filter((g) => porGrupo[g.id].length > 0).map((g) => (
+                <GrupoTareas
+                  key={g.id}
+                  grupo={g}
+                  tareas={porGrupo[g.id]}
+                  modoSeleccion={modoSeleccion}
+                  seleccionadas={seleccionadas}
+                  onAlternarSeleccion={alternarSeleccion}
+                  onCompletar={(t) => cambiarEstado(t, "completado")}
+                  onAplazar={aplazarUnMes}
+                  onAbrir={(t) => setPanel({ modo: "editar", tarea: t })}
+                />
+              ))}
             </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Fecha limite (opcional)</label>
-            <input type="date" value={fechaVencimiento} onChange={(e) => setFechaVencimiento(e.target.value)} className="campo-input" />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Observaciones</label>
-            <textarea value={observaciones} onChange={(e) => setObservaciones(e.target.value)} rows={2} className="campo-input" />
-          </div>
+          ) : (
+            <div className="surface-card divide-y divide-slate-100 overflow-hidden">
+              {otrasOrdenadas.map((t) => (
+                <FilaTarea
+                  key={t.id}
+                  tarea={t}
+                  modoSeleccion={modoSeleccion}
+                  seleccionada={seleccionadas.has(t.id)}
+                  onAlternarSeleccion={() => alternarSeleccion(t.id)}
+                  onCompletar={() => cambiarEstado(t, t.estado === "completado" ? "pendiente" : "completado")}
+                  onAplazar={() => aplazarUnMes(t)}
+                  onAbrir={() => setPanel({ modo: "editar", tarea: t })}
+                />
+              ))}
+            </div>
+          )}
         </div>
+      </main>
 
-        <button
-          type="submit"
-          disabled={guardando}
-          className="mt-5 flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white shadow-soft transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-accent-dark disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {guardando && <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />}
-          {guardando ? "Guardando..." : "Crear tarea"}
-        </button>
-      </form>
+      {/* Barra flotante de acciones masivas. */}
+      {modoSeleccion && seleccionadas.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-2xl bg-ink px-5 py-3 text-sm text-white shadow-soft-lg">
+          <span className="font-semibold">
+            {seleccionadas.size} seleccionada{seleccionadas.size === 1 ? "" : "s"}
+          </span>
+          <button
+            onClick={() => aplicarASeleccionadas({ estado: "completado" }, "completadas")}
+            disabled={procesandoMasivo}
+            className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 font-semibold transition-colors hover:bg-emerald-600 disabled:opacity-50"
+          >
+            {procesandoMasivo ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} strokeWidth={2} />}
+            Completar
+          </button>
+          <button
+            onClick={() => aplicarASeleccionadas({ estado: "no_aplica" }, "marcadas como 'No aplica'")}
+            disabled={procesandoMasivo}
+            className="rounded-lg px-3 py-1.5 font-medium text-slate-300 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"
+          >
+            No aplica
+          </button>
+          <button
+            onClick={() => setSeleccionadas(new Set())}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white"
+            aria-label="Quitar seleccion"
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
+      {/* Aviso inferior (con "Deshacer" cuando aplica). */}
+      {aviso && !(modoSeleccion && seleccionadas.size > 0) && (
+        <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-4 rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-soft-lg">
+          <span>{aviso.texto}</span>
+          {aviso.deshacer && (
+            <button
+              onClick={() => {
+                aviso.deshacer();
+                setAviso(null);
+              }}
+              className="font-semibold text-accent-light hover:underline"
+            >
+              Deshacer
+            </button>
+          )}
+          <button onClick={() => setAviso(null)} className="text-slate-400 hover:text-white" aria-label="Cerrar aviso">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {panel && (
+        <PanelTarea
+          modo={panel.modo}
+          tarea={panel.tarea}
+          empresas={empresas}
+          onCerrar={() => setPanel(null)}
+          onGuardada={(texto) => {
+            setPanel(null);
+            if (texto) mostrarAviso(texto);
+            cargarTareas({ silencioso: true });
+            api.obtenerAvanceCumplimiento().then(setAvance).catch(() => {});
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function ModalEditarTarea({ tarea, onClose, onGuardada }) {
-  const [estado, setEstado] = useState(tarea.estado);
-  const [prioridad, setPrioridad] = useState(tarea.prioridad);
-  const [fechaVencimiento, setFechaVencimiento] = useState(
-    tarea.fecha_vencimiento ? tarea.fecha_vencimiento.slice(0, 10) : ""
+function TarjetaIndicador({ titulo, valor, nota, Icono, tono, activa, onClick }) {
+  const tonos = {
+    rojo: { icono: "bg-red-50 text-red-600", valor: "text-red-600" },
+    ambar: { icono: "bg-amber-50 text-amber-600", valor: "text-ink" },
+    neutro: { icono: "bg-slate-100 text-slate-500", valor: "text-ink" },
+  };
+  const t = tonos[tono] || tonos.neutro;
+  return (
+    <button
+      onClick={onClick}
+      className={`surface-card p-4 text-left transition-all duration-300 ease-out hover:-translate-y-0.5 ${activa ? "ring-2 ring-accent" : ""}`}
+    >
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold text-slate-500">{titulo}</p>
+        <span className={`flex h-7 w-7 items-center justify-center rounded-full ${t.icono}`}>
+          <Icono size={14} strokeWidth={2} />
+        </span>
+      </div>
+      <p className={`mt-1 text-2xl font-extrabold ${t.valor}`}>{valor}</p>
+      <p className="mt-0.5 text-xs text-slate-500">{nota}</p>
+    </button>
   );
-  const [observaciones, setObservaciones] = useState(tarea.observaciones || "");
+}
+
+function GrupoTareas({ grupo, tareas, modoSeleccion, seleccionadas, onAlternarSeleccion, onCompletar, onAplazar, onAbrir }) {
+  const [abierto, setAbierto] = useState(true);
+  const [verTodas, setVerTodas] = useState(false);
+  const visibles = verTodas ? tareas : tareas.slice(0, VISIBLES_POR_GRUPO);
+  return (
+    <section className="surface-card overflow-hidden">
+      <button
+        onClick={() => setAbierto(!abierto)}
+        className="flex w-full items-center gap-2 border-b border-slate-100 bg-slate-50/60 px-5 py-2.5 text-left"
+      >
+        {abierto ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-400" />}
+        <span className={`h-2 w-2 rounded-full ${grupo.punto}`} />
+        <span className={`text-xs font-bold uppercase tracking-wide ${grupo.texto}`}>{grupo.etiqueta}</span>
+        <span className="rounded-full bg-white px-1.5 py-0.5 text-[10px] font-bold text-slate-500 ring-1 ring-slate-200">
+          {tareas.length}
+        </span>
+      </button>
+      {abierto && (
+        <div className="divide-y divide-slate-100">
+          {visibles.map((t) => (
+            <FilaTarea
+              key={t.id}
+              tarea={t}
+              modoSeleccion={modoSeleccion}
+              seleccionada={seleccionadas.has(t.id)}
+              onAlternarSeleccion={() => onAlternarSeleccion(t.id)}
+              onCompletar={() => onCompletar(t)}
+              onAplazar={() => onAplazar(t)}
+              onAbrir={() => onAbrir(t)}
+            />
+          ))}
+          {tareas.length > VISIBLES_POR_GRUPO && (
+            <button
+              onClick={() => setVerTodas(!verTodas)}
+              className="w-full px-5 py-2.5 text-left text-xs font-semibold text-accent hover:bg-slate-50"
+            >
+              {verTodas ? "Ver menos" : `Ver ${tareas.length - VISIBLES_POR_GRUPO} mas`}
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function FilaTarea({ tarea: t, modoSeleccion, seleccionada, onAlternarSeleccion, onCompletar, onAplazar, onAbrir }) {
+  const completada = t.estado === "completado";
+  const vence = textoVencimiento(t);
+  return (
+    <div
+      className={`group flex items-center gap-3 px-5 py-3 transition-colors duration-200 hover:bg-slate-50 ${
+        seleccionada ? "bg-accent-light/40" : ""
+      }`}
+    >
+      {modoSeleccion ? (
+        <input
+          type="checkbox"
+          checked={seleccionada}
+          onChange={onAlternarSeleccion}
+          className="h-4 w-4 shrink-0 rounded border-slate-300 text-accent focus:ring-accent"
+          aria-label="Seleccionar tarea"
+        />
+      ) : (
+        <button
+          onClick={onCompletar}
+          title={completada ? "Volver a pendiente" : "Marcar como completada"}
+          className="shrink-0 rounded-full text-slate-300 transition-colors duration-200 hover:text-emerald-500"
+        >
+          {completada ? (
+            <CheckCircle2 size={20} strokeWidth={1.75} className="text-emerald-500" />
+          ) : t.estado === "no_aplica" ? (
+            <MinusCircle size={20} strokeWidth={1.75} className="text-slate-400" />
+          ) : (
+            <Circle size={20} strokeWidth={1.75} />
+          )}
+        </button>
+      )}
+
+      <button onClick={onAbrir} className="min-w-0 flex-1 text-left">
+        <div className="flex items-center gap-2">
+          <span className={`truncate text-sm ${completada ? "text-slate-400 line-through" : "font-medium text-ink"}`}>
+            {t.titulo}
+          </span>
+          {(t.prioridad === "alta" || t.prioridad === "urgente") && !completada && (
+            <Flag size={13} strokeWidth={2} className={`shrink-0 ${COLOR_PRIORIDAD[t.prioridad]}`} aria-label={`Prioridad ${t.prioridad}`} />
+          )}
+          {t.aplazada && (
+            <span title={`Vencimiento original: ${formatoFecha(t.fecha_vencimiento_original)}`}>
+              <History size={13} strokeWidth={2} className="shrink-0 text-violet-500" />
+            </span>
+          )}
+        </div>
+        <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-slate-500">
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${PUNTO_TIPO[t.tipo] || PUNTO_TIPO.otro}`} />
+          <span className="shrink-0">{ETIQUETAS_TIPO[t.tipo] || t.tipo}</span>
+          <span className="text-slate-300">·</span>
+          <Building2 size={11} strokeWidth={1.75} className="shrink-0" />
+          <span className="truncate">{t.empresa_razon_social}</span>
+          {t.periodo && (
+            <>
+              <span className="text-slate-300">·</span>
+              <span className="shrink-0">Periodo {t.periodo}</span>
+            </>
+          )}
+        </div>
+      </button>
+
+      {t.estado === "pendiente" && !modoSeleccion && (
+        <button
+          onClick={onAplazar}
+          title="Aplazar 1 mes"
+          className="hidden shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-500 hover:bg-white hover:text-accent group-hover:flex"
+        >
+          <CalendarClock size={13} strokeWidth={1.75} />
+          +1 mes
+        </button>
+      )}
+      <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${vence.clase}`} title={formatoFecha(t.fecha_vencimiento) || undefined}>
+        {vence.texto === "Sin fecha" ? (
+          <span className="flex items-center gap-1">
+            <Clock size={11} strokeWidth={2} />
+            Sin fecha
+          </span>
+        ) : (
+          vence.texto
+        )}
+      </span>
+    </div>
+  );
+}
+
+function EstadoVacio({ pestana, hayFiltros, onNueva }) {
+  if (hayFiltros) {
+    return (
+      <div className="surface-card p-10 text-center">
+        <Search size={26} strokeWidth={1.5} className="mx-auto text-slate-300" />
+        <p className="mt-3 text-sm text-slate-500">Ninguna tarea coincide con los filtros.</p>
+      </div>
+    );
+  }
+  if (pestana === "pendiente") {
+    return (
+      <div className="surface-card p-10 text-center">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50">
+          <CheckCircle2 size={24} strokeWidth={1.75} className="text-emerald-500" />
+        </div>
+        <p className="mt-3 text-base font-bold text-ink">Todo al dia</p>
+        <p className="mt-1 text-sm text-slate-500">No tienes tareas pendientes. Las del mes se crean solas a partir de las obligaciones de cada empresa.</p>
+        <button onClick={onNueva} className="mt-4 text-sm font-semibold text-accent hover:underline">
+          Crear una tarea
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="surface-card p-10 text-center">
+      <ListChecks size={26} strokeWidth={1.5} className="mx-auto text-slate-300" />
+      <p className="mt-3 text-sm text-slate-500">No hay tareas en esta pestana.</p>
+    </div>
+  );
+}
+
+// Panel lateral (en vez de una ventana al centro) para crear o editar: la
+// lista sigue a la vista y se cierra con Esc o tocando afuera.
+function PanelTarea({ modo, tarea, empresas, onCerrar, onGuardada }) {
+  const esNueva = modo === "nueva";
+  const [empresaId, setEmpresaId] = useState("");
+  const [titulo, setTitulo] = useState("");
+  const [tipo, setTipo] = useState("otro");
+  const [estado, setEstado] = useState(tarea?.estado || "pendiente");
+  const [prioridad, setPrioridad] = useState(tarea?.prioridad || "media");
+  const [fecha, setFecha] = useState(tarea?.fecha_vencimiento ? tarea.fecha_vencimiento.slice(0, 10) : "");
+  const [observaciones, setObservaciones] = useState(tarea?.observaciones || "");
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState("");
-  const [mostrarConfirmarEliminar, setMostrarConfirmarEliminar] = useState(false);
+  const [confirmarEliminar, setConfirmarEliminar] = useState(false);
 
-  async function onSubmit(e) {
+  useEffect(() => {
+    function alTeclear(e) {
+      if (e.key === "Escape") onCerrar();
+    }
+    window.addEventListener("keydown", alTeclear);
+    return () => window.removeEventListener("keydown", alTeclear);
+  }, [onCerrar]);
+
+  async function guardar(e) {
     e.preventDefault();
     setError("");
+    if (esNueva && !empresaId) {
+      setError("Elige la empresa.");
+      return;
+    }
     setGuardando(true);
     try {
-      await api.actualizarTarea(tarea.id, {
-        estado,
-        prioridad,
-        fecha_vencimiento: fechaVencimiento ? new Date(fechaVencimiento).toISOString() : null,
-        observaciones: observaciones || null,
-      });
-      onGuardada();
+      const fechaIso = fecha ? new Date(fecha).toISOString() : null;
+      if (esNueva) {
+        await api.crearTareaManual({
+          empresa_id: empresaId,
+          titulo,
+          tipo,
+          prioridad,
+          fecha_vencimiento: fechaIso,
+          observaciones: observaciones || null,
+        });
+        onGuardada("Tarea creada.");
+      } else {
+        await api.actualizarTarea(tarea.id, {
+          estado,
+          prioridad,
+          fecha_vencimiento: fechaIso,
+          observaciones: observaciones || null,
+        });
+        onGuardada("Cambios guardados.");
+      }
     } catch (err) {
       setError(err.message);
-    } finally {
       setGuardando(false);
     }
   }
 
   async function eliminar() {
-    setMostrarConfirmarEliminar(false);
+    setConfirmarEliminar(false);
     setGuardando(true);
     try {
       await api.eliminarTarea(tarea.id);
-      onGuardada();
+      onGuardada("Tarea eliminada.");
     } catch (err) {
       setError(err.message);
       setGuardando(false);
     }
   }
 
+  const etiqueta = "mb-1.5 block text-xs font-semibold text-slate-500";
+
   return (
     <>
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-6" onClick={onClose}>
-      <form
-        onSubmit={onSubmit}
-        className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-soft-lg"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-lg font-bold text-ink">{tarea.titulo}</h2>
-            <p className="mt-0.5 truncate text-xs text-slate-500">
-              {tarea.empresa_razon_social} &middot; {tarea.empresa_ruc}
-            </p>
-          </div>
-          <button type="button" onClick={onClose} className="shrink-0 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-ink">
-            <X size={18} strokeWidth={1.5} />
-          </button>
-        </div>
-
-        {error && (
-          <div className="mt-4 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>
-        )}
-
-        <div className="mt-4 space-y-3">
-          <div>
-            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Estado</label>
-            <div className="flex gap-1.5">
-              {[
-                { valor: "pendiente", etiqueta: "Pendiente", Icon: Circle },
-                { valor: "completado", etiqueta: "Completado", Icon: CheckCircle2 },
-                { valor: "no_aplica", etiqueta: "No aplica", Icon: MinusCircle },
-              ].map(({ valor, etiqueta, Icon }) => (
-                <button
-                  type="button"
-                  key={valor}
-                  onClick={() => setEstado(valor)}
-                  className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-xs font-medium transition-all duration-300 ease-out ${
-                    estado === valor ? "border-accent bg-accent-light text-accent" : "border-slate-200 text-slate-500 hover:border-accent hover:text-accent"
-                  }`}
-                >
-                  <Icon size={14} strokeWidth={1.5} />
-                  {etiqueta}
-                </button>
-              ))}
+      <div className="fixed inset-0 z-50 flex justify-end bg-ink/40" onClick={onCerrar}>
+        <form
+          onSubmit={guardar}
+          onClick={(e) => e.stopPropagation()}
+          className="flex h-full w-full max-w-md flex-col bg-white shadow-soft-lg animate-fade-in-up"
+        >
+          <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-6 py-5">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{esNueva ? "Nueva tarea" : "Editar tarea"}</p>
+              {!esNueva && (
+                <>
+                  <h2 className="mt-1 text-lg font-bold leading-snug text-ink">{tarea.titulo}</h2>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                    <span className={`h-1.5 w-1.5 rounded-full ${PUNTO_TIPO[tarea.tipo] || PUNTO_TIPO.otro}`} />
+                    {ETIQUETAS_TIPO[tarea.tipo] || tarea.tipo}
+                    {tarea.periodo && <span>· Periodo {tarea.periodo}</span>}
+                  </div>
+                  <Link href={`/empresas/${tarea.empresa_id}`} className="mt-2 flex items-center gap-1.5 text-xs font-medium text-accent hover:underline">
+                    <Building2 size={12} strokeWidth={1.75} />
+                    {tarea.empresa_razon_social} · {tarea.empresa_ruc}
+                  </Link>
+                </>
+              )}
             </div>
+            <button type="button" onClick={onCerrar} className="shrink-0 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-ink" aria-label="Cerrar">
+              <X size={18} strokeWidth={1.75} />
+            </button>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+
+          <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+            {error && <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>}
+
+            {esNueva && (
+              <>
+                <div>
+                  <label className={etiqueta}>Empresa</label>
+                  <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} required className="campo-input">
+                    <option value="">Elige una empresa...</option>
+                    {empresas.map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.razon_social} -- {e.ruc}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className={etiqueta}>Que hay que hacer</label>
+                  <input
+                    value={titulo}
+                    onChange={(e) => setTitulo(e.target.value)}
+                    required
+                    autoFocus
+                    placeholder="Ej.: Responder esquela de SUNAT"
+                    className="campo-input"
+                  />
+                </div>
+                <div>
+                  <label className={etiqueta}>Tipo</label>
+                  <select value={tipo} onChange={(e) => setTipo(e.target.value)} className="campo-input">
+                    {Object.entries(ETIQUETAS_TIPO).map(([valor, texto]) => (
+                      <option key={valor} value={valor}>
+                        {texto}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+
+            {!esNueva && (
+              <div>
+                <label className={etiqueta}>Estado</label>
+                <div className="grid grid-cols-3 gap-1.5 rounded-xl bg-slate-100 p-1">
+                  {[
+                    { valor: "pendiente", texto: "Pendiente", Icono: Circle },
+                    { valor: "completado", texto: "Completada", Icono: CheckCircle2 },
+                    { valor: "no_aplica", texto: "No aplica", Icono: MinusCircle },
+                  ].map(({ valor, texto, Icono }) => (
+                    <button
+                      type="button"
+                      key={valor}
+                      onClick={() => setEstado(valor)}
+                      className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold transition-all duration-200 ${
+                        estado === valor ? "bg-white text-ink shadow-soft" : "text-slate-500 hover:text-ink"
+                      }`}
+                    >
+                      <Icono size={13} strokeWidth={2} className={estado === valor && valor === "completado" ? "text-emerald-500" : ""} />
+                      {texto}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div>
-              <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Prioridad</label>
-              <select value={prioridad} onChange={(e) => setPrioridad(e.target.value)} className="campo-input">
-                <option value="baja">Baja</option>
-                <option value="media">Media</option>
-                <option value="alta">Alta</option>
-                <option value="urgente">Urgente</option>
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Fecha limite</label>
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="date"
-                  value={fechaVencimiento}
-                  onChange={(e) => setFechaVencimiento(e.target.value)}
-                  className="campo-input"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    // Aplazar: suma 1 mes a la fecha actual (o a hoy si
-                    // todavia no tenia fecha) -- a pedido, para el caso
-                    // tipico de "me indicaron que lo haga el mes que viene"
-                    // sin tener que calcular la fecha a mano.
-                    const base = fechaVencimiento ? new Date(`${fechaVencimiento}T00:00:00`) : new Date();
-                    base.setMonth(base.getMonth() + 1);
-                    setFechaVencimiento(base.toISOString().slice(0, 10));
-                  }}
-                  title="Aplazar 1 mes"
-                  className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-2 text-xs font-semibold text-slate-600 transition-colors duration-300 ease-out hover:border-accent hover:text-accent"
-                >
-                  +1 mes
-                </button>
+              <label className={etiqueta}>Prioridad</label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {PRIORIDADES.map((p) => (
+                  <button
+                    type="button"
+                    key={p.valor}
+                    onClick={() => setPrioridad(p.valor)}
+                    className={`flex items-center justify-center gap-1 rounded-lg border px-2 py-2 text-xs font-semibold transition-all duration-200 ${
+                      prioridad === p.valor ? "border-accent bg-accent-light/60 text-ink" : "border-slate-200 text-slate-500 hover:border-slate-300"
+                    }`}
+                  >
+                    <Flag size={12} strokeWidth={2} className={p.color} />
+                    {p.etiqueta}
+                  </button>
+                ))}
               </div>
             </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Observaciones</label>
-            <textarea value={observaciones} onChange={(e) => setObservaciones(e.target.value)} rows={3} className="campo-input" />
-          </div>
-        </div>
 
-        <div className="mt-5 flex items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={() => setMostrarConfirmarEliminar(true)}
-            disabled={guardando}
-            className="text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
-          >
-            Eliminar tarea
-          </button>
-          <button
-            type="submit"
-            disabled={guardando}
-            className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white shadow-soft transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-accent-dark disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {guardando && <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />}
-            {guardando ? "Guardando..." : "Guardar"}
-          </button>
-        </div>
-      </form>
-    </div>
+            <div>
+              <label className={etiqueta}>Fecha limite {esNueva && "(opcional)"}</label>
+              <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="campo-input" />
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {[
+                  { texto: "Hoy", valor: () => sumarDias(null, 0) },
+                  { texto: "+1 semana", valor: () => sumarDias(fecha || null, 7) },
+                  { texto: "+1 mes", valor: () => sumarMeses(fecha || null, 1) },
+                ].map((atajo) => (
+                  <button
+                    type="button"
+                    key={atajo.texto}
+                    onClick={() => setFecha(atajo.valor())}
+                    className="rounded-full border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:border-accent hover:text-accent"
+                  >
+                    {atajo.texto}
+                  </button>
+                ))}
+                {fecha && (
+                  <button type="button" onClick={() => setFecha("")} className="px-1.5 py-1 text-xs text-slate-400 hover:text-ink">
+                    Quitar fecha
+                  </button>
+                )}
+              </div>
+              {!esNueva && tarea.aplazada && (
+                <p className="mt-2 flex items-center gap-1 text-xs text-violet-600">
+                  <History size={12} strokeWidth={2} />
+                  Vencia originalmente el {formatoFecha(tarea.fecha_vencimiento_original)}
+                </p>
+              )}
+            </div>
 
-    {mostrarConfirmarEliminar && (
-      <ConfirmDialog
-        titulo="Eliminar esta tarea?"
-        textoConfirmar="Si, eliminar"
-        peligroso
-        onConfirmar={eliminar}
-        onCancelar={() => setMostrarConfirmarEliminar(false)}
-      />
-    )}
+            <div>
+              <label className={etiqueta}>Notas</label>
+              <textarea
+                value={observaciones}
+                onChange={(e) => setObservaciones(e.target.value)}
+                rows={4}
+                placeholder="Detalles, acuerdos con el cliente, numero de expediente..."
+                className="campo-input"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-6 py-4">
+            {!esNueva ? (
+              <button
+                type="button"
+                onClick={() => setConfirmarEliminar(true)}
+                disabled={guardando}
+                className="flex items-center gap-1 text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
+              >
+                <Trash2 size={13} strokeWidth={1.75} />
+                Eliminar
+              </button>
+            ) : (
+              <span />
+            )}
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={onCerrar} className="rounded-lg px-4 py-2 text-sm font-medium text-slate-500 hover:bg-slate-50">
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={guardando}
+                className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white shadow-soft transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-accent-dark disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {guardando && <Loader2 size={14} strokeWidth={2} className="animate-spin" />}
+                {esNueva ? "Crear tarea" : "Guardar"}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      {confirmarEliminar && (
+        <ConfirmDialog
+          titulo="Eliminar esta tarea?"
+          textoConfirmar="Si, eliminar"
+          peligroso
+          onConfirmar={eliminar}
+          onCancelar={() => setConfirmarEliminar(false)}
+        />
+      )}
     </>
   );
 }
