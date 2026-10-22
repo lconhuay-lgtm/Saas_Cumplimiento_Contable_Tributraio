@@ -26,12 +26,14 @@ import {
   ShieldAlert,
   ChevronLeft,
   ChevronRight,
+  LogIn,
 } from "lucide-react";
 import Sidebar from "../../../components/Sidebar";
 import ConfirmDialog from "../../../components/ConfirmDialog";
 import { api, getToken } from "../../../lib/api";
 import { colorPuntoTipo } from "../../../lib/tiposMensaje";
 import { fechaPeru, inicioDeHoyPeruMs } from "../../../lib/fechas";
+import { abrirIngresoDirecto } from "../../../lib/ingresoSunat";
 
 const ETIQUETAS_FILTRO_ESPECIAL = {
   pendientes: "mensajes pendientes",
@@ -83,6 +85,7 @@ export default function DetalleEmpresaPage() {
   const [mensajeParaTarea, setMensajeParaTarea] = useState(null); // mensaje completo | null
   const [mostrarEditarCredenciales, setMostrarEditarCredenciales] = useState(false);
   const [mostrarConfirmarEliminar, setMostrarConfirmarEliminar] = useState(false);
+  const [entrandoA, setEntrandoA] = useState(null); // "sunat" | "declaraciones" | null
 
   useEffect(() => {
     if (!getToken()) {
@@ -308,6 +311,19 @@ export default function DetalleEmpresaPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cargando, mensajesFiltrados, seleccionado]);
 
+  // A pedido: entrar a SUNAT o a Declaraciones y Pagos desde el mismo buzon,
+  // sin volver a la lista de empresas.
+  async function entrarA(destino) {
+    setEntrandoA(destino);
+    try {
+      await abrirIngresoDirecto(id, destino);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setEntrandoA(null);
+    }
+  }
+
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
@@ -343,6 +359,25 @@ export default function DetalleEmpresaPage() {
               </div>
             )}
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => entrarA("sunat")}
+            disabled={!!entrandoA}
+            title="Entra directo a Operaciones en Linea de SUNAT, ya logueado, sin escribir nada."
+            className="flex items-center gap-1.5 rounded-lg bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 transition-all duration-300 ease-out hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+          >
+            {entrandoA === "sunat" ? <Loader2 size={15} strokeWidth={2} className="animate-spin" /> : <LogIn size={15} strokeWidth={2} />}
+            {entrandoA === "sunat" ? "Entrando..." : "Ir a SUNAT"}
+          </button>
+          <button
+            onClick={() => entrarA("declaraciones")}
+            disabled={!!entrandoA}
+            title="Entra directo a Mis Declaraciones y Pagos de SUNAT, ya logueado, sin escribir nada."
+            className="flex items-center gap-1.5 rounded-lg bg-sky-50 px-4 py-2 text-sm font-bold text-sky-700 transition-all duration-300 ease-out hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+          >
+            {entrandoA === "declaraciones" ? <Loader2 size={15} strokeWidth={2} className="animate-spin" /> : <LogIn size={15} strokeWidth={2} />}
+            {entrandoA === "declaraciones" ? "Entrando..." : "Ir a Declaraciones y Pagos"}
+          </button>
           <button
             onClick={marcarTodos}
             disabled={!hayPendientes}
@@ -351,6 +386,7 @@ export default function DetalleEmpresaPage() {
             <CheckCheck size={15} strokeWidth={1.5} />
             Marcar todos como leidos
           </button>
+          </div>
         </div>
 
         {error && (
