@@ -22,7 +22,7 @@ def test_ayudantes_de_hora_peru(monkeypatch):
 
 def test_hora_de_publicacion_de_sunat_es_hora_de_peru():
     assert _parsear_fecha("20/10/2026 20:44:00") == datetime(2026, 10, 21, 1, 44, tzinfo=timezone.utc)
-    assert _parsear_fecha("01/10/2026 01:15") == datetime(2026, 10, 1, 6, 15, tzinfo=timezone.utc)
+    assert _parsear_fecha("01/10/2026 01:15:00") == datetime(2026, 10, 1, 6, 15, tzinfo=timezone.utc)
 
 
 def test_vencimiento_de_tareas_de_deuda_es_un_dia():

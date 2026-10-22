@@ -3,9 +3,21 @@ Fase 3: deteccion de tareas vencidas (pendientes con fecha ya pasada) --
 filtro dedicado en /tareas, conteo en el panel "Avance de Cumplimiento" y
 en el resumen del Dashboard.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
+import pytest
+
+import app.hora_peru as hora_peru
+from app.hora_peru import ZONA_PERU, etiqueta_de_dia
 from app.models import TareaObligacion
+
+# Dia fijo a media tarde en Peru: las pruebas no dependen de cuando corren.
+HOY = date(2026, 10, 15)
+
+
+@pytest.fixture(autouse=True)
+def _hoy_fijo(monkeypatch):
+    monkeypatch.setattr(hora_peru, "ahora_peru", lambda: datetime(2026, 10, 15, 16, 0, tzinfo=ZONA_PERU))
 
 
 def _registrar(client, email="admin@example.com"):
@@ -29,13 +41,13 @@ def _crear_empresa(client, headers, ruc):
 
 
 def _crear_tarea(db_session, empresa_id, *, dias_offset, estado="pendiente", tipo="otro", periodo=None):
-    hoy = datetime.now(timezone.utc)
+    # Las fechas de vencimiento son un dia del calendario (00:00 UTC de ese dia).
     tarea = TareaObligacion(
         empresa_id=empresa_id,
         titulo=f"Tarea {tipo}",
         tipo=tipo,
-        periodo=periodo or f"{hoy.year:04d}-{hoy.month:02d}",
-        fecha_vencimiento=hoy + timedelta(days=dias_offset),
+        periodo=periodo or f"{HOY.year:04d}-{HOY.month:02d}",
+        fecha_vencimiento=etiqueta_de_dia(HOY + timedelta(days=dias_offset)),
         estado=estado,
         prioridad="media",
     )
@@ -60,13 +72,11 @@ def test_filtro_vencida_solo_trae_pendientes_con_fecha_pasada(client, db_session
 def test_avance_cumplimiento_cuenta_vencidas_por_tipo(client, db_session):
     headers = _registrar(client)
     empresa_id = _crear_empresa(client, headers, "20222222222")
-    hoy = datetime.now(timezone.utc)
-    periodo_actual = f"{hoy.year:04d}-{hoy.month:02d}"
+    periodo_actual = f"{HOY.year:04d}-{HOY.month:02d}"
 
-    # Minutos antes/despues de ahora: ambas caen en el mes en curso cualquier dia
-    # que corra la prueba (con +10 dias fallaba desde el dia 22 de cada mes).
-    _crear_tarea(db_session, empresa_id, dias_offset=-0.01, tipo="planilla", periodo=periodo_actual)
-    _crear_tarea(db_session, empresa_id, dias_offset=0.01, tipo="planilla", periodo=periodo_actual)
+    _crear_tarea(db_session, empresa_id, dias_offset=-2, tipo="planilla", periodo=periodo_actual)
+    # Vence HOY: todavia no esta vencida, aunque en UTC ya sea otra hora.
+    _crear_tarea(db_session, empresa_id, dias_offset=0, tipo="planilla", periodo=periodo_actual)
 
     avance = client.get(f"/tareas/avance-cumplimiento?periodo={periodo_actual}", headers=headers).json()
     fila_planilla = next(p for p in avance["por_tipo"] if p["tipo"] == "Planilla")
