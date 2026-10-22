@@ -33,6 +33,7 @@ from app.cronograma_sunat import grupo_para_empresa
 from app.email_utils import enviar_resumen_diario, enviar_alerta_canario, enviar_recordatorio_tareas
 from app.rate_limit import adquirir_slot_global, liberar_slot_global, espaciado_consultas_seg
 from app.security import descifrar_clave_sol
+from app.hora_peru import ZONA_PERU, etiqueta_de_hoy
 
 # Modulo de Tareas/Agenda: con cuantos dias de anticipacion se manda el
 # recordatorio por correo de una tarea pendiente -- ver
@@ -288,7 +289,9 @@ def enviar_recordatorios_vencimiento(dias_antes: int = DIAS_RECORDATORIO_TAREAS)
     """
     db = SessionLocal()
     try:
-        ahora = datetime.now(timezone.utc)
+        # Desde HOY en Peru (las fechas de vencimiento son el dia, a las 00:00
+        # UTC): con el instante actual, una tarea que vence hoy ya no avisaba.
+        ahora = etiqueta_de_hoy()
         limite = ahora + timedelta(days=dias_antes)
 
         tareas_por_avisar = (
@@ -476,7 +479,7 @@ def _evaluar_alerta_canario(db) -> None:
     if todos_fallaron and not ya_en_alerta:
         redis_conn.set(_CLAVE_REDIS_CANARIO_EN_ALERTA, "1")
         detalle = [
-            f"{c.ejecutado_en.strftime('%d/%m %H:%M') if c.ejecutado_en else '?'} -- "
+            f"{c.ejecutado_en.astimezone(ZONA_PERU).strftime('%d/%m %H:%M') if c.ejecutado_en else '?'} -- "
             f"{c.error or 'error desconocido'}"
             for c in ultimos
         ]

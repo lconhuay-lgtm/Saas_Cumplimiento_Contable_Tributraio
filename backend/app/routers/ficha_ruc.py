@@ -22,6 +22,7 @@ from app.jobs import ejecutar_generar_ficha_ruc
 from app.rate_limit import verificar_limite_ruc, LimiteExcedido
 from app.almacenamiento import leer_documento, AlmacenamientoError
 from app.acceso import obtener_empresa_visible
+from app.hora_peru import inicio_de_hoy_peru
 
 router = APIRouter(tags=["ficha-ruc"])
 
@@ -67,7 +68,7 @@ def limite_qr_ficha_ruc(
 ):
     """Cuantos "Reporte de Ficha RUC" con QR se generaron HOY para esta empresa -- ver LIMITE_REPORTES_QR_POR_DIA."""
     empresa = obtener_empresa_visible(empresa_id, usuario, db)
-    inicio_de_hoy = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    inicio_de_hoy = inicio_de_hoy_peru()
     usados_hoy = (
         db.query(FichaRucJob)
         .filter(

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDownLeft, ArrowUpRight, Download, Loader2, Search, SearchCheck } from "lucide-react";
 import { api } from "../../lib/api";
 import { descargarCsv, periodoPorDefecto } from "./utilidades";
+import { fechaHoraPeru, hoyPeruIso } from "../../lib/fechas";
 
 // Mismos criterios que la "Consulta de Pago de Detracciones" de SUNAT.
 const TIPOS_CUENTA = [
@@ -51,9 +52,6 @@ const CLAVE_EMPRESA = "cumplimiento:detracciones:empresa";
 
 const soles = new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN" });
 
-function isoLocal(d) {
-  return d.toLocaleDateString("en-CA");
-}
 
 function fechaCorta(iso) {
   if (!iso) return "—";
@@ -66,15 +64,15 @@ function nombreBien(codigo) {
 }
 
 export default function PanelDetracciones({ empresaInicial = null }) {
-  const hoy = new Date();
-  const hace30 = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - 29);
+  const hoyIso = hoyPeruIso();
+  const hace30Iso = hoyPeruIso(new Date(Date.now() - 29 * 86400000));
   const porDefecto = periodoPorDefecto();
 
   const [empresas, setEmpresas] = useState([]);
   const [empresaId, setEmpresaId] = useState("");
   const [modo, setModo] = useState("fechas");
-  const [desde, setDesde] = useState(isoLocal(hace30));
-  const [hasta, setHasta] = useState(isoLocal(hoy));
+  const [desde, setDesde] = useState(hace30Iso);
+  const [hasta, setHasta] = useState(hoyIso);
   const [periodo, setPeriodo] = useState(`${porDefecto.anio}-${String(porDefecto.mes).padStart(2, "0")}`);
   const [tipoCuenta, setTipoCuenta] = useState("1");
   const [tipoPago, setTipoPago] = useState("pagosIndividuales");
@@ -279,13 +277,13 @@ export default function PanelDetracciones({ empresaInicial = null }) {
               </label>
               <label className={etiqueta}>
                 Hasta
-                <input type="date" value={hasta} min={desde} max={isoLocal(hoy)} onChange={(e) => setHasta(e.target.value)} className={campo} />
+                <input type="date" value={hasta} min={desde} max={hoyIso} onChange={(e) => setHasta(e.target.value)} className={campo} />
               </label>
             </>
           ) : (
             <label className={etiqueta}>
               Periodo tributario
-              <input type="month" value={periodo} max={`${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}`} onChange={(e) => setPeriodo(e.target.value)} className={campo} />
+              <input type="month" value={periodo} max={hoyIso.slice(0, 7)} onChange={(e) => setPeriodo(e.target.value)} className={campo} />
             </label>
           )}
           <button
@@ -345,7 +343,7 @@ export default function PanelDetracciones({ empresaInicial = null }) {
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <span className="text-xs text-slate-500">
           {visibles.length} deposito(s) guardado(s) con estos criterios
-          {busqueda?.finalizado_en && !buscandoEnSunat && ` · ultima busqueda en SUNAT: ${new Date(busqueda.finalizado_en).toLocaleString("es-PE")}`}
+          {busqueda?.finalizado_en && !buscandoEnSunat && ` · ultima busqueda en SUNAT: ${fechaHoraPeru(busqueda.finalizado_en)}`}
         </span>
         <div className="relative ml-auto">
           <Search size={14} strokeWidth={1.75} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />

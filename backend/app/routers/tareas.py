@@ -28,6 +28,7 @@ from app.schemas import (
 from app import tareas as tareas_logic
 from app.cronograma_sunat import condiciones_empresa_con_obligaciones
 from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible
+from app.hora_peru import etiqueta_de_hoy, hoy_peru
 
 logger = logging.getLogger("app.routers.tareas")
 
@@ -103,7 +104,7 @@ def _generar_mes_actual_silencioso(db: Session, tenant_id: str) -> None:
     a mano despues con el boton de siempre.
     """
     try:
-        hoy = datetime.now(timezone.utc)
+        hoy = hoy_peru()
         tareas_logic.generar_tareas_mes(db, tenant_id, hoy.year, hoy.month)
     except Exception:
         logger.exception("No se pudieron generar las tareas del mes actual tras crear/activar una obligacion")
@@ -223,7 +224,7 @@ def listar_tareas_endpoint(
         # vencidas" solas.
         query = query.filter(
             TareaObligacion.estado == "pendiente",
-            TareaObligacion.fecha_vencimiento < datetime.now(timezone.utc),
+            TareaObligacion.fecha_vencimiento < etiqueta_de_hoy(),
         )
     elif estado == "aplazada":
         # Tampoco es un valor real de estado -- mismo criterio que
@@ -374,7 +375,7 @@ def generar_tareas(
     se puede apretar el boton "Generar vencimientos" del frontend las veces
     que haga falta sin duplicar nada.
     """
-    hoy = datetime.now(timezone.utc)
+    hoy = hoy_peru()
     anio_objetivo = anio or hoy.year
     mes_objetivo = mes or hoy.month
     if not (1 <= mes_objetivo <= 12):
@@ -412,7 +413,7 @@ def avance_cumplimiento(
     por el mes calendario de `fecha_vencimiento`, que es lo que de verdad
     hay que hacer ESE mes, sin importar de que periodo tributario se trate.
     """
-    hoy = datetime.now(timezone.utc)
+    hoy = hoy_peru()
     periodo_objetivo = periodo or f"{hoy.year:04d}-{hoy.month:02d}"
     periodo_ajustado_automaticamente = False
 
@@ -467,7 +468,7 @@ def avance_cumplimiento(
         acc["total"] += 1
         if estado == "completado":
             acc["completados"] += 1
-        elif estado == "pendiente" and fecha_vencimiento is not None and _con_utc(fecha_vencimiento) < hoy:
+        elif estado == "pendiente" and fecha_vencimiento is not None and _con_utc(fecha_vencimiento) < etiqueta_de_hoy():
             acc["vencidas"] += 1
 
     por_tipo = []

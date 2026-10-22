@@ -39,6 +39,7 @@ from sqlalchemy.orm import Session
 
 from app.models import CronogramaVencimiento
 from app.cronograma_sunat import GRUPOS_COLUMNAS, MESES_ES, MESES_PATRON, parsear_periodo
+from app.hora_peru import hoy_peru
 
 logger = logging.getLogger("app.cronograma_sire")
 
@@ -188,7 +189,7 @@ def sincronizar_cronograma_sire(db: Session, anio: int) -> dict:
 
 def asegurar_cronograma_sire_vigente(db: Session) -> dict:
     """Mismo patron idempotente que asegurar_cronograma_vigente() (cronograma_sunat.py) -- ver ese docstring."""
-    hoy = datetime.now(timezone.utc)
+    hoy = hoy_peru()
     anios_a_revisar = [hoy.year]
     if hoy.month == 12:
         anios_a_revisar.append(hoy.year + 1)

@@ -18,6 +18,7 @@ from app.schemas import (
 from app.deps import get_usuario_actual
 from app.cronograma_sunat import condiciones_empresa_con_obligaciones, proximos_vencimientos_por_tenant
 from app.acceso import filtrar_empresas_visibles
+from app.hora_peru import etiqueta_de_hoy, inicio_de_hoy_peru
 
 # Modulo de cronograma SUNAT: cuantos dias adelante mostrar un vencimiento
 # como "proximo" en el Dashboard -- 15 dias da tiempo de sobra para
@@ -56,7 +57,7 @@ def resumen(
 
     mensajes_hoy_por_empresa: dict[str, int] = {}
     if empresas:
-        inicio_de_hoy = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        inicio_de_hoy = inicio_de_hoy_peru()
         filas_hoy = (
             db.query(MensajeBuzon.empresa_id, func.count(MensajeBuzon.id))
             .filter(
@@ -168,7 +169,7 @@ def resumen(
         filtrar_empresas_visibles(
             db.query(TareaObligacion).join(Empresa, Empresa.id == TareaObligacion.empresa_id), usuario
         )
-        .filter(TareaObligacion.estado == "pendiente", TareaObligacion.fecha_vencimiento < datetime.now(timezone.utc))
+        .filter(TareaObligacion.estado == "pendiente", TareaObligacion.fecha_vencimiento < etiqueta_de_hoy())
         .filter(*condiciones_empresa_con_obligaciones())
         .count()
     )

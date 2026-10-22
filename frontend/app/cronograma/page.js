@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ChevronLeft, ChevronRight, RefreshCw, Loader2, CalendarDays, Building2, X } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
 import { api, getToken } from "../../lib/api";
+import { hoyPeru } from "../../lib/fechas";
 
 const NOMBRES_MES = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -115,9 +116,9 @@ function diaDe(fechaIso) {
 
 export default function CronogramaPage() {
   const router = useRouter();
-  const hoy = useMemo(() => new Date(), []);
-  const [anio, setAnio] = useState(hoy.getFullYear());
-  const [mes, setMes] = useState(hoy.getMonth() + 1); // 1-12
+  const hoy = useMemo(() => hoyPeru(), []);
+  const [anio, setAnio] = useState(hoy.anio);
+  const [mes, setMes] = useState(hoy.mes); // 1-12
   const [vencimientos, setVencimientos] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
@@ -281,7 +282,7 @@ export default function CronogramaPage() {
     return lista;
   }, [anio, mes]);
 
-  const esHoy = (d) => d != null && anio === hoy.getFullYear() && mes === hoy.getMonth() + 1 && d === hoy.getDate();
+  const esHoy = (d) => d != null && anio === hoy.anio && mes === hoy.mes && d === hoy.dia;
 
   const itemsDiaSeleccionado = diaSeleccionado != null ? porDia[diaSeleccionado] || [] : [];
   const { paginaSegura: paginaDia, totalPaginas: totalPaginasDia, itemsPagina: itemsPaginaDia, setPagina: setPaginaDia } =

@@ -7,7 +7,7 @@ import logging
 import os
 import re
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import or_
 
@@ -24,6 +24,7 @@ from app.clasificacion import clasificar_tipo
 from app.email_utils import enviar_aviso_deudas_nuevas, enviar_notificacion_mensajes_nuevos
 from app.cronograma_sunat import _PATRONES_SIN_OBLIGACIONES
 from app.tareas import revisar_obligacion_plame, sincronizar_tareas_con_sunat
+from app.hora_peru import ZONA_PERU, etiqueta_de_dia, hoy_peru
 
 MAX_INTENTOS = 2
 ESPERA_ENTRE_INTENTOS_SEG = 15
@@ -72,10 +73,11 @@ def _parsear_fecha(texto_fecha: str) -> datetime:
     if match:
         dia, mes, anio, hora, minuto, segundo = match.groups()
         try:
+            # SUNAT muestra la hora de Peru: se guarda como el instante real (UTC).
             return datetime(
                 int(anio), int(mes), int(dia), int(hora), int(minuto), int(segundo or 0),
-                tzinfo=timezone.utc,
-            )
+                tzinfo=ZONA_PERU,
+            ).astimezone(timezone.utc)
         except ValueError:
             pass
     logger.warning(f"No se pudo interpretar la fecha '{texto_fecha}', usando la hora actual")
@@ -1080,19 +1082,18 @@ def _destinatarios_empresa(db, empresa: Empresa) -> list[Usuario]:
     )
 
 
-def _vencimiento_tarea_valor(valor: ValorDeuda, hoy: datetime) -> datetime:
+def _vencimiento_tarea_valor(valor: ValorDeuda, hoy: date) -> datetime:
     """
     En coactiva: 2 dias (riesgo de embargo). Si no: SUNAT da 7 dias habiles
     desde la notificacion de una orden de pago antes de pasarla a coactiva
-    -- se usa la fecha de notificacion + 7, nunca antes de manana.
+    -- se usa la fecha de notificacion + 7, nunca antes de manana. `hoy` es
+    el dia en Peru; devuelve la fecha como se guardan los vencimientos.
     """
     if valor.en_cobranza_coactiva:
-        return hoy + timedelta(days=2)
+        return etiqueta_de_dia(hoy + timedelta(days=2))
     if valor.fecha_notificacion:
-        n = valor.fecha_notificacion
-        limite = datetime(n.year, n.month, n.day, 17, tzinfo=timezone.utc) + timedelta(days=7)
-        return max(limite, hoy + timedelta(days=1))
-    return hoy + timedelta(days=5)
+        return etiqueta_de_dia(max(valor.fecha_notificacion + timedelta(days=7), hoy + timedelta(days=1)))
+    return etiqueta_de_dia(hoy + timedelta(days=5))
 
 
 def avisar_novedades_deuda(db, empresa: Empresa, valores: list[ValorDeuda], embargos: list[EmbargoNotificado]) -> None:
@@ -1103,7 +1104,7 @@ def avisar_novedades_deuda(db, empresa: Empresa, valores: list[ValorDeuda], emba
     """
     if not valores and not embargos:
         return
-    hoy = datetime.now(timezone.utc)
+    hoy = hoy_peru()
     for v in valores:
         db.add(TareaObligacion(
             empresa_id=empresa.id,
@@ -1127,7 +1128,7 @@ def avisar_novedades_deuda(db, empresa: Empresa, valores: list[ValorDeuda], emba
             empresa_id=empresa.id,
             titulo=f"Embargo notificado RC {e.rc_embargo} en {e.nombre_tercero or 'tercero'} -- S/ {e.monto_embargado:,.2f}"[:300],
             tipo="deuda",
-            fecha_vencimiento=hoy + timedelta(days=1),
+            fecha_vencimiento=etiqueta_de_dia(hoy + timedelta(days=1)),
             prioridad="urgente",
             proceso="automatica",
             referencia_sunat=f"embargo:{e.rc_embargo}",

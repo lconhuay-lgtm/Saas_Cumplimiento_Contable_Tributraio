@@ -16,6 +16,7 @@ import {
 import { api } from "../../lib/api";
 import { descargarCsv, periodoPorDefecto } from "./utilidades";
 import FiltroDigitoRuc, { coincideDigitoRuc } from "./FiltroDigitoRuc";
+import { fechaPeru, hoyPeruIso } from "../../lib/fechas";
 
 const MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Set", "Oct", "Nov", "Dic"];
 const MESES_LARGOS = [
@@ -66,7 +67,7 @@ function situacionFormulario(fila, periodo, periodoTexto, formulario, ultimoCons
   const desde = fila.obligado_desde[formulario];
   if (!desde || (desde !== "0000-00" && periodoTexto < desde)) return "no_aplica";
   // vence_el llega como medianoche UTC del dia de vencimiento: el mismo dia todavia es "pendiente".
-  if (periodo?.vence_el && periodo.vence_el.slice(0, 10) >= new Date().toLocaleDateString("en-CA")) return "pendiente";
+  if (periodo?.vence_el && periodo.vence_el.slice(0, 10) >= hoyPeruIso()) return "pendiente";
   return "no_presentado";
 }
 
@@ -434,7 +435,7 @@ export default function PanelDeclaraciones() {
                           <AlertTriangle size={14} strokeWidth={2} className="text-amber-500" />
                         </span>
                       )}
-                      <span>{f.actualizado_en ? new Date(f.actualizado_en).toLocaleDateString("es-PE") : "Sin leer"}</span>
+                      <span>{f.actualizado_en ? fechaPeru(f.actualizado_en) : "Sin leer"}</span>
                       <button
                         onClick={() => consultarUna(f.empresa_id)}
                         disabled={f.consulta_en_curso}

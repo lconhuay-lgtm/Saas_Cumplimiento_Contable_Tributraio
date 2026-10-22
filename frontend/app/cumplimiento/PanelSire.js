@@ -14,6 +14,7 @@ import {
 import { api } from "../../lib/api";
 import { descargarCsv, periodoPorDefecto } from "./utilidades";
 import FiltroDigitoRuc, { coincideDigitoRuc } from "./FiltroDigitoRuc";
+import { fechaPeru, hoyPeruIso } from "../../lib/fechas";
 
 const MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Set", "Oct", "Nov", "Dic"];
 const MESES_LARGOS = [
@@ -48,7 +49,7 @@ function situacionLibro(estado, venceEl) {
   // vence_el llega como medianoche UTC del dia de vencimiento: se compara
   // solo la fecha contra el dia local, para que el mismo dia todavia sea
   // "pendiente" y no "no presentado".
-  if (venceEl && venceEl.slice(0, 10) >= new Date().toLocaleDateString("en-CA")) return "pendiente";
+  if (venceEl && venceEl.slice(0, 10) >= hoyPeruIso()) return "pendiente";
   return "no_presentado";
 }
 
@@ -362,7 +363,7 @@ export default function PanelSire() {
                           <AlertTriangle size={14} strokeWidth={2} className="text-amber-500" />
                         </span>
                       )}
-                      <span>{f.actualizado_en ? new Date(f.actualizado_en).toLocaleDateString("es-PE") : "Sin leer"}</span>
+                      <span>{f.actualizado_en ? fechaPeru(f.actualizado_en) : "Sin leer"}</span>
                       <button
                         onClick={() => consultarUna(f.empresa_id)}
                         disabled={f.consulta_en_curso}

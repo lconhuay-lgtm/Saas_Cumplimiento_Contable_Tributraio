@@ -23,6 +23,7 @@ from app.queue_conn import cola_consultas
 from app.jobs import ejecutar_generar_reporte_tributario
 from app.rate_limit import verificar_limite_ruc, LimiteExcedido
 from app.acceso import obtener_empresa_visible
+from app.hora_peru import inicio_de_hoy_peru
 
 router = APIRouter(tags=["reporte-tributario"])
 
@@ -90,7 +91,7 @@ def limite_reporte_tributario(
 ):
     """Cuantos "Reporte Tributario para Terceros" se solicitaron HOY para esta empresa -- ver LIMITE_REPORTES_POR_DIA."""
     empresa = obtener_empresa_visible(empresa_id, usuario, db)
-    inicio_de_hoy = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    inicio_de_hoy = inicio_de_hoy_peru()
     usados_hoy = (
         db.query(ReporteTributarioJob)
         .filter(

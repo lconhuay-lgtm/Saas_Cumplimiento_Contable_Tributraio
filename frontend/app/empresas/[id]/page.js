@@ -31,6 +31,7 @@ import Sidebar from "../../../components/Sidebar";
 import ConfirmDialog from "../../../components/ConfirmDialog";
 import { api, getToken } from "../../../lib/api";
 import { colorPuntoTipo } from "../../../lib/tiposMensaje";
+import { fechaPeru, inicioDeHoyPeruMs } from "../../../lib/fechas";
 
 const ETIQUETAS_FILTRO_ESPECIAL = {
   pendientes: "mensajes pendientes",
@@ -266,11 +267,7 @@ export default function DetalleEmpresaPage() {
     return [["Todos", mensajesNotificaciones.length], ...ordenadas];
   }, [mensajesNotificaciones]);
 
-  const inicioDeHoy = useMemo(() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d;
-  }, []);
+  const inicioDeHoy = useMemo(() => new Date(inicioDeHoyPeruMs()), []);
 
   const listaBase = origenActivo === "notificaciones" ? mensajesNotificaciones : mensajesBandeja;
 
@@ -529,7 +526,7 @@ export default function DetalleEmpresaPage() {
                             {m.asunto}
                           </div>
                           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-slate-400">
-                            <span>{new Date(m.fecha_publicacion).toLocaleDateString()}</span>
+                            <span>{fechaPeru(m.fecha_publicacion)}</span>
                             {m.tiene_documento && (
                               <span className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-500">
                                 <FileText size={11} strokeWidth={1.5} />

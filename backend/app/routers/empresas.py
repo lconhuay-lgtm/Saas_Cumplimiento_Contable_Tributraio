@@ -36,6 +36,7 @@ from app.jobs import ejecutar_consulta_buzon
 from app.deps import get_usuario_actual, get_admin_actual
 from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible, es_admin
 from app import tareas as tareas_logic
+from app.hora_peru import hoy_peru, inicio_de_hoy_peru
 
 logger = logging.getLogger("app.routers.empresas")
 
@@ -88,7 +89,7 @@ def _con_estadisticas(empresas: list[Empresa], db: Session) -> list[EmpresaRespo
     )
     consultas_por_empresa = {empresa_id: total for empresa_id, total in filas_consultas}
 
-    inicio_de_hoy = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    inicio_de_hoy = inicio_de_hoy_peru()
     filas_hoy = (
         db.query(MensajeBuzon.empresa_id, func.count(MensajeBuzon.id))
         .filter(MensajeBuzon.empresa_id.in_(ids), MensajeBuzon.descubierto_en >= inicio_de_hoy)
@@ -306,7 +307,7 @@ def _crear_obligaciones_por_defecto(
     # routers.tareas._generar_mes_actual_silencioso. Nunca debe tumbar el
     # alta de la empresa si esto falla.
     try:
-        hoy = datetime.now(timezone.utc)
+        hoy = hoy_peru()
         tareas_logic.generar_tareas_mes(db, empresa.tenant_id, hoy.year, hoy.month)
     except Exception:
         logger.warning(f"No se pudieron generar las tareas del mes actual para {empresa.ruc} recien creada", exc_info=True)

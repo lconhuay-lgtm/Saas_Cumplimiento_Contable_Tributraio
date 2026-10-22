@@ -17,6 +17,8 @@ import os
 import smtplib
 import logging
 from datetime import datetime
+
+from app.hora_peru import ahora_peru
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -42,7 +44,7 @@ def _armar_cuerpo(nombre_tenant: str, resumen: list[dict]) -> tuple[str, str]:
 
     lineas = [
         f"Resumen diario de Anzen Sol para {nombre_tenant}",
-        f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        f"Generado: {ahora_peru().strftime('%d/%m/%Y %H:%M')} (hora de Peru)",
         "",
         "Empresas con mensajes nuevos desde el ultimo chequeo:",
         "",

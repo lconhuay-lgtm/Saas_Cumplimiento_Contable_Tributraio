@@ -16,6 +16,7 @@ from app.models import (
     Empresa, EmpresaObligacion, TareaObligacion, CronogramaVencimiento, DeclaracionSunat, SireEstadoPeriodo,
 )
 from app.cronograma_sunat import grupo_para_empresa, empresas_para_cronograma
+from app.hora_peru import hoy_peru
 
 logger = logging.getLogger("app.tareas")
 
@@ -227,7 +228,7 @@ def revisar_obligacion_plame(db: Session, empresa_id: str) -> str | None:
     )
     if ya_tiene:
         return None
-    hoy = datetime.now(timezone.utc)
+    hoy = hoy_peru()
     meses = hoy.year * 12 + hoy.month - 1 - MESES_PLAME_RECIENTE
     desde = f"{meses // 12}-{meses % 12 + 1:02d}"
     reciente = (

@@ -42,6 +42,7 @@ import ConfirmDialog from "../../components/ConfirmDialog";
 import InfoDialog from "../../components/InfoDialog";
 import { infoEtapaConsulta, infoEtapaFichaRuc, infoEtapaReporteTributario } from "../../lib/etapasTrabajos";
 import { useTrabajos, progresoPorTipo } from "../../contexts/TrabajosContext";
+import { fechaPeru } from "../../lib/fechas";
 
 // Menu SOL generico -- YA NO es el boton principal de "Op. en Linea" (eso
 // ahora hace login automatico, ver entrarDirectoASunat), pero se deja como
@@ -994,7 +995,7 @@ function TarjetaEmpresa({
 
       <div className="mt-4 border-t border-slate-100 pt-4">
         <span className="block truncate text-xs text-slate-400">
-          {e.ultima_consulta_en ? `Ultima vez: ${new Date(e.ultima_consulta_en).toLocaleDateString()}` : "Sin consultar"}
+          {e.ultima_consulta_en ? `Ultima vez: ${fechaPeru(e.ultima_consulta_en)}` : "Sin consultar"}
           <span className="text-slate-300"> &middot; </span>
           {e.total_consultas} consulta{e.total_consultas === 1 ? "" : "s"}
         </span>

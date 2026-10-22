@@ -24,6 +24,7 @@ from app.queue_conn import cola_consultas
 from app.jobs import ejecutar_consulta_sire
 from app.rate_limit import verificar_limite_ruc, LimiteExcedido
 from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible
+from app.hora_peru import hoy_peru
 
 router = APIRouter(tags=["sire"])
 
@@ -75,7 +76,7 @@ def cumplimiento_sire(
         {int(p[:4]) for (p,) in db.query(SireEstadoPeriodo.periodo).filter(SireEstadoPeriodo.empresa_id.in_(ids)).distinct()},
         reverse=True,
     ) if ids else []
-    anio_elegido = anio or (anios[0] if anios else datetime.now(timezone.utc).year)
+    anio_elegido = anio or (anios[0] if anios else hoy_peru().year)
 
     filas_estado = (
         db.query(SireEstadoPeriodo)

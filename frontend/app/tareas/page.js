@@ -27,6 +27,7 @@ import {
 import Sidebar from "../../components/Sidebar";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import { api, getToken } from "../../lib/api";
+import { hoyPeru, hoyPeruIso } from "../../lib/fechas";
 
 const ETIQUETAS_TIPO = {
   igv_renta: "IGV-Renta",
@@ -87,8 +88,8 @@ function formatoFecha(fechaIso) {
 
 function diasRestantes(fechaIso) {
   if (!fechaIso) return null;
-  const hoy = new Date();
-  hoy.setUTCHours(0, 0, 0, 0);
+  // Hoy en Peru, como etiqueta 00:00 UTC (igual que llegan las fechas de vencimiento).
+  const hoy = Date.parse(`${hoyPeruIso()}T00:00:00Z`);
   const fecha = new Date(fechaIso);
   fecha.setUTCHours(0, 0, 0, 0);
   return Math.round((fecha - hoy) / 86400000);
@@ -103,15 +104,17 @@ function grupoDe(tarea) {
   return "despues";
 }
 
+// Cuentas sobre el dia del calendario (en UTC, sin horas): asi no se corre un
+// dia segun la zona horaria. Sin fecha, se parte de hoy en Peru.
 function sumarMeses(fechaIsoODia, meses) {
-  const base = fechaIsoODia ? new Date(`${fechaIsoODia.slice(0, 10)}T00:00:00`) : new Date();
-  base.setMonth(base.getMonth() + meses);
+  const base = new Date(`${(fechaIsoODia || hoyPeruIso()).slice(0, 10)}T00:00:00Z`);
+  base.setUTCMonth(base.getUTCMonth() + meses);
   return base.toISOString().slice(0, 10);
 }
 
 function sumarDias(fechaIsoODia, dias) {
-  const base = fechaIsoODia ? new Date(`${fechaIsoODia.slice(0, 10)}T00:00:00`) : new Date();
-  base.setDate(base.getDate() + dias);
+  const base = new Date(`${(fechaIsoODia || hoyPeruIso()).slice(0, 10)}T00:00:00Z`);
+  base.setUTCDate(base.getUTCDate() + dias);
   return base.toISOString().slice(0, 10);
 }
 
@@ -254,8 +257,8 @@ function TareasPageContenido() {
   async function generarDelMes() {
     setGenerando(true);
     try {
-      const hoy = new Date();
-      const r = await api.generarTareas(hoy.getFullYear(), hoy.getMonth() + 1);
+      const hoy = hoyPeru();
+      const r = await api.generarTareas(hoy.anio, hoy.mes);
       mostrarAviso(
         r.tareas_creadas === 0
           ? "No hay tareas nuevas para este mes (ya estaban creadas o no hay obligaciones configuradas)."

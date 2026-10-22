@@ -29,6 +29,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models import CronogramaVencimiento, Empresa
+from app.hora_peru import etiqueta_de_hoy, hoy_peru
 
 logger = logging.getLogger("app.cronograma_sunat")
 
@@ -264,7 +265,7 @@ def asegurar_cronograma_vigente(db: Session) -> dict:
     descarga falla (SUNAT caida, cambio de formato, etc.) solo deja un
     warning en el log -- nunca debe tumbar el arranque del backend por esto.
     """
-    hoy = datetime.now(timezone.utc)
+    hoy = hoy_peru()
     anios_a_revisar = [hoy.year]
     if hoy.month == 12:
         anios_a_revisar.append(hoy.year + 1)
@@ -381,7 +382,7 @@ def proximos_vencimientos_por_tenant(
     if not empresas:
         return []
 
-    hoy = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    hoy = etiqueta_de_hoy()
     limite = hoy + timedelta(days=dias_adelante)
 
     resultado = []

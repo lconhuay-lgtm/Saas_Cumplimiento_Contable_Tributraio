@@ -20,6 +20,7 @@ from app.schemas import (
 )
 from app import cronograma_sunat
 from app import cronograma_sire
+from app.hora_peru import hoy_peru
 
 router = APIRouter(prefix="/cronograma", tags=["cronograma"])
 
@@ -37,7 +38,7 @@ def sincronizar(
     modificacion (p.ej. una prorroga) a mitad de ano y no se quiere esperar
     hasta el proximo chequeo automatico.
     """
-    anio_objetivo = anio or datetime.now(timezone.utc).year
+    anio_objetivo = anio or hoy_peru().year
     try:
         resultado = cronograma_sunat.sincronizar_cronograma(db, anio_objetivo)
     except Exception as e:
@@ -55,7 +56,7 @@ def sincronizar_sire(
     db: Session = Depends(get_db),
 ):
     """Mismo boton "Sincronizar", version del cronograma de Atraso de Registros Electronicos (SIRE) -- ver app.cronograma_sire."""
-    anio_objetivo = anio or datetime.now(timezone.utc).year
+    anio_objetivo = anio or hoy_peru().year
     try:
         resultado = cronograma_sire.sincronizar_cronograma_sire(db, anio_objetivo)
     except Exception as e:

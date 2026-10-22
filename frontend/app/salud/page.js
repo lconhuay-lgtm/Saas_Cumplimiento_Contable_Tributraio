@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
 import { api, getToken } from "../../lib/api";
+import { fechaHoraPeru } from "../../lib/fechas";
 
 const OPCIONES_PERIODO = [
   { horas: 24, label: "24 horas" },
@@ -186,7 +187,7 @@ export default function SaludPage() {
                     ? "Exitoso"
                     : "Fallo"
                 }
-                detalle={canario.ultimo_check_en ? new Date(canario.ultimo_check_en).toLocaleString() : "-"}
+                detalle={canario.ultimo_check_en ? fechaHoraPeru(canario.ultimo_check_en) : "-"}
               />
               <TarjetaMetrica
                 icono={HeartPulse}
@@ -307,7 +308,7 @@ function SeccionErroresRecientes({ errores }) {
                   {e.error || "Error desconocido"}
                 </div>
                 <div className="mt-0.5 text-xs text-slate-400">
-                  {e.ocurrido_en ? new Date(e.ocurrido_en).toLocaleString() : "-"}
+                  {e.ocurrido_en ? fechaHoraPeru(e.ocurrido_en) : "-"}
                 </div>
               </div>
             </div>
@@ -354,7 +355,7 @@ function SeccionDocumentosRecientes({ documentos, onVerPdf }) {
                 </div>
               </div>
               <span className="shrink-0 text-xs text-slate-400">
-                {d.descubierto_en ? new Date(d.descubierto_en).toLocaleString() : "-"}
+                {d.descubierto_en ? fechaHoraPeru(d.descubierto_en) : "-"}
               </span>
             </button>
           ))}

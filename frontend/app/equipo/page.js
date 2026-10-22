@@ -5,9 +5,10 @@ import { Users, UserPlus, Copy, X, Loader2, Mail, CheckCircle2, Ban } from "luci
 import Sidebar from "../../components/Sidebar";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import { api, getToken } from "../../lib/api";
+import { fechaPeru } from "../../lib/fechas";
 
 function formatoFecha(fechaIso) {
-  return new Date(fechaIso).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" });
+  return fechaPeru(fechaIso, { day: "2-digit", month: "short", year: "numeric" });
 }
 
 function estadoInvitacion(inv) {

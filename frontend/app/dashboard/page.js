@@ -23,6 +23,7 @@ import Sidebar from "../../components/Sidebar";
 import { api, getToken } from "../../lib/api";
 import BotonConsultarTodas, { formatoDuracionEstimada } from "../../components/BotonConsultarTodas";
 import { useTrabajos } from "../../contexts/TrabajosContext";
+import { fechaHoraPeru, fechaPeru, hoyPeru, hoyPeruIso } from "../../lib/fechas";
 
 function formatoRelativoCorto(fechaIso) {
   if (!fechaIso) return "--";
@@ -300,11 +301,11 @@ function SeccionAvanceCumplimiento() {
 
   const opcionesPeriodo = useMemo(() => {
     const opciones = [];
-    const base = new Date();
+    const base = hoyPeru();
     for (let i = 0; i < 12; i++) {
-      const d = new Date(base.getFullYear(), base.getMonth() - i, 1);
-      const valor = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      const etiqueta = d.toLocaleDateString("es-PE", { month: "long", year: "numeric" });
+      const d = new Date(Date.UTC(base.anio, base.mes - 1 - i, 1));
+      const valor = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+      const etiqueta = d.toLocaleDateString("es-PE", { month: "long", year: "numeric", timeZone: "UTC" });
       opciones.push({ valor, etiqueta: etiqueta.charAt(0).toUpperCase() + etiqueta.slice(1) });
     }
     return opciones;
@@ -336,7 +337,7 @@ function SeccionAvanceCumplimiento() {
       {avance?.periodo_ajustado_automaticamente && (
         <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-amber-600">
           <Info size={13} strokeWidth={1.75} />
-          {opcionesPeriodo.find((o) => o.valor === new Date().toISOString().slice(0, 7))?.etiqueta || "Este mes"}{" "}
+          {opcionesPeriodo.find((o) => o.valor === hoyPeruIso().slice(0, 7))?.etiqueta || "Este mes"}{" "}
           todavia no tiene tareas generadas -- mostrando el periodo mas reciente con actividad.
         </p>
       )}
@@ -430,7 +431,7 @@ function SeccionCambiosEstadoContribuyente({ cambios }) {
             <div className="min-w-0">
               <div className="truncate text-sm font-medium text-ink">{c.empresa_razon_social}</div>
               <div className="text-xs text-slate-500">
-                {c.empresa_ruc} &middot; {new Date(c.actualizada_en).toLocaleDateString()}
+                {c.empresa_ruc} &middot; {fechaPeru(c.actualizada_en)}
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -475,7 +476,7 @@ function SeccionCambiosDomicilio({ cambios }) {
             <div className="min-w-0">
               <div className="truncate text-sm font-medium text-ink">{c.empresa_razon_social}</div>
               <div className="text-xs text-slate-500">
-                {c.empresa_ruc} &middot; {new Date(c.actualizada_en).toLocaleDateString()}
+                {c.empresa_ruc} &middot; {fechaPeru(c.actualizada_en)}
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -682,7 +683,7 @@ function SeccionActividadReciente({ actividad }) {
               </div>
               <div className="flex items-center gap-1.5 text-xs text-slate-400">
                 <Activity size={12} strokeWidth={1.5} />
-                {a.finalizado_en ? new Date(a.finalizado_en).toLocaleString() : "-"}
+                {a.finalizado_en ? fechaHoraPeru(a.finalizado_en) : "-"}
               </div>
             </Link>
           ))}

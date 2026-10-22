@@ -15,6 +15,7 @@ import {
 import { api } from "../../lib/api";
 import { descargarCsv } from "./utilidades";
 import FiltroDigitoRuc, { coincideDigitoRuc } from "./FiltroDigitoRuc";
+import { fechaPeru } from "../../lib/fechas";
 
 const FILTROS = [
   { id: "con_deuda", label: "Con deuda vigente" },
@@ -46,7 +47,7 @@ function fechaIso(valor) {
 }
 
 function fechaHora(valor) {
-  return valor ? new Date(valor).toLocaleDateString("es-PE") : "—";
+  return valor ? fechaPeru(valor) : "—";
 }
 
 function textoHistorial(v) {
