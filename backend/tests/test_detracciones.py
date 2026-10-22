@@ -100,3 +100,24 @@ def test_busqueda_y_listado(client, db_session, monkeypatch):
     assert datos["busqueda"]["estado"] == "pendiente"
     por_fecha = client.get(f"/empresas/{empresa_id}/detracciones?fecha_desde=2026-02-01&fecha_hasta=2026-03-20", headers=headers).json()
     assert {d["num_constancia"] for d in por_fecha["depositos"]} == {"B1", "B3"}
+
+
+def test_lectura_semanal_encola_los_ultimos_35_dias(db_session, monkeypatch):
+    import app.hora_peru as hora_peru
+    import app.scheduler_job as scheduler_job
+    from app.models import CredencialSol
+    from tests.test_deudas import _empresa, _tenant
+
+    monkeypatch.setattr(scheduler_job, "SessionLocal", lambda: db_session)
+    monkeypatch.setattr(hora_peru, "ahora_peru", lambda: datetime(2026, 10, 26, 12, 0, tzinfo=hora_peru.ZONA_PERU))
+    tenant = _tenant(db_session)
+    con_clave = _empresa(db_session, tenant, ruc="20100000021")
+    _empresa(db_session, tenant, ruc="20100000022")  # sin credenciales SOL: se salta
+    db_session.add(CredencialSol(empresa_id=con_clave.id, usuario_sol="X", clave_cifrada=b"x", dek_cifrada=b"x"))
+    db_session.commit()
+
+    resultado = scheduler_job.encolar_detracciones_semanal()
+    assert (resultado["empresas_encoladas"], resultado["saltadas"]) == (1, 1)
+    job = db_session.query(ConsultaDetraccionesJob).one()
+    assert (job.fecha_desde, job.fecha_hasta) == (date(2026, 9, 22), date(2026, 10, 26))
+    assert (job.tipos_cuenta, job.tipos_pago) == ("1,2,3", "pagosIndividuales,pagosMasivos")

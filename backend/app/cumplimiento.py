@@ -40,11 +40,14 @@ def empresas_de_tenants_activos(db: Session) -> Query:
     )
 
 
-def encolar_lecturas(db: Session, empresas, modelo_job, funcion_job, solicitado_por: str | None = None) -> dict:
+def encolar_lecturas(
+    db: Session, empresas, modelo_job, funcion_job, solicitado_por: str | None = None, datos_job: dict | None = None,
+) -> dict:
     """
     Crea un job 'pendiente' de `modelo_job` por empresa y lo programa en la
     cola espaciado igual que la consulta masiva del buzon. Salta las que no
     tienen credenciales SOL o ya tienen una lectura de este tipo en curso.
+    `datos_job`: campos extra del job (p. ej. los criterios de Detracciones).
     """
     espaciado_seg = espaciado_consultas_seg()
     encoladas = 0
@@ -59,7 +62,7 @@ def encolar_lecturas(db: Session, empresas, modelo_job, funcion_job, solicitado_
         if not tiene_credencial or ya_en_curso:
             saltadas += 1
             continue
-        job = modelo_job(empresa_id=empresa.id, solicitado_por=solicitado_por, estado="pendiente")
+        job = modelo_job(empresa_id=empresa.id, solicitado_por=solicitado_por, estado="pendiente", **(datos_job or {}))
         db.add(job)
         db.commit()
         cola_consultas.enqueue_in(

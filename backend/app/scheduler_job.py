@@ -24,16 +24,18 @@ from sqlalchemy import func
 from app.database import SessionLocal
 from app.models import Empresa, Tenant, CredencialSol, ConsultaJob, CanarioCheck, TareaObligacion
 from app.models import Usuario, ConsultaDeudasJob, ConsultaSireJob, ConsultaDeclaracionesJob, CronogramaVencimiento
+from app.models import ConsultaDetraccionesJob
 from app.queue_conn import cola_consultas, redis_conn
 from app.jobs import (
     ejecutar_consulta_buzon, ejecutar_consulta_deudas, ejecutar_consulta_sire, ejecutar_consulta_declaraciones,
+    ejecutar_consulta_detracciones,
 )
 from app.cumplimiento import empresas_de_tenants_activos, encolar_lecturas, filtrar_activas_en_sunat
 from app.cronograma_sunat import grupo_para_empresa
 from app.email_utils import enviar_resumen_diario, enviar_alerta_canario, enviar_recordatorio_tareas
 from app.rate_limit import adquirir_slot_global, liberar_slot_global, espaciado_consultas_seg
 from app.security import descifrar_clave_sol
-from app.hora_peru import ZONA_PERU, etiqueta_de_hoy
+from app.hora_peru import ZONA_PERU, etiqueta_de_hoy, hoy_peru
 
 # Modulo de Tareas/Agenda: con cuantos dias de anticipacion se manda el
 # recordatorio por correo de una tarea pendiente -- ver
@@ -204,6 +206,34 @@ def encolar_declaraciones_programado() -> dict:
         empresas = empresas_para_refresco(db, ConsultaDeclaracionesJob, "mensual")
         resultado = encolar_lecturas(db, empresas, ConsultaDeclaracionesJob, ejecutar_consulta_declaraciones)
         logger.info(f"Lectura programada de declaraciones: {resultado}")
+        return resultado
+    finally:
+        db.close()
+
+
+# Detracciones: una vez por semana, los depositos de los ultimos 35 dias (la
+# semana nueva mas lo que SUNAT registra tarde) en todas las cuentas y en
+# pagos individuales y masivos. Son 2 tramos de 30 dias: pocos segundos por
+# empresa despues de entrar a SUNAT.
+DIAS_DETRACCIONES_SEMANAL = 35
+
+
+def encolar_detracciones_semanal() -> dict:
+    """Modulo Cumplimiento > Detracciones: lectura semanal de todas las empresas activas."""
+    db = SessionLocal()
+    try:
+        hoy = hoy_peru()
+        empresas = filtrar_activas_en_sunat(empresas_de_tenants_activos(db)).order_by(Empresa.razon_social).all()
+        resultado = encolar_lecturas(
+            db, empresas, ConsultaDetraccionesJob, ejecutar_consulta_detracciones,
+            datos_job={
+                "fecha_desde": hoy - timedelta(days=DIAS_DETRACCIONES_SEMANAL - 1),
+                "fecha_hasta": hoy,
+                "tipos_cuenta": "1,2,3",
+                "tipos_pago": "pagosIndividuales,pagosMasivos",
+            },
+        )
+        logger.info(f"Lectura semanal de detracciones: {resultado}")
         return resultado
     finally:
         db.close()
