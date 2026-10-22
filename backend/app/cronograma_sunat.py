@@ -329,11 +329,22 @@ def _empresas_para_cronograma(db: Session, tenant_id: str, usuario=None) -> list
     sigue operando sobre TODO el tenant sin importar quien lo dispare --
     es generacion de datos idempotente, no una vista.
     """
+    query = db.query(Empresa).filter(Empresa.tenant_id == tenant_id, *condiciones_empresa_con_obligaciones())
+    if usuario is not None and usuario.rol != "admin":
+        query = query.filter(Empresa.asignado_a_usuario_id == usuario.id)
+    return query.all()
+
+
+def condiciones_empresa_con_obligaciones() -> tuple:
+    """
+    Filtro de _empresas_para_cronograma suelto, para aplicarlo a otras
+    consultas que ya hacen join con Empresa (p. ej. el listado de Tareas: una
+    empresa pausada -- sin consultas al buzon -- no muestra sus tareas).
+    """
     condiciones_excluidas = or_(*[
         Empresa.estado_contribuyente.ilike(patron) for patron in _PATRONES_SIN_OBLIGACIONES
     ])
-    query = db.query(Empresa).filter(
-        Empresa.tenant_id == tenant_id,
+    return (
         Empresa.activo.is_(True),
         # OJO con NULL: si estado_contribuyente todavia no se leyo (None
         # hasta la primera consulta exitosa), NO hay que excluir a la
@@ -345,9 +356,6 @@ def _empresas_para_cronograma(db: Session, tenant_id: str, usuario=None) -> list
             ~condiciones_excluidas,
         ),
     )
-    if usuario is not None and usuario.rol != "admin":
-        query = query.filter(Empresa.asignado_a_usuario_id == usuario.id)
-    return query.all()
 
 
 # Alias publico -- el modulo de Tareas/Agenda (app/tareas.py) reusa este

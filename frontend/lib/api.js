@@ -259,6 +259,19 @@ export const api = {
   obtenerCumplimientoDeclaraciones: (anio) => apiFetch(`/cumplimiento/declaraciones${anio ? `?anio=${anio}` : ""}`),
   consultarDeclaracionesTodas: () => apiFetch(`/cumplimiento/declaraciones/consultar-todas`, { method: "POST" }),
   consultarDeclaraciones: (empresaId) => apiFetch(`/empresas/${empresaId}/declaraciones/consultar`, { method: "POST" }),
+  // "No esta obligada" (controlar=false) / "Volver a controlar" un formulario (0621 o 0601) de una empresa.
+  controlarFormularioDeclaracion: (empresaId, formulario, controlar) =>
+    apiFetch(`/empresas/${empresaId}/declaraciones/control`, {
+      method: "POST",
+      body: JSON.stringify({ formulario, controlar }),
+    }),
+  // Cumplimiento > Detracciones: busqueda en SUNAT con los criterios elegidos y lo ya guardado.
+  consultarDetracciones: (empresaId, criterios) =>
+    apiFetch(`/empresas/${empresaId}/detracciones/consultar`, { method: "POST", body: JSON.stringify(criterios) }),
+  obtenerDetracciones: (empresaId, filtros = {}) => {
+    const qs = new URLSearchParams(Object.entries(filtros).filter(([, v]) => v)).toString();
+    return apiFetch(`/empresas/${empresaId}/detracciones${qs ? `?${qs}` : ""}`);
+  },
   // Ventana emergente de valores (deudas) nuevos -- mismo patron que las notificaciones del buzon.
   listarValoresNuevos: () => apiFetch(`/deudas/valores-nuevos`),
   marcarValoresVistos: (valorIds) =>

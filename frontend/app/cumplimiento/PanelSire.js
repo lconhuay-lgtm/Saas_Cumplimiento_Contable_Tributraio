@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { api } from "../../lib/api";
 import { descargarCsv, periodoPorDefecto } from "./utilidades";
+import FiltroDigitoRuc, { coincideDigitoRuc } from "./FiltroDigitoRuc";
 
 const MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Set", "Oct", "Nov", "Dic"];
 const MESES_LARGOS = [
@@ -83,6 +84,7 @@ export default function PanelSire() {
   const [mes, setMes] = useState(porDefecto.mes);
   const [filtroEstado, setFiltroEstado] = useState("todas");
   const [busqueda, setBusqueda] = useState("");
+  const [digitos, setDigitos] = useState([]);
   const [encolando, setEncolando] = useState(false);
 
   useEffect(() => {
@@ -154,20 +156,22 @@ export default function PanelSire() {
     }));
   }, [datos]);
 
+  const filasDelDigito = useMemo(() => filas.filter((f) => coincideDigitoRuc(f.ruc, digitos)), [filas, digitos]);
+
   const resumen = useMemo(() => {
     const r = { presentado: 0, pendiente: 0, no_presentado: 0, no_aplica: 0 };
-    filas.forEach((f) => (r[situacionCelda(f.porMes[mes], libro)] += 1));
+    filasDelDigito.forEach((f) => (r[situacionCelda(f.porMes[mes], libro)] += 1));
     return r;
-  }, [filas, mes, libro]);
+  }, [filasDelDigito, mes, libro]);
 
   const filasVisibles = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
-    return filas.filter((f) => {
+    return filasDelDigito.filter((f) => {
       if (q && !f.razon_social.toLowerCase().includes(q) && !f.ruc.includes(q)) return false;
       if (filtroEstado !== "todas" && situacionCelda(f.porMes[mes], libro) !== filtroEstado) return false;
       return true;
     });
-  }, [filas, busqueda, filtroEstado, mes, libro]);
+  }, [filasDelDigito, busqueda, filtroEstado, mes, libro]);
 
   function exportarCsv() {
     descargarCsv(
@@ -258,6 +262,9 @@ export default function PanelSire() {
             className="w-64 rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-sm text-ink focus:border-accent focus:outline-none"
           />
         </div>
+      </div>
+      <div className="mt-3">
+        <FiltroDigitoRuc digitos={digitos} onCambio={setDigitos} />
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">

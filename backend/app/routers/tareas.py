@@ -26,6 +26,7 @@ from app.schemas import (
     AvanceCumplimientoResponse,
 )
 from app import tareas as tareas_logic
+from app.cronograma_sunat import condiciones_empresa_con_obligaciones
 from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible
 
 logger = logging.getLogger("app.routers.tareas")
@@ -240,6 +241,11 @@ def listar_tareas_endpoint(
         query = query.filter(TareaObligacion.estado == estado)
     if empresa_id:
         query = query.filter(TareaObligacion.empresa_id == empresa_id)
+    else:
+        # A pedido: en la lista general no aparecen las tareas de empresas
+        # pausadas (sin consultas al buzon) ni de baja/suspendidas en SUNAT.
+        # Siguen en la base: si se reactiva la empresa, vuelven a verse.
+        query = query.filter(*condiciones_empresa_con_obligaciones())
     if periodo:
         query = query.filter(TareaObligacion.periodo == periodo)
     if asignado_a_usuario_id:
@@ -430,6 +436,7 @@ def avance_cumplimiento(
                 usuario,
             )
             .filter(TareaObligacion.fecha_vencimiento >= inicio, TareaObligacion.fecha_vencimiento < fin)
+            .filter(*condiciones_empresa_con_obligaciones())
             .all()
         )
 

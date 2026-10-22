@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   IdCard,
   LogIn,
+  LogOut,
   CheckCheck,
 } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
@@ -52,6 +53,55 @@ import { useTrabajos, progresoPorTipo } from "../../contexts/TrabajosContext";
 // "*" son literales). Si no tiene sesion abierta, SUNAT pide usuario/clave
 // como siempre. Nunca pasamos ninguna credencial por esta URL.
 const URL_SUNAT_MENU = "https://e-menu.sunat.gob.pe/cl-ti-itmenu/MenuInternet.htm?pestana=*&agrupacion=*";
+
+// SUNAT tiene UNA sesion por navegador: si quedo abierta la de otra empresa
+// (p. ej. despues de enviar el Reporte Tributario), al "entrar" con la
+// siguiente SUNAT reabre la anterior o avisa que hay una sesion previa. Por
+// eso cada ingreso directo primero cierra la sesion, con el mismo pedido que
+// hace el boton "Salir" del Menu SOL (POST action=salir) mandado a la ventana
+// de SUNAT como navegacion normal. Probado el 21/10/2026: cierra la sesion
+// aunque se envie desde otro sitio y la siguiente empresa entra bien.
+const URL_SALIR_SUNAT = "https://e-menu.sunat.gob.pe/cl-ti-itmenu/MenuInternet.htm";
+const ESPERA_TRAS_SALIR_MS = 2500;
+
+function cerrarSesionSunatEn(nombreVentana) {
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = URL_SALIR_SUNAT;
+  form.target = nombreVentana;
+  [["action", "salir"], ["pestana", "null"], ["agrupacion", "null"]].forEach(([nombre, valor]) => {
+    const campo = document.createElement("input");
+    campo.type = "hidden";
+    campo.name = nombre;
+    campo.value = valor;
+    form.appendChild(campo);
+  });
+  document.body.appendChild(form);
+  form.submit();
+  form.remove();
+}
+
+// Abre (en el mismo tick del clic, para que no la bloqueen como popup) la
+// ventana donde se va a entrar a SUNAT, con un nombre propio para poder
+// mandarle el "Salir", y la usa primero para cerrar la sesion anterior.
+function abrirVentanaSunat(nombreVentana, caracteristicas) {
+  const nombre = nombreVentana && nombreVentana !== "_blank" ? nombreVentana : `sunat_${Date.now()}`;
+  const pestana = window.open("", nombre, caracteristicas);
+  if (!pestana) return null;
+  try {
+    pestana.document.title = "Entrando a SUNAT...";
+    pestana.document.body.innerHTML =
+      '<p style="font-family:system-ui,sans-serif;padding:32px;color:#475569">Preparando el ingreso a SUNAT...</p>';
+  } catch {
+    // La ventana ya estaba en SUNAT (otro dominio): no se puede escribir, no importa.
+  }
+  cerrarSesionSunatEn(nombre);
+  return pestana;
+}
+
+function esperarCierreSesionSunat(inicio) {
+  return new Promise((resolver) => setTimeout(resolver, Math.max(0, ESPERA_TRAS_SALIR_MS - (Date.now() - inicio))));
+}
 
 // Texto relativo simple ("hace 5 min", "hace 2h", "hace 3d") -- sin
 // libreria externa, solo para que el usuario vea de un vistazo si la
@@ -328,11 +378,13 @@ function EmpresasPageContenido() {
   // "Entrando a SUNAT..." mientras tanto.
   // Devuelve la pestana abierta (o null si fallo) -- el Reporte Tributario la
   // usa para seguir el ingreso y llevarla despues al formulario.
-  async function entrarDirectoASunat(empresaId, nombreVentana = "_blank") {
-    const pestana = window.open("", nombreVentana);
+  async function entrarDirectoASunat(empresaId, nombreVentana = "_blank", caracteristicas = undefined) {
+    const pestana = abrirVentanaSunat(nombreVentana, caracteristicas);
+    const inicio = Date.now();
     setEntrandoDirecto((prev) => ({ ...prev, [empresaId]: true }));
     try {
       const { token } = await api.obtenerTokenIngresoDirecto(empresaId);
+      await esperarCierreSesionSunat(inicio);
       if (pestana) {
         pestana.location.href = `${API_URL}/empresas/${empresaId}/ingreso-directo?token=${encodeURIComponent(token)}`;
       }
@@ -351,10 +403,12 @@ function EmpresasPageContenido() {
   // del Menu SOL clasico (ver GET /ingreso-directo-declaraciones y
   // core_scraper/adapter.py::preparar_ingreso_directo_declaraciones).
   async function entrarDirectoADeclaraciones(empresaId) {
-    const pestana = window.open("", "_blank");
+    const pestana = abrirVentanaSunat("_blank");
+    const inicio = Date.now();
     setEntrandoDeclaraciones((prev) => ({ ...prev, [empresaId]: true }));
     try {
       const { token } = await api.obtenerTokenIngresoDirectoDeclaraciones(empresaId);
+      await esperarCierreSesionSunat(inicio);
       if (pestana) {
         pestana.location.href = `${API_URL}/empresas/${empresaId}/ingreso-directo-declaraciones?token=${encodeURIComponent(token)}`;
       }
@@ -372,10 +426,12 @@ function EmpresasPageContenido() {
   // /ingreso-directo-renta-anual y
   // core_scraper/adapter.py::preparar_ingreso_directo_renta_anual).
   async function entrarDirectoARentaAnual(empresaId) {
-    const pestana = window.open("", "_blank");
+    const pestana = abrirVentanaSunat("_blank");
+    const inicio = Date.now();
     setEntrandoRentaAnual((prev) => ({ ...prev, [empresaId]: true }));
     try {
       const { token } = await api.obtenerTokenIngresoDirectoRentaAnual(empresaId);
+      await esperarCierreSesionSunat(inicio);
       if (pestana) {
         pestana.location.href = `${API_URL}/empresas/${empresaId}/ingreso-directo-renta-anual?token=${encodeURIComponent(token)}`;
       }
@@ -655,7 +711,9 @@ function EmpresasPageContenido() {
       {pidiendoReporteTributario && (
         <ModalReporteTributario
           info={pidiendoReporteTributario}
-          onIniciarSesion={(nombreVentana) => entrarDirectoASunat(pidiendoReporteTributario.empresa.id, nombreVentana)}
+          onIniciarSesion={(nombreVentana, caracteristicas) =>
+            entrarDirectoASunat(pidiendoReporteTributario.empresa.id, nombreVentana, caracteristicas)
+          }
           onCerrar={() => setPidiendoReporteTributario(null)}
         />
       )}
@@ -1110,33 +1168,50 @@ function ModalElegirTipoFichaRuc({ info, onCancelar, onElegir }) {
 // SUNAT exige desde octubre 2026 una verificacion humana (Cloudflare
 // Turnstile) para enviar el Reporte Tributario, asi que ya no lo manda el
 // robot: se abre en el navegador del propio usuario con UN solo boton --
-// 1) el ingreso directo de siempre inicia la sesion en una pestana y 2) en
-// cuanto esa pestana llega al Menu SOL, se la manda a este enlace, que con la
-// sesion abierta lleva derecho al formulario (probado 20/10/2026). El enlace
-// no puede ir como destino del propio login: SUNAT le pega "?state=" y lo rompe.
+// 1) el ingreso directo de siempre (que antes cierra cualquier sesion previa)
+// inicia la sesion en una ventana chica y 2) en cuanto esa ventana llega al
+// Menu SOL, se la manda a este enlace, que con la sesion abierta lleva derecho
+// al formulario solo, sin el menu alrededor (probado 20 y 21/10/2026). El
+// enlace no puede ir como destino del propio login: SUNAT le pega "?state=".
 //
 // Como se sabe que ya llego al Menu SOL sin poder leer una pagina de otro
 // dominio: el navegador SI deja leer cuantos marcos (iframes) tiene la
-// pestana -- el login de SUNAT tiene 0 y el Menu SOL 3 (medido en vivo
-// 20/10/2026). Si SUNAT cambia eso, a los 2 minutos se ofrece el boton manual.
+// ventana -- el login de SUNAT tiene 0 y el Menu SOL 3 (medido en vivo
+// 20/10/2026). Se revisa cada 200 ms y se salta apenas aparece, para que el
+// menu casi no llegue a verse. Si SUNAT cambia eso, a los 2 minutos se ofrece
+// el boton manual.
+//
+// Al terminar, "Ya lo envie" (o cerrar este cuadro) cierra la sesion de SUNAT
+// y la ventana: si no, al entrar despues con otra empresa SUNAT avisaba que
+// habia una sesion previa abierta.
 const VENTANA_REPORTE_TRIBUTARIO = "sunat_reporte_tributario";
 const URL_REPORTE_TRIBUTARIO_SUNAT =
   "https://e-menu.sunat.gob.pe/cl-ti-itmenu/MenuInternet.htm?action=execute&code=10.11.1.1.1&s=ww1";
 const MARCOS_MENU_SOL = 3;
 const ESPERA_MAXIMA_MENU_SOL_SEG = 120;
+const CIERRE_VENTANA_TRAS_SALIR_MS = 3000;
+
+function caracteristicasVentanaReporte() {
+  const ancho = 760;
+  const alto = Math.min(900, window.screen.availHeight - 40);
+  const izquierda = Math.max(0, window.screenX + (window.outerWidth - ancho) / 2);
+  const arriba = Math.max(0, window.screenY + 40);
+  return `popup=yes,width=${ancho},height=${alto},left=${Math.round(izquierda)},top=${Math.round(arriba)}`;
+}
 
 function ModalReporteTributario({ info, onIniciarSesion, onCerrar }) {
-  // inicio -> entrando -> listo | manual (no se detecto el Menu SOL a tiempo) | cerrada (cerraron la pestana)
+  // inicio -> entrando -> listo | manual (no se detecto el Menu SOL a tiempo) | cerrada (cerraron la ventana)
+  // -> sesion_cerrada (ya se envio y se cerro la sesion de SUNAT)
   const [paso, setPaso] = useState("inicio");
   const pestanaRef = useRef(null);
 
   useEffect(() => {
     if (paso !== "entrando") return;
     const inicio = Date.now();
-    let vecesEnMenu = 0;
     const t = setInterval(() => {
       const pestana = pestanaRef.current;
-      if (!pestana || pestana.closed) {
+      if (!pestana) return; // todavia abriendo
+      if (pestana.closed) {
         clearInterval(t);
         setPaso("cerrada");
         return;
@@ -1145,8 +1220,7 @@ function ModalReporteTributario({ info, onIniciarSesion, onCerrar }) {
       try {
         marcos = pestana.length;
       } catch {}
-      vecesEnMenu = marcos >= MARCOS_MENU_SOL ? vecesEnMenu + 1 : 0;
-      if (vecesEnMenu >= 2) {
+      if (marcos >= MARCOS_MENU_SOL) {
         clearInterval(t);
         pestana.location.href = URL_REPORTE_TRIBUTARIO_SUNAT;
         setPaso("listo");
@@ -1154,13 +1228,14 @@ function ModalReporteTributario({ info, onIniciarSesion, onCerrar }) {
         clearInterval(t);
         setPaso("manual");
       }
-    }, 1000);
+    }, 200);
     return () => clearInterval(t);
   }, [paso]);
 
   async function abrirEnSunat() {
+    pestanaRef.current = null;
     setPaso("entrando");
-    const pestana = await onIniciarSesion(VENTANA_REPORTE_TRIBUTARIO);
+    const pestana = await onIniciarSesion(VENTANA_REPORTE_TRIBUTARIO, caracteristicasVentanaReporte());
     if (!pestana) {
       setPaso("inicio");
       return;
@@ -1173,11 +1248,34 @@ function ModalReporteTributario({ info, onIniciarSesion, onCerrar }) {
     setPaso("listo");
   }
 
+  // Cierra la sesion de SUNAT en esa ventana y, unos segundos despues, la ventana.
+  function cerrarSesionSunat() {
+    const pestana = pestanaRef.current;
+    if (!pestana || pestana.closed) return false;
+    cerrarSesionSunatEn(VENTANA_REPORTE_TRIBUTARIO);
+    setTimeout(() => {
+      try {
+        pestana.close();
+      } catch {}
+    }, CIERRE_VENTANA_TRAS_SALIR_MS);
+    return true;
+  }
+
+  function yaLoEnvie() {
+    cerrarSesionSunat();
+    setPaso("sesion_cerrada");
+  }
+
+  function cerrarCuadro() {
+    if (["entrando", "listo", "manual"].includes(paso)) cerrarSesionSunat();
+    onCerrar();
+  }
+
   const botonPrincipal =
     "flex w-full items-center justify-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white shadow-soft transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-amber-700";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-6" onClick={onCerrar}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-6" onClick={cerrarCuadro}>
       <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-soft-lg" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-base font-bold text-ink">Reporte Tributario para Terceros</h3>
         <p className="text-xs text-slate-500">{info.empresa.razon_social}</p>
@@ -1186,11 +1284,11 @@ function ModalReporteTributario({ info, onIniciarSesion, onCerrar }) {
           <>
             <p className="mt-4 text-sm text-slate-600">
               SUNAT pide comprobar que eres una persona para enviar este reporte, asi que el envio lo haces tu. Nosotros
-              entramos a SUNAT por ti y te dejamos en el formulario.
+              entramos a SUNAT por ti y te abrimos una ventana con el formulario listo: solo escribes el correo y lo envias.
             </p>
             <button type="button" onClick={abrirEnSunat} className={`mt-4 ${botonPrincipal}`}>
               <Mail size={15} strokeWidth={2} />
-              Abrir el Reporte Tributario en SUNAT
+              Abrir el formulario de SUNAT
             </button>
           </>
         )}
@@ -1199,10 +1297,10 @@ function ModalReporteTributario({ info, onIniciarSesion, onCerrar }) {
           <div className="mt-5 flex items-start gap-3 rounded-lg bg-slate-50 p-4">
             <Loader2 size={18} strokeWidth={2} className="mt-0.5 shrink-0 animate-spin text-accent" />
             <div className="text-sm text-slate-600">
-              <p className="font-semibold text-ink">Entrando a SUNAT en otra pestana...</p>
+              <p className="font-semibold text-ink">Entrando a SUNAT...</p>
               <p className="mt-1">
-                Tarda entre 10 y 40 segundos. Apenas cargue el Menu SOL, esa pestana pasara sola al formulario del
-                Reporte Tributario. Si SUNAT te pregunta por el codigo de seguridad, elige "Continuar sin codigo".
+                Tarda entre 10 y 40 segundos. Primero se cierra cualquier sesion anterior de SUNAT y luego la ventana
+                pasa sola al formulario. Si SUNAT te pregunta por el codigo de seguridad, elige "Continuar sin codigo".
               </p>
             </div>
           </div>
@@ -1212,7 +1310,7 @@ function ModalReporteTributario({ info, onIniciarSesion, onCerrar }) {
           <div className="mt-5 rounded-lg border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-900">
             <p className="flex items-center gap-1.5 font-semibold">
               <CheckCheck size={16} strokeWidth={2} />
-              Listo: ve a la pestana de SUNAT y completa ahi
+              Completa el formulario en la ventana de SUNAT
             </p>
             <ol className="mt-2 list-decimal space-y-1 pl-5 text-emerald-800">
               <li>Marca la casilla "Acepto".</li>
@@ -1220,9 +1318,26 @@ function ModalReporteTributario({ info, onIniciarSesion, onCerrar }) {
               <li>Completa la verificacion "Verify you are human".</li>
               <li>Presiona "Enviar".</li>
             </ol>
-            <button type="button" onClick={abrirFormularioManual} className="mt-3 text-xs font-medium text-emerald-700 underline">
+            <button type="button" onClick={yaLoEnvie} className={`mt-3 ${botonPrincipal}`}>
+              <LogOut size={15} strokeWidth={2} />
+              Ya lo envie -- cerrar la sesion de SUNAT
+            </button>
+            <button type="button" onClick={abrirFormularioManual} className="mt-2 text-xs font-medium text-emerald-700 underline">
               No veo el formulario -- abrirlo otra vez
             </button>
+          </div>
+        )}
+
+        {paso === "sesion_cerrada" && (
+          <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+            <p className="flex items-center gap-1.5 font-semibold text-ink">
+              <CheckCheck size={16} strokeWidth={2} className="text-emerald-600" />
+              Sesion de SUNAT cerrada
+            </p>
+            <p className="mt-1">
+              La ventana de SUNAT se cierra sola en unos segundos. Ya puedes pedir el reporte de otra empresa. El reporte
+              llega al correo que escribiste en unos minutos.
+            </p>
           </div>
         )}
 
@@ -1230,8 +1345,8 @@ function ModalReporteTributario({ info, onIniciarSesion, onCerrar }) {
           <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             <p>
               {paso === "cerrada"
-                ? "Se cerro la pestana de SUNAT antes de llegar al formulario."
-                : "SUNAT esta tardando mas de lo normal. Cuando en la otra pestana ya veas el Menu SOL, presiona:"}
+                ? "Se cerro la ventana de SUNAT antes de llegar al formulario."
+                : "SUNAT esta tardando mas de lo normal. Cuando en la otra ventana ya veas el Menu SOL, presiona:"}
             </p>
             {paso === "cerrada" ? (
               <button type="button" onClick={() => setPaso("inicio")} className={`mt-3 ${botonPrincipal}`}>
@@ -1252,10 +1367,10 @@ function ModalReporteTributario({ info, onIniciarSesion, onCerrar }) {
 
         <button
           type="button"
-          onClick={onCerrar}
+          onClick={cerrarCuadro}
           className="mt-3 flex w-full items-center justify-center rounded-lg px-4 py-2 text-xs font-medium text-slate-400 transition-colors duration-300 ease-out hover:text-slate-600"
         >
-          Cerrar
+          {paso === "listo" ? "Cerrar (tambien cierra la sesion de SUNAT)" : "Cerrar"}
         </button>
       </div>
     </div>

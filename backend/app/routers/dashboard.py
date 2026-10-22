@@ -16,7 +16,7 @@ from app.schemas import (
     ProximoVencimientoItem,
 )
 from app.deps import get_usuario_actual
-from app.cronograma_sunat import proximos_vencimientos_por_tenant
+from app.cronograma_sunat import condiciones_empresa_con_obligaciones, proximos_vencimientos_por_tenant
 from app.acceso import filtrar_empresas_visibles
 
 # Modulo de cronograma SUNAT: cuantos dias adelante mostrar un vencimiento
@@ -169,6 +169,7 @@ def resumen(
             db.query(TareaObligacion).join(Empresa, Empresa.id == TareaObligacion.empresa_id), usuario
         )
         .filter(TareaObligacion.estado == "pendiente", TareaObligacion.fecha_vencimiento < datetime.now(timezone.utc))
+        .filter(*condiciones_empresa_con_obligaciones())
         .count()
     )
 

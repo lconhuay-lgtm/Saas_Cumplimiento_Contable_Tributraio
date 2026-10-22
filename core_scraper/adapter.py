@@ -25,7 +25,7 @@ import hashlib
 import html as html_lib
 import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlparse, parse_qs, urljoin
 
 import config
@@ -1955,6 +1955,223 @@ def consultar_declaraciones(
 
     except Exception as e:
         logger.error(f"Error consultando las declaraciones de {ruc}: {e}")
+        return {**resultado_vacio, "error": str(e)}
+    finally:
+        navegador.close_browser()
+
+
+# "Mis Declaraciones y Pagos" (la plataforma nueva, no el Menu SOL clasico) >
+# Consultas > Consultas de Presentacion y Pago > Consulta de Pago de
+# Detracciones. La opcion abre con un enlace directo (exe=) y su pantalla
+# consulta un servicio JSON con el token de la sesion (sessionStorage
+# "token" -> cabecera IdCache): el mismo pedido que hace su boton Consultar.
+# Probado con Bascat el 21/10/2026.
+_URL_SOL_INICIO = "https://www.sunat.gob.pe/sol.html"
+_URL_OPCION_DETRACCIONES = (
+    "https://e-menu.sunat.gob.pe/cl-ti-itmenu2/MenuInternetPlataforma.htm?pestana=*&agrupacion=*&exe=55.2.1.1.4"
+)
+_URL_API_DETRACCIONES = "https://e-plataformaunica.sunat.gob.pe/v1/recaudacion/tributaria/declapago/detracciones/t/consultar"
+TIPOS_CUENTA_DETRACCION = {"1": "Convencional", "2": "Especial IVAP", "3": "Ley N° 30737"}
+TIPOS_PAGO_DETRACCION = {
+    "pagosIndividuales": "Pagos individuales",
+    "pagosMasivos": "Pagos masivos",
+    "pagosTransPasajeros": "Pagos transporte de pasajeros",
+}
+# SUNAT rechaza (cod 412) un rango de fechas de pago mayor a 30 dias.
+DIAS_POR_CONSULTA_DETRACCIONES = 30
+
+
+def tramos_fechas(desde: date, hasta: date, dias: int = DIAS_POR_CONSULTA_DETRACCIONES) -> list[tuple[date, date]]:
+    """[desde, hasta] partido en tramos de `dias` dias contando ambos extremos."""
+    tramos = []
+    ini = desde
+    while ini <= hasta:
+        fin = min(ini + timedelta(days=dias - 1), hasta)
+        tramos.append((ini, fin))
+        ini = fin + timedelta(days=1)
+    return tramos
+
+
+def _monto(valor) -> float:
+    try:
+        return round(float(str(valor).replace(",", "")), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def normalizar_detraccion(crudo: dict, tipo_pago: str) -> dict:
+    """Un deposito tal como lo devuelve el servicio de SUNAT, con nombres propios y sin espacios de relleno."""
+    def t(clave):
+        valor = crudo.get(clave)
+        return "" if valor is None else str(valor).strip()
+
+    periodo = t("per_tributario")
+    constancia = t("num_constancia") or f"{t('num_pres')}-{t('num_serie')}-{t('num_comprobante')}"
+    monto = crudo.get("mto_deposito")
+    return {
+        "num_constancia": constancia,
+        "tipo_cuenta": t("cod_tipcta"),
+        "num_cuenta": t("num_cuenta"),
+        "fecha_pago": t("fec_pago_desc")[:10] or None,
+        "periodo": f"{periodo[:4]}-{periodo[4:6]}" if len(periodo) >= 6 else "",
+        "tipo_comprobante": t("cod_tipcomprobante"),
+        "serie": t("num_serie"),
+        "numero": t("num_comprobante"),
+        "ruc_proveedor": t("num_ruc_proveedor"),
+        "proveedor": t("des_prov"),
+        "tipo_doc_adquiriente": t("tip_doc_adq"),
+        "doc_adquiriente": t("num_doc_adq"),
+        "adquiriente": t("des_adq"),
+        "tipo_operacion": t("tip_operacion"),
+        "tipo_bien": t("tip_bien"),
+        "monto": _monto(monto if monto is not None else crudo.get("mto_deposito_desc")),
+        "num_pago": t("num_npd"),
+        "num_presentacion": t("num_pres"),
+        "origen": t("origen_desc"),
+        "tipo_pago": tipo_pago,
+    }
+
+
+def _entrar_mis_declaraciones_y_pagos(navegador: SunatWebNavigator, empresa: dict) -> str | None:
+    """Login a la plataforma "Mis Declaraciones y Pagos" (mismo boton que su tarjeta en sol.html). None si entro."""
+    driver = navegador.driver
+    driver.get(_URL_SOL_INICIO)
+    WebDriverWait(driver, 30).until(lambda d: d.execute_script("return typeof declaraSimplificadaNueva === 'function'"))
+    original = driver.current_window_handle
+    driver.execute_script("declaraSimplificadaNueva()")
+    WebDriverWait(driver, 20).until(lambda d: len(d.window_handles) > 1)
+    driver.switch_to.window([w for w in driver.window_handles if w != original][-1])
+    WebDriverWait(driver, 30).until(lambda d: "loginMenuSol" in d.current_url)
+    if not navegador._ingresar_credenciales(empresa):
+        return error_inicio_sesion(navegador)
+    try:
+        navegador._click_condicional()
+    except Exception as e:
+        logger.info(f"Detracciones: sin modales tras el login ({e})")
+    try:
+        WebDriverWait(driver, 40).until(lambda d: "MenuInternetPlataforma" in d.current_url)
+    except Exception:
+        navegador._guardar_captura_error("detracciones_sin_plataforma")
+        return "No se pudo entrar a Mis Declaraciones y Pagos"
+    return None
+
+
+def consultar_detracciones(
+    ruc: str,
+    usuario_sol: str,
+    clave_sol: str,
+    razon_social: str = "",
+    headless: bool = True,
+    on_progreso=None,
+    fecha_desde: date | None = None,
+    fecha_hasta: date | None = None,
+    periodo: str | None = None,
+    tipos_cuenta: tuple = ("1",),
+    tipos_pago: tuple = ("pagosIndividuales",),
+) -> dict:
+    """
+    SOLO LECTURA: "Consulta de Pago de Detracciones" (SPOT) con los mismos
+    filtros de la pantalla: por fecha de pago (tramos de 30 dias, limite de
+    SUNAT) o por periodo tributario ("AAAAMM"), para cada tipo de cuenta y
+    tipo de pago pedido. Trae los depositos que la empresa recibio en su
+    cuenta (es el proveedor) y los que hizo a sus proveedores (adquiriente).
+
+    Returns:
+        {"ok": bool, "error": str | None, "detracciones": [normalizar_detraccion(...)],
+         "consultas": int, "credenciales_rechazadas": bool}
+    """
+    def _reportar(etapa: str):
+        if on_progreso is None:
+            return
+        try:
+            on_progreso(etapa)
+        except Exception as e:
+            logger.warning(f"El callback de progreso fallo (no es grave, se sigue igual): {e}")
+
+    resultado_vacio = {"ok": False, "error": None, "detracciones": [], "consultas": 0}
+    if periodo:
+        busquedas = [("", "", periodo)]
+    elif fecha_desde and fecha_hasta and fecha_desde <= fecha_hasta:
+        busquedas = [(i.strftime("%d/%m/%Y"), f.strftime("%d/%m/%Y"), "") for i, f in tramos_fechas(fecha_desde, fecha_hasta)]
+    else:
+        return {**resultado_vacio, "error": "Indica un rango de fechas de pago o un periodo tributario"}
+
+    empresa = {"ruc": ruc, "usuario": usuario_sol, "clave": clave_sol, "razon_social": razon_social}
+    navegador = SunatWebNavigator(empresa=empresa, headless=headless)
+    try:
+        if not navegador.initialize_browser():
+            return {**resultado_vacio, "error": "No se pudo iniciar el navegador"}
+
+        _reportar("autenticando")
+        error_login = _entrar_mis_declaraciones_y_pagos(navegador, empresa)
+        if error_login:
+            return {**resultado_vacio, "error": error_login, "credenciales_rechazadas": navegador.credenciales_rechazadas}
+
+        _reportar("abriendo_detracciones")
+        driver = navegador.driver
+        driver.get(_URL_OPCION_DETRACCIONES)
+        marco = None
+        for _ in range(40):
+            marco = next(
+                (f for f in driver.find_elements(By.TAG_NAME, "iframe") if "plataformaunica" in (f.get_attribute("src") or "")),
+                None,
+            )
+            if marco is not None:
+                break
+            time.sleep(1)
+        if marco is None:
+            navegador._guardar_captura_error("detracciones_sin_pantalla")
+            return {**resultado_vacio, "error": "La Consulta de Pago de Detracciones no termino de cargar"}
+        driver.switch_to.frame(marco)
+        try:
+            WebDriverWait(driver, 40).until(lambda d: d.execute_script("return !!sessionStorage.getItem('token')"))
+        except Exception:
+            navegador._guardar_captura_error("detracciones_sin_token")
+            return {**resultado_vacio, "error": "SUNAT no entrego la sesion de la Consulta de Pago de Detracciones"}
+
+        _reportar("leyendo_detracciones")
+        # Por periodo SUNAT tarda ~20 s por consulta (por fecha, menos de 1 s).
+        driver.set_script_timeout(120)
+        por_clave: dict[tuple, dict] = {}
+        consultas = 0
+        for tipo_cuenta in tipos_cuenta:
+            for tipo_pago in tipos_pago:
+                for ini, fin, per in busquedas:
+                    url = (
+                        f"{_URL_API_DETRACCIONES}?&fechaInicio={ini}&fechaFin={fin}&tipoCuenta={tipo_cuenta}"
+                        f"&tipoConsulta={tipo_pago}&periodo={per}"
+                    )
+                    status, cuerpo = driver.execute_async_script(
+                        """
+                        var done = arguments[arguments.length - 1];
+                        fetch(arguments[0], {credentials: 'include', headers: {
+                            'IdCache': sessionStorage.getItem('token'), 'IdFormulario': '*MENU*'}})
+                          .then(function (r) { return r.text().then(function (t) { done([r.status, t]); }); })
+                          .catch(function (e) { done([0, String(e)]); });
+                        """,
+                        url,
+                    )
+                    consultas += 1
+                    try:
+                        datos = json.loads(cuerpo) if status == 200 else None
+                    except ValueError:
+                        datos = None
+                    if not isinstance(datos, dict):
+                        logger.warning(f"Detracciones {ruc}: respuesta inesperada (HTTP {status}) para {ini}-{fin}{per}")
+                        return {**resultado_vacio, "error": f"SUNAT no respondio la consulta de detracciones (HTTP {status})"}
+                    if datos.get("cod") != 200:
+                        detalle = "; ".join(e.get("msg", "") for e in datos.get("errores") or []) or datos.get("msg") or ""
+                        return {**resultado_vacio, "error": "SUNAT rechazo la consulta: " + re.sub(r"<[^>]+>", " ", detalle).strip()}
+                    for crudo in datos.get("resultado") or []:
+                        d = normalizar_detraccion(crudo, tipo_pago)
+                        por_clave[(d["num_constancia"], d["tipo_cuenta"] or tipo_cuenta)] = d
+                    time.sleep(0.3)
+
+        logger.info(f"Detracciones {ruc}: {len(por_clave)} deposito(s) en {consultas} consulta(s)")
+        return {"ok": True, "error": None, "detracciones": list(por_clave.values()), "consultas": consultas}
+
+    except Exception as e:
+        logger.error(f"Error consultando las detracciones de {ruc}: {e}")
         return {**resultado_vacio, "error": str(e)}
     finally:
         navegador.close_browser()

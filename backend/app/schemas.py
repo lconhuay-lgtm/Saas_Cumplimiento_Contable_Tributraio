@@ -357,6 +357,69 @@ class ConsultaDeclaracionesJobResponse(BaseModel):
         from_attributes = True
 
 
+class ConsultaDetraccionesRequest(BaseModel):
+    # O un rango de fechas de pago, o un periodo tributario ("YYYY-MM").
+    fecha_desde: date | None = None
+    fecha_hasta: date | None = None
+    periodo: str | None = None
+    tipos_cuenta: list[str] = ["1"]
+    tipos_pago: list[str] = ["pagosIndividuales"]
+
+
+class ConsultaDetraccionesJobResponse(BaseModel):
+    id: str
+    empresa_id: str
+    estado: str
+    etapa: str | None = None
+    fecha_desde: date | None
+    fecha_hasta: date | None
+    periodo: str | None
+    tipos_cuenta: str
+    tipos_pago: str
+    depositos_leidos: int
+    creado_en: datetime
+    iniciado_en: datetime | None
+    finalizado_en: datetime | None
+    error: str | None
+
+    class Config:
+        from_attributes = True
+
+
+class DetraccionItem(BaseModel):
+    num_constancia: str
+    tipo_cuenta: str
+    num_cuenta: str
+    fecha_pago: date | None
+    periodo: str
+    tipo_comprobante: str
+    serie: str
+    numero: str
+    ruc_proveedor: str
+    proveedor: str
+    tipo_doc_adquiriente: str
+    doc_adquiriente: str
+    adquiriente: str
+    tipo_operacion: str
+    tipo_bien: str
+    monto: float
+    num_pago: str
+    origen: str
+    tipo_pago: str
+
+    class Config:
+        from_attributes = True
+
+
+class DetraccionesEmpresaResponse(BaseModel):
+    empresa_id: str
+    ruc: str
+    razon_social: str
+    depositos: list[DetraccionItem]
+    # La busqueda en curso (pendiente/en progreso) o, si no hay, la ultima terminada.
+    busqueda: ConsultaDetraccionesJobResponse | None
+
+
 class DeclaracionItem(BaseModel):
     formulario: str
     num_orden: str
@@ -387,9 +450,17 @@ class CumplimientoDeclaracionesFila(BaseModel):
     # que lo presente ("YYYY-MM"), "0000-00" si se espera siempre (obligacion
     # activa sin historial), o None si no le aplica.
     obligado_desde: dict[str, str | None]
+    # Formularios que el usuario marco como "no esta obligada" (obligacion
+    # apagada a mano): no se controlan aunque SUNAT tenga historial.
+    formularios_no_controlados: list[str] = []
     actualizado_en: datetime | None
     consulta_en_curso: bool
     ultimo_error: str | None = None
+
+
+class ControlFormularioRequest(BaseModel):
+    formulario: str
+    controlar: bool
 
 
 class CumplimientoDeclaracionesResponse(BaseModel):

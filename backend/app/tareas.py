@@ -249,6 +249,51 @@ def revisar_obligacion_plame(db: Session, empresa_id: str) -> str | None:
     return "creada"
 
 
+NOMBRE_OBLIGACION_POR_FORMULARIO = {"0621": "IGV-Renta mensual", "0601": NOMBRE_PLAME_DETECTADA}
+
+
+def cambiar_control_formulario(db: Session, empresa_id: str, formulario: str, controlar: bool) -> int:
+    """
+    Boton "No esta obligada" / "Volver a controlar" de Declaracion mensual.
+    Hay empresas que presentaron alguna PLAME (o un 0621) pero ya no estan
+    obligadas: apagar la obligacion (regla cronograma_sunat) hace que el
+    cuadro deje de pedirla, que no se generen mas tareas y que la deteccion
+    automatica de PLAME no la vuelva a crear. Si no habia obligacion se crea
+    una apagada, que es lo que esa deteccion respeta. Al apagar se borran las
+    tareas todavia pendientes de esa obligacion (las completadas quedan como
+    historial). No hace commit. Devuelve cuantas tareas se borraron.
+    """
+    tipo = next(t for t, forms in FORMULARIOS_POR_TIPO_TAREA.items() if formulario in forms)
+    obligaciones = (
+        db.query(EmpresaObligacion)
+        .filter(
+            EmpresaObligacion.empresa_id == empresa_id,
+            EmpresaObligacion.tipo == tipo,
+            EmpresaObligacion.regla_vencimiento == "cronograma_sunat",
+        )
+        .all()
+    )
+    if not obligaciones:
+        db.add(EmpresaObligacion(
+            empresa_id=empresa_id, tipo=tipo, nombre=NOMBRE_OBLIGACION_POR_FORMULARIO[formulario],
+            regla_vencimiento="cronograma_sunat", activa=controlar,
+        ))
+        return 0
+    if controlar:
+        obligaciones[0].activa = True
+        return 0
+    for ob in obligaciones:
+        ob.activa = False
+    return (
+        db.query(TareaObligacion)
+        .filter(
+            TareaObligacion.empresa_obligacion_id.in_([ob.id for ob in obligaciones]),
+            TareaObligacion.estado == "pendiente",
+        )
+        .delete(synchronize_session=False)
+    )
+
+
 # Declaracion que, si SUNAT la registra para el periodo, da por cumplida la
 # tarea de ese tipo. AFP no esta: se declara en AFPnet, no en SUNAT.
 FORMULARIOS_POR_TIPO_TAREA = {"igv_renta": ("0621",), "planilla": ("0601",)}

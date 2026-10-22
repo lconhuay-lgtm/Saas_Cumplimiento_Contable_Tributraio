@@ -118,3 +118,41 @@ def test_cuadro_de_declaraciones(client, db_session):
         if f["ruc"] == "20111111111"
     )
     assert fila_nueva["obligado_desde"]["0601"] is None
+
+
+def test_marcar_no_obligada_a_plame(client, db_session):
+    from app.models import EmpresaObligacion, TareaObligacion
+    from app.tareas import revisar_obligacion_plame
+    from tests.test_deudas import _registrar
+
+    headers = _registrar(client)
+    empresa_id = client.post(
+        "/empresas",
+        json={"ruc": "20555555555", "razon_social": "Sin trabajadores", "usuario_sol": "x", "clave_sol": "x", "obligacion_igv_renta": True},
+        headers=headers,
+    ).json()["id"]
+    # Presento una PLAME hace un mes -> la deteccion le crea la obligacion y tiene una tarea pendiente.
+    hace_un_mes = datetime.now(timezone.utc).replace(day=1)
+    periodo = f"{hace_un_mes.year}-{hace_un_mes.month:02d}"
+    aplicar_lectura_declaraciones(db_session, empresa_id, [_decl(periodo, "0601", "77")], "202001", periodo.replace("-", ""), datetime.now(timezone.utc))
+    assert revisar_obligacion_plame(db_session, empresa_id) == "creada"
+    db_session.commit()
+    ob = db_session.query(EmpresaObligacion).filter(EmpresaObligacion.empresa_id == empresa_id, EmpresaObligacion.tipo == "planilla").one()
+    db_session.add(TareaObligacion(empresa_id=empresa_id, empresa_obligacion_id=ob.id, titulo="PLAME", tipo="planilla", periodo=periodo))
+    db_session.commit()
+
+    def fila():
+        return next(f for f in client.get(f"/cumplimiento/declaraciones?anio={periodo[:4]}", headers=headers).json()["filas"] if f["empresa_id"] == empresa_id)
+
+    assert fila()["obligado_desde"]["0601"] == periodo
+
+    r = client.post(f"/empresas/{empresa_id}/declaraciones/control", json={"formulario": "0601", "controlar": False}, headers=headers)
+    assert r.status_code == 200 and r.json()["tareas_borradas"] == 1
+    assert fila()["obligado_desde"]["0601"] is None
+    assert fila()["formularios_no_controlados"] == ["0601"]
+    # La deteccion automatica respeta la decision del usuario.
+    assert revisar_obligacion_plame(db_session, empresa_id) is None
+
+    client.post(f"/empresas/{empresa_id}/declaraciones/control", json={"formulario": "0601", "controlar": True}, headers=headers)
+    assert fila()["obligado_desde"]["0601"] == periodo and fila()["formularios_no_controlados"] == []
+    assert client.post(f"/empresas/{empresa_id}/declaraciones/control", json={"formulario": "1662", "controlar": False}, headers=headers).status_code == 400

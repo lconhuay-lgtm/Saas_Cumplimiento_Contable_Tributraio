@@ -18,14 +18,15 @@ from app.models import (
 from app.cronograma_sunat import grupo_para_empresa
 from app.cumplimiento import ESTADOS_EN_CURSO, encolar_lecturas, filtrar_activas_en_sunat
 from app.schemas import (
-    ConsultaDeclaracionesJobResponse, CumplimientoDeclaracionesFila, CumplimientoDeclaracionesResponse,
-    DeclaracionItem, DeclaracionPeriodoItem,
+    ConsultaDeclaracionesJobResponse, ControlFormularioRequest, CumplimientoDeclaracionesFila,
+    CumplimientoDeclaracionesResponse, DeclaracionItem, DeclaracionPeriodoItem,
 )
 from app.deps import get_usuario_actual
 from app.queue_conn import cola_consultas
 from app.jobs import ejecutar_consulta_declaraciones
 from app.rate_limit import verificar_limite_ruc, LimiteExcedido
 from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible
+from app.tareas import cambiar_control_formulario
 
 router = APIRouter(tags=["declaraciones"])
 
@@ -119,14 +120,16 @@ def cumplimiento_declaraciones(
     }
     # Solo obligaciones que siguen el cronograma de SUNAT: una "Planilla
     # mensual" con dia fijo es el pago de sueldos, no la obligacion de PLAME.
-    obligaciones = {
-        (eid, tipo)
-        for eid, tipo in db.query(EmpresaObligacion.empresa_id, EmpresaObligacion.tipo).filter(
-            EmpresaObligacion.empresa_id.in_(ids),
-            EmpresaObligacion.activa.is_(True),
-            EmpresaObligacion.regla_vencimiento == "cronograma_sunat",
-        )
-    }
+    obligaciones = set()
+    apagadas = set()
+    for eid, tipo, activa in db.query(EmpresaObligacion.empresa_id, EmpresaObligacion.tipo, EmpresaObligacion.activa).filter(
+        EmpresaObligacion.empresa_id.in_(ids),
+        EmpresaObligacion.regla_vencimiento == "cronograma_sunat",
+    ):
+        (obligaciones if activa else apagadas).add((eid, tipo))
+    # Apagada a mano ("no esta obligada") y sin otra activa: no se controla
+    # aunque SUNAT tenga declaraciones viejas de ese formulario.
+    apagadas -= obligaciones
     vencimientos = {
         (periodo, grupo): fecha
         for periodo, grupo, fecha in db.query(
@@ -167,7 +170,12 @@ def cumplimiento_declaraciones(
                     formularios=[DeclaracionItem.model_validate(d) for d in formularios],
                 ))
         obligado_desde = {}
+        no_controlados = []
         for form, tipo_obligacion in FORMULARIOS_CONTROLADOS.items():
+            if (e.id, tipo_obligacion) in apagadas:
+                obligado_desde[form] = None
+                no_controlados.append(form)
+                continue
             desde = primer_periodo.get((e.id, form))
             obligado_desde[form] = desde or (SIEMPRE if (e.id, tipo_obligacion) in obligaciones else None)
         job = ultimo_job.get(e.id)
@@ -177,6 +185,7 @@ def cumplimiento_declaraciones(
             razon_social=e.razon_social,
             periodos=periodos,
             obligado_desde=obligado_desde,
+            formularios_no_controlados=no_controlados,
             actualizado_en=ultima_lectura_ok.get(e.id),
             consulta_en_curso=e.id in en_curso,
             ultimo_error=job.error if job is not None and job.estado == "error" else None,
@@ -188,6 +197,22 @@ def cumplimiento_declaraciones(
         ultimo_periodo_consultable=ultimo,
         filas=filas,
     )
+
+
+@router.post("/empresas/{empresa_id}/declaraciones/control")
+def controlar_formulario(
+    empresa_id: str,
+    datos: ControlFormularioRequest,
+    usuario: Usuario = Depends(get_usuario_actual),
+    db: Session = Depends(get_db),
+):
+    """"No esta obligada" / "Volver a controlar" un formulario (0621 o 0601) para una empresa."""
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
+    if datos.formulario not in FORMULARIOS_CONTROLADOS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Formulario no controlado")
+    tareas_borradas = cambiar_control_formulario(db, empresa.id, datos.formulario, datos.controlar)
+    db.commit()
+    return {"formulario": datos.formulario, "controlar": datos.controlar, "tareas_borradas": tareas_borradas}
 
 
 @router.post("/cumplimiento/declaraciones/consultar-todas")

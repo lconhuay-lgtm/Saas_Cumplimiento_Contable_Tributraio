@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { api } from "../../lib/api";
 import { descargarCsv, periodoPorDefecto } from "./utilidades";
+import FiltroDigitoRuc, { coincideDigitoRuc } from "./FiltroDigitoRuc";
 
 const MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Set", "Oct", "Nov", "Dic"];
 const MESES_LARGOS = [
@@ -90,6 +91,8 @@ export default function PanelDeclaraciones() {
   const [mes, setMes] = useState(porDefecto.mes);
   const [filtroEstado, setFiltroEstado] = useState("todas");
   const [busqueda, setBusqueda] = useState("");
+  const [digitos, setDigitos] = useState([]);
+  const [verNoObligadas, setVerNoObligadas] = useState(false);
   const [encolando, setEncolando] = useState(false);
   const [detalle, setDetalle] = useState(null); // {fila, mes}
 
@@ -151,6 +154,29 @@ export default function PanelDeclaraciones() {
     }
   }
 
+  async function cambiarControl(fila, formulario, controlar) {
+    const nombre = FORMULARIOS[formulario];
+    if (
+      !controlar &&
+      !window.confirm(
+        `${fila.razon_social} dejara de controlarse para ${nombre}: no saldra como "No presentado", no se le crearan tareas y se quitan las que tenga pendientes. ¿Continuar?`
+      )
+    )
+      return;
+    try {
+      const r = await api.controlarFormularioDeclaracion(fila.empresa_id, formulario, controlar);
+      setDetalle(null);
+      setAviso(
+        controlar
+          ? `Listo: se vuelve a controlar ${nombre} de ${fila.razon_social}. Sus tareas se crearan desde el proximo mes.`
+          : `Listo: ${fila.razon_social} quedo como no obligada a ${nombre}${r.tareas_borradas ? ` y se quitaron ${r.tareas_borradas} tarea(s) pendiente(s)` : ""}.`
+      );
+      cargar(anio, { silencioso: true });
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   const anioActivo = datos?.anio || new Date().getFullYear();
   const anios = datos?.anios_disponibles?.length ? datos.anios_disponibles : [anioActivo];
   const ultimo = datos?.ultimo_periodo_consultable || "9999-12";
@@ -164,22 +190,40 @@ export default function PanelDeclaraciones() {
     }));
   }, [datos]);
 
+  // Empresas que no estan obligadas a ninguna de las declaraciones elegidas
+  // (p. ej. sin PLAME): no se muestran en el cuadro, salvo que se pida verlas.
+  const esNoObligada = (f) => !!f.actualizado_en && formulariosDe(seleccion).every((form) => !f.obligado_desde[form]);
+  const filasDelDigito = useMemo(
+    () => filas.filter((f) => coincideDigitoRuc(f.ruc, digitos)),
+    [filas, digitos]
+  );
+  const noObligadas = useMemo(
+    () => filasDelDigito.filter(esNoObligada),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filasDelDigito, seleccion]
+  );
+  const filasDelCuadro = useMemo(
+    () => (verNoObligadas ? filasDelDigito : filasDelDigito.filter((f) => !esNoObligada(f))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filasDelDigito, verNoObligadas, seleccion]
+  );
+
   const resumen = useMemo(() => {
     const r = { presentado: 0, pendiente: 0, no_presentado: 0, no_aplica: 0, futuro: 0, sin_leer: 0 };
-    filas.forEach((f) => (r[situacionCelda(f, f.porMes[mes], periodoTexto(mes || 1), seleccion, ultimo)] += 1));
+    filasDelCuadro.forEach((f) => (r[situacionCelda(f, f.porMes[mes], periodoTexto(mes || 1), seleccion, ultimo)] += 1));
     return r;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filas, mes, seleccion, ultimo, anioActivo]);
+  }, [filasDelCuadro, mes, seleccion, ultimo, anioActivo]);
 
   const filasVisibles = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
-    return filas.filter((f) => {
+    return filasDelCuadro.filter((f) => {
       if (q && !f.razon_social.toLowerCase().includes(q) && !f.ruc.includes(q)) return false;
       if (filtroEstado !== "todas" && situacionCelda(f, f.porMes[mes], periodoTexto(mes || 1), seleccion, ultimo) !== filtroEstado) return false;
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filas, busqueda, filtroEstado, mes, seleccion, ultimo, anioActivo]);
+  }, [filasDelCuadro, busqueda, filtroEstado, mes, seleccion, ultimo, anioActivo]);
 
   function exportarCsv() {
     descargarCsv(
@@ -272,6 +316,9 @@ export default function PanelDeclaraciones() {
           />
         </div>
       </div>
+      <div className="mt-3">
+        <FiltroDigitoRuc digitos={digitos} onCambio={setDigitos} />
+      </div>
 
       <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         {["no_presentado", "pendiente", "presentado", "no_aplica"].map((s) => {
@@ -312,8 +359,19 @@ export default function PanelDeclaraciones() {
           </button>
         ))}
         <span className="ml-2 self-center text-xs text-slate-500">
-          {filasVisibles.length} de {filas.length} empresas · filtro aplicado a {MESES_LARGOS[(mes || 1) - 1]}
+          {filasVisibles.length} de {filasDelCuadro.length} empresas · filtro aplicado a {MESES_LARGOS[(mes || 1) - 1]}
         </span>
+        {noObligadas.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setVerNoObligadas((v) => !v)}
+            className="ml-auto self-center text-xs font-semibold text-accent hover:underline"
+          >
+            {verNoObligadas
+              ? `Ocultar las ${noObligadas.length} empresa(s) no obligadas`
+              : `Ver ${noObligadas.length} empresa(s) no obligadas a ${seleccion === "ambos" ? "estas declaraciones" : FORMULARIOS[seleccion]}`}
+          </button>
+        )}
       </div>
 
       <div className="surface-card mt-4 overflow-x-auto">
@@ -424,6 +482,7 @@ export default function PanelDeclaraciones() {
           periodoTexto={periodoTexto(detalle.mes)}
           nombrePeriodo={`${MESES_LARGOS[detalle.mes - 1]} ${anioActivo}`}
           ultimo={ultimo}
+          onCambiarControl={(formulario, controlar) => cambiarControl(detalle.fila, formulario, controlar)}
           onCerrar={() => setDetalle(null)}
         />
       )}
@@ -433,7 +492,7 @@ export default function PanelDeclaraciones() {
 
 // Detalle de un mes de una empresa: estado de cada declaracion controlada y
 // todo lo que SUNAT lista para ese periodo (declaraciones y pagos).
-function PanelDetallePeriodo({ fila, periodo, periodoTexto, nombrePeriodo, ultimo, onCerrar }) {
+function PanelDetallePeriodo({ fila, periodo, periodoTexto, nombrePeriodo, ultimo, onCambiarControl, onCerrar }) {
   useEffect(() => {
     function alTeclear(e) {
       if (e.key === "Escape") onCerrar();
@@ -465,13 +524,21 @@ function PanelDetallePeriodo({ fila, periodo, periodoTexto, nombrePeriodo, ultim
             {Object.entries(FORMULARIOS).map(([codigo, nombre]) => {
               const s = situacionFormulario(fila, periodo, periodoTexto, codigo, ultimo);
               const { texto, chip, Icon } = ESTILO[s];
+              const apagado = fila.formularios_no_controlados?.includes(codigo);
               return (
                 <div key={codigo} className="rounded-xl border border-slate-100 p-3">
                   <p className="text-xs font-semibold text-slate-500">{nombre}</p>
                   <span className={`mt-1.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold ${chip}`}>
                     {Icon && <Icon size={12} strokeWidth={2} />}
-                    {texto}
+                    {apagado ? "No obligada" : texto}
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => onCambiarControl(codigo, apagado)}
+                    className="mt-2 block text-[11px] font-semibold text-slate-500 underline-offset-2 hover:text-accent hover:underline"
+                  >
+                    {apagado ? "Volver a controlar" : "No esta obligada"}
+                  </button>
                 </div>
               );
             })}

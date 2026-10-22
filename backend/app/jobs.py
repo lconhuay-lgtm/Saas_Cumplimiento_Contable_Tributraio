@@ -15,7 +15,7 @@ from app.database import SessionLocal
 from app.models import (
     ConsultaJob, FichaRucJob, ReporteTributarioJob, Empresa, CredencialSol, MensajeBuzon, Usuario,
     TareaObligacion, ConsultaSireJob, SireEstadoPeriodo, ConsultaDeudasJob, ValorDeuda,
-    ConsultaDeclaracionesJob, DeclaracionSunat, EmbargoNotificado, RecCoactiva,
+    ConsultaDeclaracionesJob, DeclaracionSunat, EmbargoNotificado, RecCoactiva, ConsultaDetraccionesJob, DetraccionPago,
 )
 from app.security import descifrar_clave_sol, crear_token_ingreso_directo
 from app.rate_limit import adquirir_slot_global, liberar_slot_global, limite_mensajes_por_consulta
@@ -1444,5 +1444,137 @@ def ejecutar_consulta_declaraciones(job_id: str):
             job.finalizado_en = datetime.now(timezone.utc)
             db.commit()
         _reportar_etapa(None)
+    finally:
+        db.close()
+
+
+def aplicar_lectura_detracciones(db, empresa_id: str, depositos: list[dict], ahora: datetime) -> int:
+    """Alta o actualizacion de cada deposito leido (por constancia + tipo de cuenta). Nunca borra: es un historial."""
+    db.flush()
+    claves = [(d["num_constancia"][:40], (d["tipo_cuenta"] or "1")[:2]) for d in depositos]
+    existentes = {
+        (p.num_constancia, p.tipo_cuenta): p
+        for p in db.query(DetraccionPago).filter(
+            DetraccionPago.empresa_id == empresa_id,
+            DetraccionPago.num_constancia.in_([c for c, _ in claves] or [""]),
+        )
+    }
+    for d, clave in zip(depositos, claves):
+        fila = existentes.get(clave)
+        if fila is None:
+            fila = DetraccionPago(empresa_id=empresa_id, num_constancia=clave[0], tipo_cuenta=clave[1])
+            db.add(fila)
+            existentes[clave] = fila
+        fila.num_cuenta = d["num_cuenta"][:20]
+        fila.fecha_pago = _fecha_o_none(d.get("fecha_pago"))
+        fila.periodo = d["periodo"][:7]
+        fila.tipo_comprobante = d["tipo_comprobante"][:4]
+        fila.serie = d["serie"][:10]
+        fila.numero = d["numero"][:20]
+        fila.ruc_proveedor = d["ruc_proveedor"][:15]
+        fila.proveedor = d["proveedor"][:200]
+        fila.tipo_doc_adquiriente = d["tipo_doc_adquiriente"][:4]
+        fila.doc_adquiriente = d["doc_adquiriente"][:15]
+        fila.adquiriente = d["adquiriente"][:200]
+        fila.tipo_operacion = d["tipo_operacion"][:4]
+        fila.tipo_bien = d["tipo_bien"][:4]
+        fila.monto = d["monto"]
+        fila.num_pago = d["num_pago"][:30]
+        fila.num_presentacion = d["num_presentacion"][:30]
+        fila.origen = d["origen"][:60]
+        fila.tipo_pago = d["tipo_pago"][:30]
+        fila.actualizado_en = ahora
+    return len(set(claves))
+
+
+def ejecutar_consulta_detracciones(job_id: str):
+    """Busca en SUNAT los depositos de detraccion de una empresa con los criterios guardados en el job."""
+    db = SessionLocal()
+
+    def _reportar_etapa(etapa: str | None):
+        db_etapa = SessionLocal()
+        try:
+            job_actual = db_etapa.query(ConsultaDetraccionesJob).filter(ConsultaDetraccionesJob.id == job_id).first()
+            if job_actual:
+                job_actual.etapa = etapa
+                db_etapa.commit()
+        finally:
+            db_etapa.close()
+
+    def _fallar(job, mensaje: str):
+        job.estado = "error"
+        job.error = (mensaje or "Error desconocido")[:1000]
+        job.finalizado_en = datetime.now(timezone.utc)
+        db.commit()
+        _reportar_etapa(None)
+
+    try:
+        job = db.query(ConsultaDetraccionesJob).filter(ConsultaDetraccionesJob.id == job_id).first()
+        if not job:
+            logger.error(f"ConsultaDetraccionesJob {job_id} no encontrado")
+            return
+
+        job.estado = "en_progreso"
+        job.iniciado_en = datetime.now(timezone.utc)
+        db.commit()
+
+        empresa = db.query(Empresa).filter(Empresa.id == job.empresa_id).first()
+        credencial = (
+            db.query(CredencialSol).filter(CredencialSol.empresa_id == job.empresa_id).first()
+            if empresa else None
+        )
+        if not empresa or not credencial:
+            _fallar(job, "Empresa o credenciales no encontradas")
+            return
+
+        clave_en_claro = descifrar_clave_sol(credencial.clave_cifrada, credencial.dek_cifrada)
+
+        from adapter import consultar_detracciones
+
+        token_slot = adquirir_slot_global()
+        try:
+            resultado = None
+            for intento in range(1, MAX_INTENTOS + 1):
+                resultado = consultar_detracciones(
+                    ruc=empresa.ruc,
+                    usuario_sol=credencial.usuario_sol,
+                    clave_sol=clave_en_claro,
+                    razon_social=empresa.razon_social,
+                    headless=False,
+                    on_progreso=_reportar_etapa,
+                    fecha_desde=job.fecha_desde,
+                    fecha_hasta=job.fecha_hasta,
+                    periodo=job.periodo.replace("-", "") if job.periodo else None,
+                    tipos_cuenta=tuple(job.tipos_cuenta.split(",")),
+                    tipos_pago=tuple(job.tipos_pago.split(",")),
+                )
+                # Un rechazo de SUNAT por los criterios (p. ej. rango invalido) no se arregla reintentando.
+                if resultado["ok"] or resultado.get("credenciales_rechazadas") or "rechazo la consulta" in (resultado["error"] or ""):
+                    break
+                logger.warning(f"Detracciones intento {intento}/{MAX_INTENTOS} fallo para {empresa.ruc}: {resultado['error']}")
+                if intento < MAX_INTENTOS:
+                    time.sleep(ESPERA_ENTRE_INTENTOS_SEG * intento)
+        finally:
+            liberar_slot_global(token_slot)
+
+        if not resultado["ok"]:
+            _fallar(job, resultado["error"])
+            return
+
+        ahora = datetime.now(timezone.utc)
+        leidos = aplicar_lectura_detracciones(db, empresa.id, resultado["detracciones"], ahora)
+        job.estado = "completado"
+        job.depositos_leidos = leidos
+        job.finalizado_en = ahora
+        db.commit()
+        _reportar_etapa(None)
+        logger.info(f"ConsultaDetraccionesJob {job_id} completado para {empresa.ruc}: {leidos} deposito(s)")
+
+    except Exception as e:
+        logger.exception(f"Error ejecutando ConsultaDetraccionesJob {job_id}")
+        db.rollback()
+        job = db.query(ConsultaDetraccionesJob).filter(ConsultaDetraccionesJob.id == job_id).first()
+        if job:
+            _fallar(job, str(e))
     finally:
         db.close()

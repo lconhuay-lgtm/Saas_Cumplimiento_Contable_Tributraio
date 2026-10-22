@@ -184,6 +184,8 @@ class Empresa(Base):
     embargos: Mapped[list["EmbargoNotificado"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     recs: Mapped[list["RecCoactiva"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     declaraciones: Mapped[list["DeclaracionSunat"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    consulta_detracciones_jobs: Mapped[list["ConsultaDetraccionesJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    detracciones: Mapped[list["DetraccionPago"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     canario_checks: Mapped[list["CanarioCheck"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     obligaciones: Mapped[list["EmpresaObligacion"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     tareas: Mapped[list["TareaObligacion"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
@@ -571,6 +573,71 @@ class DeclaracionSunat(Base):
     actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="declaraciones")
+
+
+class ConsultaDetraccionesJob(Base):
+    """
+    Busqueda en "Consulta de Pago de Detracciones" con los criterios que eligio
+    el usuario (fechas de pago o periodo, tipo de cuenta, tipo de pago).
+    """
+    __tablename__ = "consulta_detracciones_jobs"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    solicitado_por: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
+    estado: Mapped[str] = mapped_column(String(20), default="pendiente", nullable=False, index=True)
+    etapa: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    fecha_desde: Mapped[date | None] = mapped_column(Date, nullable=True)
+    fecha_hasta: Mapped[date | None] = mapped_column(Date, nullable=True)
+    periodo: Mapped[str | None] = mapped_column(String(7), nullable=True)  # "YYYY-MM"
+    tipos_cuenta: Mapped[str] = mapped_column(String(20), nullable=False, default="1")  # "1,2,3"
+    tipos_pago: Mapped[str] = mapped_column(String(80), nullable=False, default="pagosIndividuales")
+    depositos_leidos: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    iniciado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finalizado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="consulta_detracciones_jobs")
+
+
+class DetraccionPago(Base):
+    """
+    Un deposito de detraccion (SPOT) tal como lo lista SUNAT: los que la
+    empresa recibio en su cuenta del Banco de la Nacion (es el proveedor) y
+    los que hizo a sus proveedores (es el adquiriente). Se acumula: cada
+    busqueda agrega o actualiza, nunca borra.
+    """
+    __tablename__ = "detracciones_pagos"
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "num_constancia", "tipo_cuenta", name="uq_detraccion_empresa_constancia"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    num_constancia: Mapped[str] = mapped_column(String(40), nullable=False)
+    tipo_cuenta: Mapped[str] = mapped_column(String(2), nullable=False, default="1")
+    num_cuenta: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    fecha_pago: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    periodo: Mapped[str] = mapped_column(String(7), nullable=False, default="", index=True)
+    tipo_comprobante: Mapped[str] = mapped_column(String(4), nullable=False, default="")
+    serie: Mapped[str] = mapped_column(String(10), nullable=False, default="")
+    numero: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    ruc_proveedor: Mapped[str] = mapped_column(String(15), nullable=False, default="")
+    proveedor: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    tipo_doc_adquiriente: Mapped[str] = mapped_column(String(4), nullable=False, default="")
+    doc_adquiriente: Mapped[str] = mapped_column(String(15), nullable=False, default="")
+    adquiriente: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    tipo_operacion: Mapped[str] = mapped_column(String(4), nullable=False, default="")
+    tipo_bien: Mapped[str] = mapped_column(String(4), nullable=False, default="")
+    monto: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    num_pago: Mapped[str] = mapped_column(String(30), nullable=False, default="")
+    num_presentacion: Mapped[str] = mapped_column(String(30), nullable=False, default="")
+    origen: Mapped[str] = mapped_column(String(60), nullable=False, default="")
+    tipo_pago: Mapped[str] = mapped_column(String(30), nullable=False, default="pagosIndividuales")
+    actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="detracciones")
 
 
 class CanarioCheck(Base):

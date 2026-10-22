@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { api } from "../../lib/api";
 import { descargarCsv } from "./utilidades";
+import FiltroDigitoRuc, { coincideDigitoRuc } from "./FiltroDigitoRuc";
 
 const FILTROS = [
   { id: "con_deuda", label: "Con deuda vigente" },
@@ -79,6 +80,7 @@ export default function PanelDeudas({ enfoque = null }) {
   const [aviso, setAviso] = useState("");
   const [filtro, setFiltro] = useState("con_deuda");
   const [busqueda, setBusqueda] = useState("");
+  const [digitos, setDigitos] = useState([]);
   const [verHistorial, setVerHistorial] = useState(false);
   const [abiertas, setAbiertas] = useState({});
   const [encolando, setEncolando] = useState(false);
@@ -155,7 +157,10 @@ export default function PanelDeudas({ enfoque = null }) {
     }
   }
 
-  const empresas = useMemo(() => (datos ? datos.filas.map(resumirEmpresa) : []), [datos]);
+  const empresas = useMemo(
+    () => (datos ? datos.filas.filter((f) => coincideDigitoRuc(f.ruc, digitos)).map(resumirEmpresa) : []),
+    [datos, digitos]
+  );
 
   const totales = useMemo(() => {
     const t = { saldo: 0, valores: 0, coactiva: 0, saldoCoactiva: 0, empresasConDeuda: 0, historicos: 0, embargos: 0, montoEmbargado: 0 };
@@ -309,6 +314,9 @@ export default function PanelDeudas({ enfoque = null }) {
             className="w-64 rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-sm text-ink focus:border-accent focus:outline-none"
           />
         </div>
+      </div>
+      <div className="mt-3">
+        <FiltroDigitoRuc digitos={digitos} onCambio={setDigitos} />
       </div>
 
       <div className="surface-card mt-4 overflow-x-auto">

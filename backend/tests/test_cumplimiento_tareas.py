@@ -140,3 +140,21 @@ def test_embargos_avisos_y_tareas_automaticas(db_session):
     assert completar_tareas_por_referencia(db_session, empresa.id, ["valor:V2", "embargo:E3"], "prueba") == 2
     db_session.commit()
     assert all(t.estado == "completado" and t.verificado_sunat_en for t in db_session.query(TareaObligacion))
+
+
+def test_tareas_de_empresas_pausadas_no_se_listan(client, db_session):
+    from app.models import Empresa
+    from tests.test_deudas import _crear_empresa, _registrar
+
+    headers = _registrar(client)
+    activa_id = _crear_empresa(client, headers, "20111111111")
+    pausada_id = _crear_empresa(client, headers, "20222222222")
+    for eid in (activa_id, pausada_id):
+        db_session.add(TareaObligacion(empresa_id=eid, titulo=f"Tarea {eid}", tipo="otro", estado="pendiente"))
+    db_session.query(Empresa).filter(Empresa.id == pausada_id).update({"activo": False})
+    db_session.commit()
+
+    ids = {t["empresa_id"] for t in client.get("/tareas", headers=headers).json()}
+    assert activa_id in ids and pausada_id not in ids
+    # Desde la ficha de la propia empresa si se ven.
+    assert client.get(f"/tareas?empresa_id={pausada_id}", headers=headers).json()
