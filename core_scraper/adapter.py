@@ -2032,6 +2032,34 @@ def normalizar_detraccion(crudo: dict, tipo_pago: str) -> dict:
     }
 
 
+# Una consulta de detracciones a veces queda colgada en SUNAT: se corta a los
+# 45 s y se reintenta (con pausa) antes de dar el tramo por fallido.
+_SEGUNDOS_MAX_CONSULTA_DETRACCIONES = 45
+_INTENTOS_CONSULTA_DETRACCIONES = 3
+
+
+def _consultar_api_detracciones(driver, url: str) -> tuple[int, str]:
+    status, cuerpo = 0, ""
+    for intento in range(1, _INTENTOS_CONSULTA_DETRACCIONES + 1):
+        status, cuerpo = driver.execute_async_script(
+            """
+            var done = arguments[arguments.length - 1];
+            var corte = new AbortController();
+            var reloj = setTimeout(function () { corte.abort(); }, arguments[1] * 1000);
+            fetch(arguments[0], {credentials: 'include', signal: corte.signal, headers: {
+                'IdCache': sessionStorage.getItem('token'), 'IdFormulario': '*MENU*'}})
+              .then(function (r) { return r.text().then(function (t) { clearTimeout(reloj); done([r.status, t]); }); })
+              .catch(function (e) { clearTimeout(reloj); done([0, String(e)]); });
+            """,
+            url, _SEGUNDOS_MAX_CONSULTA_DETRACCIONES,
+        )
+        if status == 200:
+            return status, cuerpo
+        logger.warning(f"Consulta de detracciones sin respuesta (intento {intento}, HTTP {status}): {str(cuerpo)[:120]}")
+        time.sleep(10 * intento)
+    return status, cuerpo
+
+
 def _entrar_mis_declaraciones_y_pagos(navegador: SunatWebNavigator, empresa: dict) -> str | None:
     """Login a la plataforma "Mis Declaraciones y Pagos" (mismo boton que su tarjeta en sol.html). None si entro."""
     driver = navegador.driver
@@ -2139,8 +2167,9 @@ def consultar_detracciones(
             return {**resultado_vacio, "error": "La Consulta de Pago de Detracciones no termino de cargar"}
 
         _reportar("leyendo_detracciones")
-        # Por periodo SUNAT tarda ~20 s por consulta (por fecha, menos de 1 s).
-        driver.set_script_timeout(120)
+        # Por periodo SUNAT tarda ~20 s por consulta (por fecha, menos de 1 s);
+        # cada consulta se corta sola a los 45 s (ver _consultar_api_detracciones).
+        driver.set_script_timeout(_SEGUNDOS_MAX_CONSULTA_DETRACCIONES + 30)
         por_clave: dict[tuple, dict] = {}
         consultas = 0
         for ini_fecha, fin_fecha, per in busquedas:
@@ -2153,16 +2182,7 @@ def consultar_detracciones(
                         f"{_URL_API_DETRACCIONES}?&fechaInicio={ini}&fechaFin={fin}&tipoCuenta={tipo_cuenta}"
                         f"&tipoConsulta={tipo_pago}&periodo={per}"
                     )
-                    status, cuerpo = driver.execute_async_script(
-                        """
-                        var done = arguments[arguments.length - 1];
-                        fetch(arguments[0], {credentials: 'include', headers: {
-                            'IdCache': sessionStorage.getItem('token'), 'IdFormulario': '*MENU*'}})
-                          .then(function (r) { return r.text().then(function (t) { done([r.status, t]); }); })
-                          .catch(function (e) { done([0, String(e)]); });
-                        """,
-                        url,
-                    )
+                    status, cuerpo = _consultar_api_detracciones(driver, url)
                     consultas += 1
                     try:
                         datos = json.loads(cuerpo) if status == 200 else None

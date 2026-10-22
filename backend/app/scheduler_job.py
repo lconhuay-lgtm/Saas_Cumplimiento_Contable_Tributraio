@@ -219,6 +219,10 @@ def encolar_declaraciones_programado() -> dict:
 # 2) Semanal: solo lo nuevo desde la marca de avance, repasando 7 dias por lo
 #    que SUNAT registra tarde. Las cuentas IVAP / Ley 30737 y las empresas sin
 #    ningun deposito se revisan solo la primera semana de cada mes.
+# La carga inicial lee solo pagos individuales: los "pagos masivos" de
+# periodos antiguos tardan 50-60 s por consulta en SUNAT (medido 22/10/2026;
+# alguna se colgo mas de 2 min), y los recientes responden al instante, asi que
+# esos se toman desde las lecturas semanales (o con "Buscar en SUNAT").
 INICIO_HISTORIAL_DETRACCIONES = date(2022, 1, 1)
 DETRACCIONES_CARGA_POR_NOCHE = int(os.environ.get("DETRACCIONES_CARGA_POR_NOCHE", 20))
 DIAS_REPASO_DETRACCIONES = 7
@@ -250,7 +254,7 @@ def encolar_detracciones_carga_inicial() -> dict:
                 "fecha_desde": INICIO_HISTORIAL_DETRACCIONES,
                 "fecha_hasta": hoy,
                 "tipos_cuenta": "1,2,3",
-                "tipos_pago": TIPOS_PAGO_AUTOMATICOS,
+                "tipos_pago": "pagosIndividuales",
             },
             job_timeout="40m",
         )
