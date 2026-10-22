@@ -58,9 +58,12 @@ def test_lectura_acumula_sin_duplicar(db_session):
     assert sorted(p.num_constancia for p in db_session.query(DetraccionPago)) == ["A1", "A2", "A3"]
 
 
-def test_busqueda_y_listado(client, db_session):
+def test_busqueda_y_listado(client, db_session, monkeypatch):
     from tests.test_deudas import _crear_empresa, _registrar
 
+    # Crear la empresa ya lanza su primera consulta del buzon y eso activa la
+    # espera de 60 s por RUC: aca no se prueba ese limite.
+    monkeypatch.setattr("app.routers.detracciones.verificar_limite_ruc", lambda ruc: None)
     headers = _registrar(client)
     empresa_id = _crear_empresa(client, headers, "20101281702")
     url = f"/empresas/{empresa_id}/detracciones/consultar"
