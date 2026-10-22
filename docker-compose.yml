@@ -6,8 +6,13 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-buzon}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-buzon_dev_password}
       POSTGRES_DB: ${POSTGRES_DB:-buzon_saas}
+    # Solo desde el propio servidor (127.0.0.1): Docker se salta el firewall
+    # (ufw), asi que "5432:5432" / "6379:6379" quedaban abiertos a internet.
+    # El 21/10/2026 un bot convirtio Redis en replica de un servidor ajeno y
+    # habia ~44.000 intentos de clave contra PostgreSQL. Los contenedores se
+    # hablan por la red interna de Docker; esto no les afecta.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - buzon_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +25,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
