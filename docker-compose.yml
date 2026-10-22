@@ -32,6 +32,10 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     restart: unless-stopped
+    # init: Chromium deja procesos nietos que, sin un init, quedan como zombis
+    # colgados del proceso Python (PID 1 del contenedor nunca los recoge). En
+    # oct/2026 se juntaron ~11.700 y el servidor ya no podia abrir procesos.
+    init: true
     env_file:
       - .env
     environment:
@@ -56,6 +60,10 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     restart: unless-stopped
+    # init: Chromium deja procesos nietos que, sin un init, quedan como zombis
+    # colgados del proceso Python (PID 1 del contenedor nunca los recoge). En
+    # oct/2026 se juntaron ~11.700 y el servidor ya no podia abrir procesos.
+    init: true
     # worker_entry.py arranca su propia pantalla virtual (pyvirtualdisplay)
     # antes de escuchar la cola -- ver ese archivo para el porque.
     command: python worker_entry.py
@@ -95,6 +103,10 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     restart: unless-stopped
+    # init: Chromium deja procesos nietos que, sin un init, quedan como zombis
+    # colgados del proceso Python (PID 1 del contenedor nunca los recoge). En
+    # oct/2026 se juntaron ~11.700 y el servidor ya no podia abrir procesos.
+    init: true
     command: python scheduler_entry.py
     env_file:
       - .env
