@@ -17,14 +17,14 @@ esperar al horario programado).
 import os
 import time
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func
 
 from app.database import SessionLocal
 from app.models import Empresa, Tenant, CredencialSol, ConsultaJob, CanarioCheck, TareaObligacion
 from app.models import Usuario, ConsultaDeudasJob, ConsultaSireJob, ConsultaDeclaracionesJob, CronogramaVencimiento
-from app.models import ConsultaDetraccionesJob
+from app.models import ConsultaDetraccionesJob, DetraccionCobertura, DetraccionPago
 from app.queue_conn import cola_consultas, redis_conn
 from app.jobs import (
     ejecutar_consulta_buzon, ejecutar_consulta_deudas, ejecutar_consulta_sire, ejecutar_consulta_declaraciones,
@@ -211,27 +211,89 @@ def encolar_declaraciones_programado() -> dict:
         db.close()
 
 
-# Detracciones: una vez por semana, los depositos de los ultimos 35 dias (la
-# semana nueva mas lo que SUNAT registra tarde) en todas las cuentas y en
-# pagos individuales y masivos. Son 2 tramos de 30 dias: pocos segundos por
-# empresa despues de entrar a SUNAT.
-DIAS_DETRACCIONES_SEMANAL = 35
+# Detracciones: el historial se arma por FECHA DE PAGO, no por periodo -- un
+# deposito pagado hoy de una factura de 05/2025 entra en la lectura de esta
+# semana y se guarda con su periodo real (buscando por periodo se perderia).
+# 1) Carga inicial, una sola vez por empresa: desde el 01/01/2022 (lo anterior
+#    ya prescribio) hasta hoy, unas pocas empresas por noche; retoma donde quedo.
+# 2) Semanal: solo lo nuevo desde la marca de avance, repasando 7 dias por lo
+#    que SUNAT registra tarde. Las cuentas IVAP / Ley 30737 y las empresas sin
+#    ningun deposito se revisan solo la primera semana de cada mes.
+INICIO_HISTORIAL_DETRACCIONES = date(2022, 1, 1)
+DETRACCIONES_CARGA_POR_NOCHE = int(os.environ.get("DETRACCIONES_CARGA_POR_NOCHE", 20))
+DIAS_REPASO_DETRACCIONES = 7
+DIAS_REPASO_MENSUAL_DETRACCIONES = 42
+TIPOS_PAGO_AUTOMATICOS = "pagosIndividuales,pagosMasivos"
 
 
-def encolar_detracciones_semanal() -> dict:
-    """Modulo Cumplimiento > Detracciones: lectura semanal de todas las empresas activas."""
+def _empresas_activas_con_clave(db) -> list[Empresa]:
+    con_clave = {eid for (eid,) in db.query(CredencialSol.empresa_id)}
+    return [
+        e for e in filtrar_activas_en_sunat(empresas_de_tenants_activos(db)).order_by(Empresa.razon_social).all()
+        if e.id in con_clave
+    ]
+
+
+def encolar_detracciones_carga_inicial() -> dict:
+    """Cada noche: el historial desde 2022 de las empresas que todavia no lo tienen completo."""
     db = SessionLocal()
     try:
         hoy = hoy_peru()
-        empresas = filtrar_activas_en_sunat(empresas_de_tenants_activos(db)).order_by(Empresa.razon_social).all()
+        completas = {
+            eid for (eid,) in db.query(DetraccionCobertura.empresa_id).filter(DetraccionCobertura.carga_completa.is_(True))
+        }
+        pendientes = [e for e in _empresas_activas_con_clave(db) if e.id not in completas][:DETRACCIONES_CARGA_POR_NOCHE]
         resultado = encolar_lecturas(
-            db, empresas, ConsultaDetraccionesJob, ejecutar_consulta_detracciones,
+            db, pendientes, ConsultaDetraccionesJob, ejecutar_consulta_detracciones,
             datos_job={
-                "fecha_desde": hoy - timedelta(days=DIAS_DETRACCIONES_SEMANAL - 1),
+                "modo": "carga_inicial",
+                "fecha_desde": INICIO_HISTORIAL_DETRACCIONES,
                 "fecha_hasta": hoy,
                 "tipos_cuenta": "1,2,3",
-                "tipos_pago": "pagosIndividuales,pagosMasivos",
+                "tipos_pago": TIPOS_PAGO_AUTOMATICOS,
             },
+            job_timeout="40m",
+        )
+        logger.info(f"Carga inicial de detracciones: {resultado}")
+        return resultado
+    finally:
+        db.close()
+
+
+def encolar_detracciones_semanal() -> dict:
+    """Cada semana: lo nuevo desde la marca de avance de cada empresa con la carga inicial terminada."""
+    db = SessionLocal()
+    try:
+        hoy = hoy_peru()
+        revision_mensual = hoy.day <= 7
+        coberturas = {
+            c.empresa_id: c
+            for c in db.query(DetraccionCobertura).filter(DetraccionCobertura.carga_completa.is_(True))
+        }
+        cuentas_usadas: dict[str, set[str]] = {}
+        for eid, cuenta in db.query(DetraccionPago.empresa_id, DetraccionPago.tipo_cuenta).distinct():
+            cuentas_usadas.setdefault(eid, set()).add(cuenta)
+        empresas = [
+            e for e in _empresas_activas_con_clave(db)
+            if e.id in coberturas and (e.id in cuentas_usadas or revision_mensual)
+        ]
+
+        def criterios(empresa):
+            hasta = coberturas[empresa.id].hasta
+            if revision_mensual:
+                cuentas, repaso = {"1", "2", "3"}, DIAS_REPASO_MENSUAL_DETRACCIONES
+            else:
+                cuentas, repaso = cuentas_usadas[empresa.id] | {"1"}, DIAS_REPASO_DETRACCIONES
+            return {
+                "modo": "semanal",
+                "fecha_desde": min(hasta - timedelta(days=repaso), hoy),
+                "fecha_hasta": hoy,
+                "tipos_cuenta": ",".join(sorted(cuentas)),
+                "tipos_pago": TIPOS_PAGO_AUTOMATICOS,
+            }
+
+        resultado = encolar_lecturas(
+            db, empresas, ConsultaDetraccionesJob, ejecutar_consulta_detracciones, datos_job=criterios, job_timeout="20m",
         )
         logger.info(f"Lectura semanal de detracciones: {resultado}")
         return resultado

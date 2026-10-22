@@ -12,10 +12,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import ConsultaDetraccionesJob, DetraccionPago, Usuario
+from app.models import ConsultaDetraccionesJob, DetraccionCobertura, DetraccionPago, Usuario
 from app.cumplimiento import ESTADOS_EN_CURSO
 from app.schemas import (
-    ConsultaDetraccionesJobResponse, ConsultaDetraccionesRequest, DetraccionItem, DetraccionesEmpresaResponse,
+    ConsultaDetraccionesJobResponse, ConsultaDetraccionesRequest, DetraccionCoberturaItem, DetraccionItem,
+    DetraccionesEmpresaResponse,
 )
 from app.deps import get_usuario_actual
 from app.queue_conn import cola_consultas
@@ -136,7 +137,9 @@ def detracciones_empresa(
         .order_by(ConsultaDetraccionesJob.creado_en.desc())
         .first()
     )
+    cobertura = db.get(DetraccionCobertura, empresa.id)
     return DetraccionesEmpresaResponse(
+        cobertura=DetraccionCoberturaItem.model_validate(cobertura) if cobertura else None,
         empresa_id=empresa.id,
         ruc=empresa.ruc,
         razon_social=empresa.razon_social,

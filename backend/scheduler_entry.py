@@ -54,6 +54,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.scheduler_job import (
     encolar_chequeo_nocturno, enviar_resumenes_diarios, ejecutar_chequeo_canario, enviar_recordatorios_vencimiento,
     encolar_deudas_diario, encolar_sire_programado, encolar_declaraciones_programado, encolar_detracciones_semanal,
+    encolar_detracciones_carga_inicial,
 )
 from app.database import SessionLocal
 from app.cronograma_sunat import asegurar_cronograma_vigente
@@ -199,6 +200,14 @@ def job_detracciones_semanal():
         logger.info(f"Lectura semanal de detracciones encolada: {encolar_detracciones_semanal()}")
     except Exception:
         logger.exception("Fallo la lectura semanal de detracciones")
+
+
+def job_detracciones_carga_inicial():
+    logger.info("Encolando la carga inicial de detracciones...")
+    try:
+        logger.info(f"Carga inicial de detracciones encolada: {encolar_detracciones_carga_inicial()}")
+    except Exception:
+        logger.exception("Fallo la carga inicial de detracciones")
 
 
 def job_limpieza_diagnosticos():
@@ -359,6 +368,13 @@ if __name__ == "__main__":
         job_detracciones_semanal,
         CronTrigger(day_of_week="mon", hour=17, minute=0),
         id="detracciones_semanal",
+    )
+    # 11:00 p.m. de Peru (04:00 UTC): historial de detracciones desde 2022, unas
+    # empresas por noche, lejos de las consultas masivas del buzon.
+    scheduler.add_job(
+        job_detracciones_carga_inicial,
+        CronTrigger(hour=4, minute=0),
+        id="detracciones_carga_inicial",
     )
     logger.info(
         "Scheduler arrancado. Chequeos diarios a las "

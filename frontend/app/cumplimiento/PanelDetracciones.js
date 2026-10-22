@@ -221,7 +221,8 @@ export default function PanelDetracciones({ empresaInicial = null }) {
       <p className="mt-5 max-w-3xl text-sm text-slate-600">
         Depositos de detracciones (SPOT) de cada empresa, buscados directamente en SUNAT en "Consulta de Pago de
         Detracciones": los que tus clientes depositaron en tu cuenta del Banco de la Nacion y los que tu pagaste a tus
-        proveedores. Elige la empresa y los criterios, y presiona "Buscar en SUNAT". Todo lo encontrado queda guardado.
+        proveedores. El historial desde enero 2022 se carga solo y se actualiza cada semana, asi que las busquedas se
+        responden al instante; "Buscar en SUNAT" sirve para forzar una actualizacion.
       </p>
 
       <div className="surface-card mt-5 p-5">
@@ -339,6 +340,20 @@ export default function PanelDetracciones({ empresaInicial = null }) {
           </button>
         ))}
       </div>
+
+      {datos && (
+        <p
+          className={`mt-4 rounded-lg px-3 py-2 text-xs ${
+            datos.cobertura?.carga_completa ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"
+          }`}
+        >
+          {!datos.cobertura
+            ? "El historial de esta empresa (desde enero 2022) se cargara automaticamente en las proximas noches. Mientras tanto puedes usar \"Buscar en SUNAT\"."
+            : datos.cobertura.carga_completa
+              ? `Historial completo: todos los depositos pagados entre el ${fechaCorta(datos.cobertura.desde)} y el ${fechaCorta(datos.cobertura.hasta)}. Se actualiza cada semana.`
+              : `Cargando el historial: ya estan los depositos pagados entre el ${fechaCorta(datos.cobertura.desde)} y el ${fechaCorta(datos.cobertura.hasta)}; el resto se completa en las proximas noches.`}
+        </p>
+      )}
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <span className="text-xs text-slate-500">

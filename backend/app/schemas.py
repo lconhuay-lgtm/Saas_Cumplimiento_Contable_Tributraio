@@ -376,6 +376,7 @@ class ConsultaDetraccionesJobResponse(BaseModel):
     periodo: str | None
     tipos_cuenta: str
     tipos_pago: str
+    modo: str = "manual"
     depositos_leidos: int
     creado_en: datetime
     iniciado_en: datetime | None
@@ -411,11 +412,22 @@ class DetraccionItem(BaseModel):
         from_attributes = True
 
 
+class DetraccionCoberturaItem(BaseModel):
+    desde: date
+    hasta: date
+    carga_completa: bool
+
+    class Config:
+        from_attributes = True
+
+
 class DetraccionesEmpresaResponse(BaseModel):
     empresa_id: str
     ruc: str
     razon_social: str
     depositos: list[DetraccionItem]
+    # Hasta donde esta completo el historial guardado (None: todavia no empieza la carga).
+    cobertura: DetraccionCoberturaItem | None = None
     # La busqueda en curso (pendiente/en progreso) o, si no hay, la ultima terminada.
     busqueda: ConsultaDetraccionesJobResponse | None
 

@@ -16,6 +16,7 @@ from app.models import (
     ConsultaJob, FichaRucJob, ReporteTributarioJob, Empresa, CredencialSol, MensajeBuzon, Usuario,
     TareaObligacion, ConsultaSireJob, SireEstadoPeriodo, ConsultaDeudasJob, ValorDeuda,
     ConsultaDeclaracionesJob, DeclaracionSunat, EmbargoNotificado, RecCoactiva, ConsultaDetraccionesJob, DetraccionPago,
+    DetraccionCobertura,
 )
 from app.security import descifrar_clave_sol, crear_token_ingreso_directo
 from app.rate_limit import adquirir_slot_global, liberar_slot_global, limite_mensajes_por_consulta
@@ -1488,6 +1489,37 @@ def aplicar_lectura_detracciones(db, empresa_id: str, depositos: list[dict], aho
     return len(set(claves))
 
 
+def registrar_tramo_detracciones(
+    db, empresa_id: str, desde: date, hasta: date, depositos: list[dict], ahora: datetime, completa_hasta: date | None = None,
+) -> None:
+    """
+    Guarda un tramo de 30 dias leido por una lectura automatica (carga inicial
+    o semanal) y corre la marca de avance de la empresa si el tramo empalma con
+    lo ya cubierto. Hace commit: si un tramo posterior falla, lo leido queda.
+    `completa_hasta`: la carga inicial se da por terminada al llegar a esa fecha.
+    """
+    aplicar_lectura_detracciones(db, empresa_id, depositos, ahora)
+    cobertura = db.get(DetraccionCobertura, empresa_id)
+    if cobertura is None:
+        cobertura = DetraccionCobertura(empresa_id=empresa_id, desde=desde, hasta=hasta, carga_completa=False)
+        db.add(cobertura)
+    elif desde <= cobertura.hasta + timedelta(days=1):
+        cobertura.desde = min(cobertura.desde, desde)
+        cobertura.hasta = max(cobertura.hasta, hasta)
+    if completa_hasta is not None and cobertura.hasta >= completa_hasta:
+        cobertura.carga_completa = True
+    cobertura.actualizado_en = ahora
+    db.commit()
+
+
+def _inicio_pendiente_detracciones(db, job: ConsultaDetraccionesJob) -> date:
+    """La carga inicial retoma donde quedo (un reintento o la noche siguiente no relee lo ya guardado)."""
+    cobertura = db.get(DetraccionCobertura, job.empresa_id)
+    if job.modo == "carga_inicial" and cobertura is not None and cobertura.desde <= job.fecha_desde:
+        return max(job.fecha_desde, cobertura.hasta + timedelta(days=1))
+    return job.fecha_desde
+
+
 def ejecutar_consulta_detracciones(job_id: str):
     """Busca en SUNAT los depositos de detraccion de una empresa con los criterios guardados en el job."""
     db = SessionLocal()
@@ -1532,10 +1564,22 @@ def ejecutar_consulta_detracciones(job_id: str):
 
         from adapter import consultar_detracciones
 
+        automatica = job.modo in ("carga_inicial", "semanal")
+
+        def _guardar_tramo(desde, hasta, depositos):
+            registrar_tramo_detracciones(
+                db, empresa.id, desde, hasta, depositos, datetime.now(timezone.utc),
+                completa_hasta=job.fecha_hasta if job.modo == "carga_inicial" else None,
+            )
+
         token_slot = adquirir_slot_global()
         try:
             resultado = None
             for intento in range(1, MAX_INTENTOS + 1):
+                desde = _inicio_pendiente_detracciones(db, job) if job.fecha_desde else None
+                if desde and job.fecha_hasta and desde > job.fecha_hasta:
+                    resultado = {"ok": True, "error": None, "detracciones": []}  # ya estaba todo leido
+                    break
                 resultado = consultar_detracciones(
                     ruc=empresa.ruc,
                     usuario_sol=credencial.usuario_sol,
@@ -1543,11 +1587,12 @@ def ejecutar_consulta_detracciones(job_id: str):
                     razon_social=empresa.razon_social,
                     headless=False,
                     on_progreso=_reportar_etapa,
-                    fecha_desde=job.fecha_desde,
+                    fecha_desde=desde,
                     fecha_hasta=job.fecha_hasta,
                     periodo=job.periodo.replace("-", "") if job.periodo else None,
                     tipos_cuenta=tuple(job.tipos_cuenta.split(",")),
                     tipos_pago=tuple(job.tipos_pago.split(",")),
+                    on_tramo=_guardar_tramo if automatica else None,
                 )
                 # Un rechazo de SUNAT por los criterios (p. ej. rango invalido) no se arregla reintentando.
                 if resultado["ok"] or resultado.get("credenciales_rechazadas") or "rechazo la consulta" in (resultado["error"] or ""):
@@ -1563,7 +1608,11 @@ def ejecutar_consulta_detracciones(job_id: str):
             return
 
         ahora = datetime.now(timezone.utc)
-        leidos = aplicar_lectura_detracciones(db, empresa.id, resultado["detracciones"], ahora)
+        # Las automaticas ya guardaron cada tramo al leerlo (registrar_tramo_detracciones).
+        leidos = (
+            len(resultado["detracciones"]) if automatica
+            else aplicar_lectura_detracciones(db, empresa.id, resultado["detracciones"], ahora)
+        )
         job.estado = "completado"
         job.depositos_leidos = leidos
         job.finalizado_en = ahora

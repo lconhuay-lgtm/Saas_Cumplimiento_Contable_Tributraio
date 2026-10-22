@@ -2068,6 +2068,7 @@ def consultar_detracciones(
     periodo: str | None = None,
     tipos_cuenta: tuple = ("1",),
     tipos_pago: tuple = ("pagosIndividuales",),
+    on_tramo=None,
 ) -> dict:
     """
     SOLO LECTURA: "Consulta de Pago de Detracciones" (SPOT) con los mismos
@@ -2075,6 +2076,10 @@ def consultar_detracciones(
     SUNAT) o por periodo tributario ("AAAAMM"), para cada tipo de cuenta y
     tipo de pago pedido. Trae los depositos que la empresa recibio en su
     cuenta (es el proveedor) y los que hizo a sus proveedores (adquiriente).
+
+    `on_tramo(desde, hasta, depositos)`: se llama al terminar cada tramo de
+    fechas (todas sus cuentas y tipos de pago), para que la carga del historial
+    guarde su avance aunque un tramo posterior falle.
 
     Returns:
         {"ok": bool, "error": str | None, "detracciones": [normalizar_detraccion(...)],
@@ -2090,9 +2095,9 @@ def consultar_detracciones(
 
     resultado_vacio = {"ok": False, "error": None, "detracciones": [], "consultas": 0}
     if periodo:
-        busquedas = [("", "", periodo)]
+        busquedas = [(None, None, periodo)]
     elif fecha_desde and fecha_hasta and fecha_desde <= fecha_hasta:
-        busquedas = [(i.strftime("%d/%m/%Y"), f.strftime("%d/%m/%Y"), "") for i, f in tramos_fechas(fecha_desde, fecha_hasta)]
+        busquedas = [(i, f, "") for i, f in tramos_fechas(fecha_desde, fecha_hasta)]
     else:
         return {**resultado_vacio, "error": "Indica un rango de fechas de pago o un periodo tributario"}
 
@@ -2138,9 +2143,12 @@ def consultar_detracciones(
         driver.set_script_timeout(120)
         por_clave: dict[tuple, dict] = {}
         consultas = 0
-        for tipo_cuenta in tipos_cuenta:
-            for tipo_pago in tipos_pago:
-                for ini, fin, per in busquedas:
+        for ini_fecha, fin_fecha, per in busquedas:
+            ini = ini_fecha.strftime("%d/%m/%Y") if ini_fecha else ""
+            fin = fin_fecha.strftime("%d/%m/%Y") if fin_fecha else ""
+            del_tramo: dict[tuple, dict] = {}
+            for tipo_cuenta in tipos_cuenta:
+                for tipo_pago in tipos_pago:
                     url = (
                         f"{_URL_API_DETRACCIONES}?&fechaInicio={ini}&fechaFin={fin}&tipoCuenta={tipo_cuenta}"
                         f"&tipoConsulta={tipo_pago}&periodo={per}"
@@ -2168,8 +2176,11 @@ def consultar_detracciones(
                         return {**resultado_vacio, "error": "SUNAT rechazo la consulta: " + re.sub(r"<[^>]+>", " ", detalle).strip()}
                     for crudo in datos.get("resultado") or []:
                         d = normalizar_detraccion(crudo, tipo_pago)
-                        por_clave[(d["num_constancia"], d["tipo_cuenta"] or tipo_cuenta)] = d
+                        del_tramo[(d["num_constancia"], d["tipo_cuenta"] or tipo_cuenta)] = d
                     time.sleep(0.3)
+            por_clave.update(del_tramo)
+            if on_tramo is not None and ini_fecha:
+                on_tramo(ini_fecha, fin_fecha, list(del_tramo.values()))
 
         logger.info(f"Detracciones {ruc}: {len(por_clave)} deposito(s) en {consultas} consulta(s)")
         return {"ok": True, "error": None, "detracciones": list(por_clave.values()), "consultas": consultas}

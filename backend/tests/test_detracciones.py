@@ -102,22 +102,74 @@ def test_busqueda_y_listado(client, db_session, monkeypatch):
     assert {d["num_constancia"] for d in por_fecha["depositos"]} == {"B1", "B3"}
 
 
-def test_lectura_semanal_encola_los_ultimos_35_dias(db_session, monkeypatch):
+def test_marca_de_avance_por_tramos(db_session):
+    from app.jobs import _inicio_pendiente_detracciones, registrar_tramo_detracciones
+    from app.models import DetraccionCobertura
+    from tests.test_deudas import _empresa, _tenant
+
+    empresa = _empresa(db_session, _tenant(db_session))
+    ahora = datetime.now(timezone.utc)
+    hoy = date(2026, 10, 22)
+    job = ConsultaDetraccionesJob(empresa_id=empresa.id, modo="carga_inicial", fecha_desde=date(2022, 1, 1), fecha_hasta=hoy)
+
+    assert _inicio_pendiente_detracciones(db_session, job) == date(2022, 1, 1)
+    registrar_tramo_detracciones(db_session, empresa.id, date(2022, 1, 1), date(2022, 1, 30), [normalizar_detraccion(_crudo("C1"), "pagosIndividuales")], ahora, completa_hasta=hoy)
+    registrar_tramo_detracciones(db_session, empresa.id, date(2022, 1, 31), date(2022, 3, 1), [], ahora, completa_hasta=hoy)
+    cobertura = db_session.get(DetraccionCobertura, empresa.id)
+    assert (cobertura.desde, cobertura.hasta, cobertura.carga_completa) == (date(2022, 1, 1), date(2022, 3, 1), False)
+    # Si falla a la mitad, el reintento (o la noche siguiente) sigue desde ahi.
+    assert _inicio_pendiente_detracciones(db_session, job) == date(2022, 3, 2)
+    # Un tramo que no empalma no mueve la marca.
+    registrar_tramo_detracciones(db_session, empresa.id, date(2023, 1, 1), date(2023, 1, 30), [], ahora)
+    assert db_session.get(DetraccionCobertura, empresa.id).hasta == date(2022, 3, 1)
+    registrar_tramo_detracciones(db_session, empresa.id, date(2022, 3, 2), hoy, [], ahora, completa_hasta=hoy)
+    assert db_session.get(DetraccionCobertura, empresa.id).carga_completa is True
+    assert db_session.query(DetraccionPago).count() == 1
+
+
+def test_carga_inicial_y_lectura_semanal(db_session, monkeypatch):
     import app.hora_peru as hora_peru
     import app.scheduler_job as scheduler_job
-    from app.models import CredencialSol
+    from app.models import CredencialSol, DetraccionCobertura
     from tests.test_deudas import _empresa, _tenant
 
     monkeypatch.setattr(scheduler_job, "SessionLocal", lambda: db_session)
-    monkeypatch.setattr(hora_peru, "ahora_peru", lambda: datetime(2026, 10, 26, 12, 0, tzinfo=hora_peru.ZONA_PERU))
+    hoy = {"valor": datetime(2026, 10, 26, 12, 0, tzinfo=hora_peru.ZONA_PERU)}
+    monkeypatch.setattr(hora_peru, "ahora_peru", lambda: hoy["valor"])
     tenant = _tenant(db_session)
-    con_clave = _empresa(db_session, tenant, ruc="20100000021")
-    _empresa(db_session, tenant, ruc="20100000022")  # sin credenciales SOL: se salta
-    db_session.add(CredencialSol(empresa_id=con_clave.id, usuario_sol="X", clave_cifrada=b"x", dek_cifrada=b"x"))
+    con_detracciones = _empresa(db_session, tenant, ruc="20100000021")
+    sin_detracciones = _empresa(db_session, tenant, ruc="20100000023")
+    _empresa(db_session, tenant, ruc="20100000022")  # sin credenciales SOL: nunca se encola
+    for e in (con_detracciones, sin_detracciones):
+        db_session.add(CredencialSol(empresa_id=e.id, usuario_sol="X", clave_cifrada=b"x", dek_cifrada=b"x"))
     db_session.commit()
 
-    resultado = scheduler_job.encolar_detracciones_semanal()
-    assert (resultado["empresas_encoladas"], resultado["saltadas"]) == (1, 1)
-    job = db_session.query(ConsultaDetraccionesJob).one()
-    assert (job.fecha_desde, job.fecha_hasta) == (date(2026, 9, 22), date(2026, 10, 26))
-    assert (job.tipos_cuenta, job.tipos_pago) == ("1,2,3", "pagosIndividuales,pagosMasivos")
+    # Noche 1: carga inicial de las dos con clave, desde 2022.
+    assert scheduler_job.encolar_detracciones_carga_inicial()["empresas_encoladas"] == 2
+    jobs = db_session.query(ConsultaDetraccionesJob).all()
+    assert {(j.modo, j.fecha_desde, j.fecha_hasta, j.tipos_cuenta) for j in jobs} == {("carga_inicial", date(2022, 1, 1), date(2026, 10, 26), "1,2,3")}
+    # Sin carga completa todavia, la semanal no las toma.
+    db_session.query(ConsultaDetraccionesJob).update({"estado": "completado"})
+    db_session.commit()
+    assert scheduler_job.encolar_detracciones_semanal()["empresas_encoladas"] == 0
+
+    for e in (con_detracciones, sin_detracciones):
+        db_session.add(DetraccionCobertura(empresa_id=e.id, desde=date(2022, 1, 1), hasta=date(2026, 10, 20), carga_completa=True))
+    db_session.add(DetraccionPago(empresa_id=con_detracciones.id, num_constancia="Z1", tipo_cuenta="2"))
+    db_session.commit()
+    assert scheduler_job.encolar_detracciones_carga_inicial()["empresas_encoladas"] == 0
+
+    # Lunes cualquiera: solo la que tiene depositos, desde la marca menos 7 dias, sus cuentas usadas + la convencional.
+    scheduler_job.encolar_detracciones_semanal()
+    semanal = db_session.query(ConsultaDetraccionesJob).filter(ConsultaDetraccionesJob.modo == "semanal").all()
+    assert [(j.empresa_id, j.fecha_desde, j.tipos_cuenta) for j in semanal] == [(con_detracciones.id, date(2026, 10, 13), "1,2")]
+
+    # Primer lunes del mes: tambien la que no tiene depositos, todas las cuentas y 42 dias atras.
+    db_session.query(ConsultaDetraccionesJob).update({"estado": "completado"})
+    db_session.commit()
+    hoy["valor"] = datetime(2026, 11, 2, 12, 0, tzinfo=hora_peru.ZONA_PERU)
+    scheduler_job.encolar_detracciones_semanal()
+    mensual = db_session.query(ConsultaDetraccionesJob).filter(ConsultaDetraccionesJob.fecha_hasta == date(2026, 11, 2)).all()
+    assert {(j.empresa_id, j.fecha_desde, j.tipos_cuenta) for j in mensual} == {
+        (con_detracciones.id, date(2026, 9, 8), "1,2,3"), (sin_detracciones.id, date(2026, 9, 8), "1,2,3"),
+    }

@@ -592,6 +592,10 @@ class ConsultaDetraccionesJob(Base):
     periodo: Mapped[str | None] = mapped_column(String(7), nullable=True)  # "YYYY-MM"
     tipos_cuenta: Mapped[str] = mapped_column(String(20), nullable=False, default="1")  # "1,2,3"
     tipos_pago: Mapped[str] = mapped_column(String(80), nullable=False, default="pagosIndividuales")
+    # "manual" (boton Buscar en SUNAT), "carga_inicial" (historial desde 2022) o
+    # "semanal" (lo nuevo desde la marca de avance). Las dos automaticas mueven
+    # la DetraccionCobertura de la empresa.
+    modo: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     depositos_leidos: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
     iniciado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -599,6 +603,23 @@ class ConsultaDetraccionesJob(Base):
     error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="consulta_detracciones_jobs")
+
+
+class DetraccionCobertura(Base):
+    """
+    Marca de avance del historial de detracciones de una empresa: todos los
+    depositos con fecha de pago entre `desde` y `hasta` ya estan guardados
+    (todas las cuentas, pagos individuales y masivos). Se busca por fecha de
+    pago, no por periodo, para no perder los pagados tarde (p. ej. hoy un
+    deposito del periodo 05/2025).
+    """
+    __tablename__ = "detracciones_cobertura"
+
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), primary_key=True)
+    desde: Mapped[date] = mapped_column(Date, nullable=False)
+    hasta: Mapped[date] = mapped_column(Date, nullable=False)
+    carga_completa: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
 
 class DetraccionPago(Base):
