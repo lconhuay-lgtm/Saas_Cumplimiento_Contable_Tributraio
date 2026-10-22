@@ -143,6 +143,8 @@ def test_carga_inicial_y_lectura_semanal(db_session, monkeypatch):
     for e in (con_detracciones, sin_detracciones):
         db_session.add(CredencialSol(empresa_id=e.id, usuario_sol="X", clave_cifrada=b"x", dek_cifrada=b"x"))
     db_session.commit()
+    # El encolado cierra la sesion: se guardan los ids antes.
+    con_id, sin_id = con_detracciones.id, sin_detracciones.id
 
     # Noche 1: carga inicial de las dos con clave, desde 2022.
     assert scheduler_job.encolar_detracciones_carga_inicial()["empresas_encoladas"] == 2
@@ -153,16 +155,16 @@ def test_carga_inicial_y_lectura_semanal(db_session, monkeypatch):
     db_session.commit()
     assert scheduler_job.encolar_detracciones_semanal()["empresas_encoladas"] == 0
 
-    for e in (con_detracciones, sin_detracciones):
-        db_session.add(DetraccionCobertura(empresa_id=e.id, desde=date(2022, 1, 1), hasta=date(2026, 10, 20), carga_completa=True))
-    db_session.add(DetraccionPago(empresa_id=con_detracciones.id, num_constancia="Z1", tipo_cuenta="2"))
+    for eid in (con_id, sin_id):
+        db_session.add(DetraccionCobertura(empresa_id=eid, desde=date(2022, 1, 1), hasta=date(2026, 10, 20), carga_completa=True))
+    db_session.add(DetraccionPago(empresa_id=con_id, num_constancia="Z1", tipo_cuenta="2"))
     db_session.commit()
     assert scheduler_job.encolar_detracciones_carga_inicial()["empresas_encoladas"] == 0
 
     # Lunes cualquiera: solo la que tiene depositos, desde la marca menos 7 dias, sus cuentas usadas + la convencional.
     scheduler_job.encolar_detracciones_semanal()
     semanal = db_session.query(ConsultaDetraccionesJob).filter(ConsultaDetraccionesJob.modo == "semanal").all()
-    assert [(j.empresa_id, j.fecha_desde, j.tipos_cuenta) for j in semanal] == [(con_detracciones.id, date(2026, 10, 13), "1,2")]
+    assert [(j.empresa_id, j.fecha_desde, j.tipos_cuenta) for j in semanal] == [(con_id, date(2026, 10, 13), "1,2")]
 
     # Primer lunes del mes: tambien la que no tiene depositos, todas las cuentas y 42 dias atras.
     db_session.query(ConsultaDetraccionesJob).update({"estado": "completado"})
@@ -171,5 +173,5 @@ def test_carga_inicial_y_lectura_semanal(db_session, monkeypatch):
     scheduler_job.encolar_detracciones_semanal()
     mensual = db_session.query(ConsultaDetraccionesJob).filter(ConsultaDetraccionesJob.fecha_hasta == date(2026, 11, 2)).all()
     assert {(j.empresa_id, j.fecha_desde, j.tipos_cuenta) for j in mensual} == {
-        (con_detracciones.id, date(2026, 9, 8), "1,2,3"), (sin_detracciones.id, date(2026, 9, 8), "1,2,3"),
+        (con_id, date(2026, 9, 8), "1,2,3"), (sin_id, date(2026, 9, 8), "1,2,3"),
     }
