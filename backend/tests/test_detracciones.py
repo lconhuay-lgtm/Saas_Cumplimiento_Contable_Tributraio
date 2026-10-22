@@ -175,3 +175,17 @@ def test_carga_inicial_y_lectura_semanal(db_session, monkeypatch):
     assert {(j.empresa_id, j.fecha_desde, j.tipos_cuenta) for j in mensual} == {
         (con_id, date(2026, 9, 8), "1,2,3"), (sin_id, date(2026, 9, 8), "1,2,3"),
     }
+
+
+def test_detracciones_de_a_una(monkeypatch):
+    import app.jobs as jobs
+    from app.queue_conn import redis_conn
+
+    llamadas = []
+    monkeypatch.setattr(jobs, "_ejecutar_consulta_detracciones", lambda job_id: llamadas.append(job_id))
+    redis_conn.set(jobs.CLAVE_DETRACCIONES_EN_CURSO, "otro-job")
+    jobs.ejecutar_consulta_detracciones("job-1")  # turno ocupado: vuelve a la cola, no corre
+    assert llamadas == []
+    redis_conn.delete(jobs.CLAVE_DETRACCIONES_EN_CURSO)
+    jobs.ejecutar_consulta_detracciones("job-1")  # turno libre: corre y lo suelta
+    assert llamadas == ["job-1"] and redis_conn.get(jobs.CLAVE_DETRACCIONES_EN_CURSO) is None

@@ -2038,9 +2038,17 @@ _SEGUNDOS_MAX_CONSULTA_DETRACCIONES = 45
 _INTENTOS_CONSULTA_DETRACCIONES = 3
 
 
-def _consultar_api_detracciones(driver, url: str) -> tuple[int, str]:
+# Una respuesta lenta o que necesito reintento puede venir incompleta (medido
+# 22/10/2026: diciembre 2023 de Bascat devolvio 8 depositos con SUNAT cargado
+# y 28 al repetirlo): esas consultas se leen otra vez y se juntan.
+_SEGUNDOS_RESPUESTA_DUDOSA = 10
+
+
+def _consultar_api_detracciones(driver, url: str) -> tuple[int, str, bool]:
+    """(status, cuerpo, dudosa): dudosa = tardo mas de 10 s o hubo que reintentar."""
     status, cuerpo = 0, ""
     for intento in range(1, _INTENTOS_CONSULTA_DETRACCIONES + 1):
+        inicio = time.monotonic()
         status, cuerpo = driver.execute_async_script(
             """
             var done = arguments[arguments.length - 1];
@@ -2054,10 +2062,11 @@ def _consultar_api_detracciones(driver, url: str) -> tuple[int, str]:
             url, _SEGUNDOS_MAX_CONSULTA_DETRACCIONES,
         )
         if status == 200:
-            return status, cuerpo
+            dudosa = intento > 1 or time.monotonic() - inicio > _SEGUNDOS_RESPUESTA_DUDOSA
+            return status, cuerpo, dudosa
         logger.warning(f"Consulta de detracciones sin respuesta (intento {intento}, HTTP {status}): {str(cuerpo)[:120]}")
         time.sleep(10 * intento)
-    return status, cuerpo
+    return status, cuerpo, True
 
 
 def _entrar_mis_declaraciones_y_pagos(navegador: SunatWebNavigator, empresa: dict) -> str | None:
@@ -2182,7 +2191,7 @@ def consultar_detracciones(
                         f"{_URL_API_DETRACCIONES}?&fechaInicio={ini}&fechaFin={fin}&tipoCuenta={tipo_cuenta}"
                         f"&tipoConsulta={tipo_pago}&periodo={per}"
                     )
-                    status, cuerpo = _consultar_api_detracciones(driver, url)
+                    status, cuerpo, dudosa = _consultar_api_detracciones(driver, url)
                     consultas += 1
                     try:
                         datos = json.loads(cuerpo) if status == 200 else None
@@ -2194,7 +2203,16 @@ def consultar_detracciones(
                     if datos.get("cod") != 200:
                         detalle = "; ".join(e.get("msg", "") for e in datos.get("errores") or []) or datos.get("msg") or ""
                         return {**resultado_vacio, "error": "SUNAT rechazo la consulta: " + re.sub(r"<[^>]+>", " ", detalle).strip()}
-                    for crudo in datos.get("resultado") or []:
+                    resultados = list(datos.get("resultado") or [])
+                    if dudosa:
+                        status2, cuerpo2, _ = _consultar_api_detracciones(driver, url)
+                        try:
+                            datos2 = json.loads(cuerpo2) if status2 == 200 else None
+                        except ValueError:
+                            datos2 = None
+                        if isinstance(datos2, dict) and datos2.get("cod") == 200:
+                            resultados += datos2.get("resultado") or []
+                    for crudo in resultados:
                         d = normalizar_detraccion(crudo, tipo_pago)
                         del_tramo[(d["num_constancia"], d["tipo_cuenta"] or tipo_cuenta)] = d
                     time.sleep(0.3)

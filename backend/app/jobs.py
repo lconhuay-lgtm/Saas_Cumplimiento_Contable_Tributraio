@@ -1520,8 +1520,31 @@ def _inicio_pendiente_detracciones(db, job: ConsultaDetraccionesJob) -> date:
     return job.fecha_desde
 
 
+# Detracciones de a una en todo el sistema: con dos lecturas a la vez SUNAT
+# devolvio consultas incompletas (Bascat, 22/10/2026: 555 depositos en paralelo
+# contra 700 leyendo solo). La que encuentra el turno ocupado vuelve a la cola.
+CLAVE_DETRACCIONES_EN_CURSO = "detracciones:en_curso"
+ESPERA_TURNO_DETRACCIONES_SEG = 90
+
+
 def ejecutar_consulta_detracciones(job_id: str):
     """Busca en SUNAT los depositos de detraccion de una empresa con los criterios guardados en el job."""
+    from app.queue_conn import cola_consultas, redis_conn
+
+    if not redis_conn.set(CLAVE_DETRACCIONES_EN_CURSO, job_id, nx=True, ex=3600):
+        cola_consultas.enqueue_in(
+            timedelta(seconds=ESPERA_TURNO_DETRACCIONES_SEG), ejecutar_consulta_detracciones, job_id, job_timeout="40m",
+        )
+        return
+    try:
+        _ejecutar_consulta_detracciones(job_id)
+    finally:
+        actual = redis_conn.get(CLAVE_DETRACCIONES_EN_CURSO)
+        if actual is not None and (actual.decode() if isinstance(actual, bytes) else actual) == job_id:
+            redis_conn.delete(CLAVE_DETRACCIONES_EN_CURSO)
+
+
+def _ejecutar_consulta_detracciones(job_id: str):
     db = SessionLocal()
 
     def _reportar_etapa(etapa: str | None):
