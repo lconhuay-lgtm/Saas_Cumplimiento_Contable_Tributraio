@@ -65,7 +65,7 @@ def test_busqueda_y_listado(client, db_session):
     empresa_id = _crear_empresa(client, headers, "20101281702")
     url = f"/empresas/{empresa_id}/detracciones/consultar"
 
-    hoy = date.today()
+    hoy = datetime.now(timezone(timedelta(hours=-5))).date()  # la validacion usa la fecha de Lima
     assert client.post(url, json={}, headers=headers).status_code == 400
     assert client.post(url, json={"fecha_desde": str(hoy), "fecha_hasta": str(hoy - timedelta(days=1))}, headers=headers).status_code == 400
     assert client.post(url, json={"fecha_desde": str(hoy - timedelta(days=400)), "fecha_hasta": str(hoy)}, headers=headers).status_code == 400

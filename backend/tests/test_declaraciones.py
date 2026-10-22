@@ -135,6 +135,7 @@ def test_marcar_no_obligada_a_plame(client, db_session):
     hace_un_mes = datetime.now(timezone.utc).replace(day=1)
     periodo = f"{hace_un_mes.year}-{hace_un_mes.month:02d}"
     aplicar_lectura_declaraciones(db_session, empresa_id, [_decl(periodo, "0601", "77")], "202001", periodo.replace("-", ""), datetime.now(timezone.utc))
+    db_session.commit()
     assert revisar_obligacion_plame(db_session, empresa_id) == "creada"
     db_session.commit()
     ob = db_session.query(EmpresaObligacion).filter(EmpresaObligacion.empresa_id == empresa_id, EmpresaObligacion.tipo == "planilla").one()

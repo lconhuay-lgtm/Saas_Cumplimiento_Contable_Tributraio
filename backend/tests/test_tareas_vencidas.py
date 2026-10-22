@@ -63,8 +63,10 @@ def test_avance_cumplimiento_cuenta_vencidas_por_tipo(client, db_session):
     hoy = datetime.now(timezone.utc)
     periodo_actual = f"{hoy.year:04d}-{hoy.month:02d}"
 
-    _crear_tarea(db_session, empresa_id, dias_offset=-2, tipo="planilla", periodo=periodo_actual)
-    _crear_tarea(db_session, empresa_id, dias_offset=10, tipo="planilla", periodo=periodo_actual)
+    # Minutos antes/despues de ahora: ambas caen en el mes en curso cualquier dia
+    # que corra la prueba (con +10 dias fallaba desde el dia 22 de cada mes).
+    _crear_tarea(db_session, empresa_id, dias_offset=-0.01, tipo="planilla", periodo=periodo_actual)
+    _crear_tarea(db_session, empresa_id, dias_offset=0.01, tipo="planilla", periodo=periodo_actual)
 
     avance = client.get(f"/tareas/avance-cumplimiento?periodo={periodo_actual}", headers=headers).json()
     fila_planilla = next(p for p in avance["por_tipo"] if p["tipo"] == "Planilla")
