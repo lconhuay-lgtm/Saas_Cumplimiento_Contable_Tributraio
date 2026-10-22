@@ -2110,24 +2110,28 @@ def consultar_detracciones(
         _reportar("abriendo_detracciones")
         driver = navegador.driver
         driver.get(_URL_OPCION_DETRACCIONES)
-        marco = None
-        for _ in range(40):
-            marco = next(
-                (f for f in driver.find_elements(By.TAG_NAME, "iframe") if "plataformaunica" in (f.get_attribute("src") or "")),
-                None,
-            )
-            if marco is not None:
+        # El src del iframe es la URL del menu (action=execute...); la pantalla
+        # real (e-plataformaunica) es a donde redirige, asi que se mira la
+        # ubicacion de adentro de cada marco y que ya tenga el token.
+        listo = False
+        for _ in range(45):
+            for marco in driver.find_elements(By.TAG_NAME, "iframe"):
+                try:
+                    driver.switch_to.frame(marco)
+                    listo = bool(driver.execute_script(
+                        "return location.host.indexOf('plataformaunica') >= 0 && !!sessionStorage.getItem('token')"
+                    ))
+                except Exception:
+                    listo = False
+                if listo:
+                    break
+                driver.switch_to.default_content()
+            if listo:
                 break
             time.sleep(1)
-        if marco is None:
+        if not listo:
             navegador._guardar_captura_error("detracciones_sin_pantalla")
             return {**resultado_vacio, "error": "La Consulta de Pago de Detracciones no termino de cargar"}
-        driver.switch_to.frame(marco)
-        try:
-            WebDriverWait(driver, 40).until(lambda d: d.execute_script("return !!sessionStorage.getItem('token')"))
-        except Exception:
-            navegador._guardar_captura_error("detracciones_sin_token")
-            return {**resultado_vacio, "error": "SUNAT no entrego la sesion de la Consulta de Pago de Detracciones"}
 
         _reportar("leyendo_detracciones")
         # Por periodo SUNAT tarda ~20 s por consulta (por fecha, menos de 1 s).
