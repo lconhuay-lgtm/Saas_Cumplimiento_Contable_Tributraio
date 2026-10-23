@@ -23,12 +23,18 @@ logger = logging.getLogger('web_navigation')
 class DescargaDocumentosMixin:
     """Descarga de documentos: esperar descarga, PDF de mensaje, constancia."""
 
-    def _esperar_descarga(self, timeout=60):  # Aumentado de 30 a 60 segundos
+    def _esperar_descarga(self, timeout=60, archivos_iniciales=None):  # Aumentado de 30 a 60 segundos
         """
         Espera a que se complete la descarga del archivo PDF
         
         Args:
             timeout (int): Tiempo máximo de espera en segundos
+            archivos_iniciales (set | None): listado de la carpeta tomado ANTES
+                de disparar la descarga. Chrome crea al instante un archivo
+                vacio con el nombre final (junto al .crdownload); si el listado
+                se toma despues del clic, ese PDF ya figura como "viejo" y la
+                descarga nunca se reconoce (Misky Sonko, 22/10/2026: el PDF
+                quedo en disco pero se reporto como fallido).
                 
         Returns:
             bool: True si la descarga se completó, False en caso contrario
@@ -37,7 +43,8 @@ class DescargaDocumentosMixin:
             logger.info("=== Esperando que se complete la descarga ===")
             tiempo_inicio = datetime.now()
             ultimo_pdf = None
-            archivos_iniciales = set(os.listdir(self.download_dir))
+            if archivos_iniciales is None:
+                archivos_iniciales = set(os.listdir(self.download_dir))
             
             while (datetime.now() - tiempo_inicio).seconds < timeout:
                 # Buscar archivos nuevos en la carpeta de descargas
@@ -71,7 +78,8 @@ class DescargaDocumentosMixin:
                     return True
                 
                 # Si hay archivos .pdf y no hay .crdownload, la descarga está completa
-                pdf_files = [f for f in archivos_nuevos if f.endswith('.pdf')]
+                pdf_files = [f for f in archivos_nuevos
+                             if f.endswith('.pdf') and os.path.getsize(os.path.join(self.download_dir, f)) > 0]
                 if pdf_files:
                     logger.info("¡Descarga completada! (encontrados archivos PDF)")
                     # Obtener el nombre del último archivo descargado
@@ -108,7 +116,8 @@ class DescargaDocumentosMixin:
                     
             logger.warning(f"Tiempo de espera agotado después de {timeout} segundos")
             # Aunque se agotó el tiempo, considerarlo exitoso si hay algún archivo nuevo
-            if archivos_actuales - archivos_iniciales:
+            if any(os.path.getsize(os.path.join(self.download_dir, f)) > 0
+                   for f in archivos_actuales - archivos_iniciales if not f.endswith('.crdownload')):
                 logger.info("Considerando descarga como exitosa aunque se agotó el tiempo (hay archivos nuevos)")
                 return True
                 
@@ -264,10 +273,11 @@ class DescargaDocumentosMixin:
                     try:
                         js = href[len("javascript:"):] if href.startswith("javascript:") else href
                         logger.info(f"Ejecutando: {js}")
+                        antes = set(os.listdir(self.download_dir))
                         self.driver.execute_script(js)
                         
                         # Esperar a que se complete la descarga
-                        if self._esperar_descarga(timeout=30):
+                        if self._esperar_descarga(timeout=30, archivos_iniciales=antes):
                             logger.info("Documento descargado exitosamente")
                             # Agregar logs detallados para diagnóstico de archivos descargados
                             logger.info(f"Documento descargado en carpeta: {self.download_dir}")
@@ -294,8 +304,9 @@ class DescargaDocumentosMixin:
                 if 'constancia_' in texto:
                     logger.info(f"Encontrado enlace con constancia_: {texto}")
                     try:
+                        antes = set(os.listdir(self.download_dir))
                         enlace.click()
-                        if self._esperar_descarga(timeout=30):
+                        if self._esperar_descarga(timeout=30, archivos_iniciales=antes):
                             logger.info("Documento descargado exitosamente")
                             self.driver.switch_to.default_content()
                             return True

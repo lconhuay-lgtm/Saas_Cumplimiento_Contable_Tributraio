@@ -195,6 +195,7 @@ def consultar_buzon(
         navegador._cerrar_alerta_si_aparece()
 
         _reportar("leyendo_mensajes")
+        _esperar_lista_mensajes(navegador)
         mensajes = _leer_lista_mensajes(navegador, limite_mensajes)
 
         documentos = {}
@@ -452,6 +453,39 @@ def preparar_ingreso_directo_renta_anual(ruc: str = "", headless: bool = False) 
         return {**vacio, "error": str(e)}
     finally:
         navegador.close_browser()
+
+
+def _esperar_lista_mensajes(navegador, timeout: int = 20) -> bool:
+    """
+    Espera a que el listado del Buzon (los <small class="fecPublica">) aparezca,
+    arriba o dentro de algun iframe de primer nivel. Confirmado en produccion
+    (Misky Sonko, 23/10/2026): tras el alert de listarAlertas el listado se
+    leyo en menos de 1 s, todavia vacio, y la corrida no vio ningun mensaje
+    (ni reintento los PDF que faltaban). Un buzon realmente vacio solo cuesta
+    esta espera. Deja el driver en default_content; _escanear_mensajes se
+    ubica solo en el iframe correcto.
+    """
+    driver = navegador.driver
+    limite = time.time() + timeout
+    while time.time() < limite:
+        navegador._cerrar_alerta_si_aparece()
+        try:
+            driver.switch_to.default_content()
+            if driver.find_elements(By.CLASS_NAME, "fecPublica"):
+                return True
+            for iframe in driver.find_elements(By.TAG_NAME, "iframe"):
+                try:
+                    driver.switch_to.frame(iframe)
+                    hay = bool(driver.find_elements(By.CLASS_NAME, "fecPublica"))
+                finally:
+                    driver.switch_to.default_content()
+                if hay:
+                    return True
+        except Exception as e:
+            logger.debug(f"Esperando el listado del Buzon: {e}")
+        time.sleep(1)
+    logger.warning(f"El listado del Buzon no aparecio en {timeout} s (buzon vacio o SUNAT lento)")
+    return False
 
 
 def _escanear_mensajes(navegador, limite):
