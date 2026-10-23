@@ -271,6 +271,15 @@ def ejecutar_consulta_buzon(job_id: str):
             >= timedelta(hours=VENTANA_ESTADO_CONTRIBUYENTE_HORAS)
         )
 
+        # Si ya hay notificaciones guardadas, una lista vacia en SUNAT es una
+        # falla de SUNAT y no un buzon vacio (ver ERROR_BUZON_SIN_LISTA).
+        buzon_con_historial = (
+            db.query(MensajeBuzon.id)
+            .filter(MensajeBuzon.empresa_id == empresa.id, MensajeBuzon.origen == "notificaciones")
+            .first()
+            is not None
+        )
+
         token_slot = adquirir_slot_global()
         try:
             resultado = None
@@ -286,6 +295,7 @@ def ejecutar_consulta_buzon(job_id: str):
                     ids_conocidos_buzon_mensajes=ids_conocidos_buzon_mensajes,
                     leer_estado_contribuyente=necesita_verificar_estado,
                     on_progreso=_reportar_etapa,
+                    buzon_con_historial=buzon_con_historial,
                 )
                 if resultado["ok"]:
                     break

@@ -87,6 +87,7 @@ def consultar_buzon(
     ids_conocidos_buzon_mensajes: set | None = None,
     leer_estado_contribuyente: bool = True,
     on_progreso=None,
+    buzon_con_historial: bool = False,
 ) -> dict:
     """
     Inicia sesion en SUNAT SOL y devuelve el listado de mensajes visibles
@@ -195,7 +196,13 @@ def consultar_buzon(
         navegador._cerrar_alerta_si_aparece()
 
         _reportar("leyendo_mensajes")
-        _esperar_lista_mensajes(navegador)
+        if not _esperar_lista_mensajes(navegador) and buzon_con_historial:
+            # La empresa ya tiene notificaciones guardadas, asi que una lista
+            # vacia no es un buzon vacio: SUNAT abrio el visor pero no cargo
+            # los mensajes (confirmado 22/10/2026 con Misky Sonko y Bascat,
+            # junto al error 500 de listarAlertas). Darla por buena ocultaba
+            # la falla como "0 mensajes nuevos".
+            return {"ok": False, "mensajes": [], "documentos": {}, "mensajes_bandeja": [], "razon_social_sunat": navegador.razon_social_detectada, "condicion_domicilio": navegador.condicion_domicilio_detectada, "estado_contribuyente": navegador.estado_contribuyente_detectado, "estado_contribuyente_verificado": leer_estado_contribuyente, "flujo_detectado": navegador.flujo_detectado, "error": ERROR_BUZON_SIN_LISTA}
         mensajes = _leer_lista_mensajes(navegador, limite_mensajes)
 
         documentos = {}
@@ -453,6 +460,9 @@ def preparar_ingreso_directo_renta_anual(ruc: str = "", headless: bool = False) 
         return {**vacio, "error": str(e)}
     finally:
         navegador.close_browser()
+
+
+ERROR_BUZON_SIN_LISTA = "SUNAT no mostró el buzón: abrió el Buzón Electrónico pero no cargó la lista de mensajes (falla de SUNAT, se reintentará en la próxima consulta)"
 
 
 def _esperar_lista_mensajes(navegador, timeout: int = 20) -> bool:
