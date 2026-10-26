@@ -7,8 +7,10 @@ import PanelSire from "./PanelSire";
 import PanelDeudas from "./PanelDeudas";
 import PanelDeclaraciones from "./PanelDeclaraciones";
 import PanelDetracciones from "./PanelDetracciones";
+import PanelLiquidacion from "./PanelLiquidacion";
 
 const SUBMODULOS = [
+  { id: "liquidacion", label: "Liquidación en vivo", activo: true },
   { id: "sire", label: "SIRE (Registros Electronicos)", activo: true },
   { id: "dj", label: "Declaracion mensual", activo: true },
   { id: "deudas", label: "Deudas (valores pendientes)", activo: true },
@@ -54,7 +56,7 @@ function CumplimientoContenido() {
     try {
       guardada = localStorage.getItem(CLAVE_PESTANA);
     } catch {}
-    setPestana(SUBMODULOS.some((s) => s.activo && s.id === guardada) ? guardada : "sire");
+    setPestana(SUBMODULOS.some((s) => s.activo && s.id === guardada) ? guardada : "liquidacion");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabPedida, empresaEnfocada, valoresEnfocados]);
 
@@ -99,6 +101,7 @@ function CumplimientoContenido() {
           )}
         </div>
 
+        {pestana === "liquidacion" && <PanelLiquidacion />}
         {pestana === "sire" && <PanelSire />}
         {pestana === "dj" && <PanelDeclaraciones />}
         {pestana === "deudas" && <PanelDeudas enfoque={enfoque} />}

@@ -971,3 +971,59 @@ class ConfiguracionSistemaUpdate(BaseModel):
     chequeo1_minuto: int | None = Field(default=None, ge=0, le=59)
     chequeo2_hora: int | None = Field(default=None, ge=0, le=23)
     chequeo2_minuto: int | None = Field(default=None, ge=0, le=59)
+
+
+# --- Liquidacion en vivo (Etapa 1: configuracion y acceso) ---
+
+REGIMENES_LIQUIDACION = ("general", "mype", "especial", "agrario", "amazonia")
+
+
+class LiquidacionEmpresaItem(BaseModel):
+    empresa_id: str
+    ruc: str
+    razon_social: str
+    responsable_id: str | None
+    responsable_nombre: str | None
+    activa: bool
+    estado: str  # no_activada | falta_responsable | falta_api | sin_probar | api_error | no_afiliada | lista
+    api_estado: str
+    api_mensaje: str | None
+    api_probado_en: datetime | None
+    regimen: str | None
+    regimen_origen: str | None
+    regimen_sugerido: str | None
+    sire_periodos: int | None
+
+
+class LiquidacionListaResponse(BaseModel):
+    incluidas: int
+    activas: int
+    es_admin: bool
+    empresas: list[LiquidacionEmpresaItem]
+
+
+class LiquidacionEventoItem(BaseModel):
+    accion: str
+    detalle: str | None
+    usuario_nombre: str | None
+    creado_en: datetime
+
+
+class LiquidacionDetalleResponse(LiquidacionEmpresaItem):
+    api_client_id: str | None  # enmascarado: solo los ultimos 4 caracteres
+    puede_editar_api: bool
+    es_admin: bool
+    eventos: list[LiquidacionEventoItem]
+
+
+class LiquidacionActivarRequest(BaseModel):
+    activa: bool
+
+
+class LiquidacionApiRequest(BaseModel):
+    client_id: str = Field(min_length=8, max_length=100)
+    client_secret: str = Field(min_length=8, max_length=200)
+
+
+class LiquidacionRegimenRequest(BaseModel):
+    regimen: str

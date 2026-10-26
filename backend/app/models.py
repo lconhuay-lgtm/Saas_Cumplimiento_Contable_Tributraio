@@ -31,6 +31,9 @@ class Tenant(Base):
     nombre: Mapped[str] = mapped_column(String(200), nullable=False)
     activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    # Liquidacion en vivo: empresas incluidas en el fee fijo del plan; las que
+    # pasen de este numero se cobran aparte (solo se muestra, no se bloquea).
+    liquidacion_incluidas: Mapped[int] = mapped_column(Integer, default=15, nullable=False)
 
     usuarios: Mapped[list["Usuario"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
     empresas: Mapped[list["Empresa"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
@@ -973,3 +976,46 @@ class ConfiguracionSistema(Base):
     actualizado_por_usuario_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True
     )
+
+
+class LiquidacionEmpresa(Base):
+    """
+    Liquidacion en vivo (Etapa 1): una fila por empresa que un admin activo
+    alguna vez. Guarda si esta activa, su regimen tributario y las
+    credenciales de la API del SIRE (client_id + client_secret cifrado con
+    el mismo esquema que la clave SOL; el usuario y la clave SOL salen de
+    CredencialSol). Solo el responsable asignado cambia las credenciales.
+
+    regimen: "general" | "mype" | "especial" | "agrario" | "amazonia" | None.
+    regimen_origen: "pagos" (sugerido por el codigo de tributo de sus pagos
+    de Renta) | "manual".
+    api_estado: "sin_configurar" | "sin_probar" | "ok" | "error".
+    """
+    __tablename__ = "liquidacion_empresas"
+
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), primary_key=True)
+    activa: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    activada_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    activada_por_usuario_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
+    regimen: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    regimen_origen: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    api_client_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    api_secret_cifrado: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    api_dek_cifrada: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    api_estado: Mapped[str] = mapped_column(String(20), default="sin_configurar", nullable=False)
+    api_mensaje: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    api_probado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sire_periodos: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+
+class LiquidacionEvento(Base):
+    """Registro de cambios de la Liquidacion en vivo: quien hizo que y cuando."""
+    __tablename__ = "liquidacion_eventos"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    usuario_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
+    accion: Mapped[str] = mapped_column(String(40), nullable=False)
+    detalle: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)

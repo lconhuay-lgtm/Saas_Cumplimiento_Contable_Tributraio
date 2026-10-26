@@ -5,7 +5,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import auth, empresas, consultas, admin, dashboard, ficha_ruc, reporte_tributario, cronograma, tareas, usuarios, invitaciones, notificaciones, sire, deudas, declaraciones, detracciones
+from app.routers import auth, empresas, consultas, admin, dashboard, ficha_ruc, reporte_tributario, cronograma, tareas, usuarios, invitaciones, notificaciones, sire, deudas, declaraciones, detracciones, liquidacion
 
 app = FastAPI(
     title="Anzen Sol multi-RUC -- API",
@@ -47,6 +47,7 @@ app.include_router(sire.router)
 app.include_router(deudas.router)
 app.include_router(declaraciones.router)
 app.include_router(detracciones.router)
+app.include_router(liquidacion.router)
 
 
 @app.on_event("startup")

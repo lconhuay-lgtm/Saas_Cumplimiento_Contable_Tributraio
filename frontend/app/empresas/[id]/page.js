@@ -27,7 +27,9 @@ import {
   ChevronLeft,
   ChevronRight,
   LogIn,
+  Calculator,
 } from "lucide-react";
+import SeccionLiquidacion from "./SeccionLiquidacion";
 import Sidebar from "../../../components/Sidebar";
 import ConfirmDialog from "../../../components/ConfirmDialog";
 import { api, getToken } from "../../../lib/api";
@@ -50,6 +52,7 @@ const ETIQUETAS_FILTRO_ESPECIAL = {
 const TABS_PAGINA = [
   { id: "buzon", label: "Buzon", Icon: Inbox },
   { id: "obligaciones", label: "Obligaciones", Icon: ListChecks },
+  { id: "liquidacion", label: "Liquidación en vivo", Icon: Calculator },
   { id: "configuracion", label: "Configuracion", Icon: Settings },
 ];
 
@@ -61,7 +64,10 @@ export default function DetalleEmpresaPage() {
   const [mensajes, setMensajes] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
-  const [tabActiva, setTabActiva] = useState("buzon");
+  // ?tab=liquidacion llega desde la pestana Liquidacion en vivo de Cumplimiento.
+  const [tabActiva, setTabActiva] = useState(() =>
+    TABS_PAGINA.some((t) => t.id === searchParams.get("tab")) ? searchParams.get("tab") : "buzon"
+  );
   // Buzon de Notificaciones (con PDF, con categorias) vs Buzon Mensajes
   // (bandeja separada dentro de SUNAT, sin PDF, sin categorias) -- antes
   // se mostraban mezclados en una sola lista, lo que restaba visibilidad.
@@ -412,6 +418,8 @@ export default function DetalleEmpresaPage() {
         </div>
 
         {tabActiva === "obligaciones" && empresa && <SeccionObligaciones empresaId={id} />}
+
+        {tabActiva === "liquidacion" && empresa && <SeccionLiquidacion empresaId={id} />}
 
         {tabActiva === "configuracion" && empresa && (
           <SeccionConfiguracion

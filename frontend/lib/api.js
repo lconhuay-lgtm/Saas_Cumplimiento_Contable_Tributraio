@@ -338,6 +338,21 @@ export const api = {
   obtenerAvanceCumplimiento: (periodo) =>
     apiFetch(`/tareas/avance-cumplimiento${periodo ? `?periodo=${periodo}` : ""}`),
 
+  // Liquidacion en vivo (Etapa 1: configuracion y acceso).
+  listarLiquidacion: () => apiFetch("/liquidacion/empresas"),
+  activarLiquidacion: (empresaId, activa) =>
+    apiFetch(`/liquidacion/empresas/${empresaId}/activar`, { method: "POST", body: JSON.stringify({ activa }) }),
+  obtenerLiquidacionEmpresa: (empresaId) => apiFetch(`/empresas/${empresaId}/liquidacion`),
+  guardarApiSire: (empresaId, clientId, clientSecret) =>
+    apiFetch(`/empresas/${empresaId}/liquidacion/api`, {
+      method: "PUT",
+      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret }),
+    }),
+  borrarApiSire: (empresaId) => apiFetch(`/empresas/${empresaId}/liquidacion/api`, { method: "DELETE" }),
+  probarApiSire: (empresaId) => apiFetch(`/empresas/${empresaId}/liquidacion/probar`, { method: "POST" }),
+  cambiarRegimenLiquidacion: (empresaId, regimen) =>
+    apiFetch(`/empresas/${empresaId}/liquidacion/regimen`, { method: "PUT", body: JSON.stringify({ regimen }) }),
+
   importarEmpresas: (archivo) => {
     const formData = new FormData();
     formData.append("archivo", archivo);
