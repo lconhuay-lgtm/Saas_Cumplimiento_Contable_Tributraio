@@ -183,6 +183,27 @@ def _notificar_mensajes_nuevos(db, empresa: Empresa, mensajes_info: list[dict]) 
         logger.exception(f"No se pudo notificar mensajes nuevos por correo para {empresa.ruc}")
 
 
+# Consultas masivas en las que SUNAT abrio el buzon sin cargar la lista
+# (adapter.ERROR_BUZON_SIN_LISTA). Medido 23-25/10/2026: la falla dura
+# franjas de 30 a 90 minutos (sobre todo 7:30-9:00 p.m. hora Peru), asi que
+# se reintenta UNA vez, 45 minutos despues, con origen "reintento" -- fuera
+# del progreso de la tanda (GET /consultas/estado solo mira "masiva") y sin
+# volver a reintentarse si falla de nuevo.
+PREFIJO_ERROR_BUZON_SIN_LISTA = "SUNAT no mostró el buzón"
+ESPERA_REINTENTO_BUZON_SIN_LISTA = timedelta(minutes=45)
+
+
+def _reintentar_buzon_sin_lista(db, empresa_id: str) -> str:
+    from app.queue_conn import cola_consultas
+
+    reintento = ConsultaJob(empresa_id=empresa_id, solicitado_por=None, estado="pendiente", origen="reintento")
+    db.add(reintento)
+    db.commit()
+    cola_consultas.enqueue_in(ESPERA_REINTENTO_BUZON_SIN_LISTA, ejecutar_consulta_buzon, reintento.id, job_timeout="10m")
+    logger.info(f"Reintento {reintento.id} de la consulta del buzon programado en {ESPERA_REINTENTO_BUZON_SIN_LISTA}")
+    return reintento.id
+
+
 def ejecutar_consulta_buzon(job_id: str):
     db = SessionLocal()
 
@@ -419,6 +440,8 @@ def ejecutar_consulta_buzon(job_id: str):
             db.commit()
             _reportar_etapa(None)
             logger.warning(f"Job {job_id} fallo para {empresa.ruc}: {job.error}")
+            if job.origen == "masiva" and job.error.startswith(PREFIJO_ERROR_BUZON_SIN_LISTA):
+                _reintentar_buzon_sin_lista(db, empresa.id)
             return
 
         nuevos = 0

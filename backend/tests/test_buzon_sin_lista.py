@@ -54,3 +54,23 @@ def test_lista_vacia_sin_historial_es_buzon_vacio(monkeypatch):
     resultado = _consultar(monkeypatch, con_historial=False)
     assert resultado["ok"] is True
     assert resultado["mensajes"] == []
+
+
+def test_el_job_reconoce_el_error_del_adapter():
+    import app.jobs as jobs
+    assert adapter.ERROR_BUZON_SIN_LISTA.startswith(jobs.PREFIJO_ERROR_BUZON_SIN_LISTA)
+
+
+def test_reintento_unico_45_minutos_despues(db_session, monkeypatch):
+    import app.jobs as jobs
+    from app.models import ConsultaJob
+    from app.queue_conn import cola_consultas
+
+    encolados = []
+    monkeypatch.setattr(cola_consultas, "enqueue_in", lambda espera, funcion, *args, **kw: encolados.append((espera, funcion, args)))
+    empresa_id = "11111111-1111-1111-1111-111111111111"
+    job_id = jobs._reintentar_buzon_sin_lista(db_session, empresa_id)
+
+    reintento = db_session.query(ConsultaJob).filter(ConsultaJob.id == job_id).one()
+    assert reintento.origen == "reintento" and reintento.estado == "pendiente"
+    assert encolados == [(jobs.ESPERA_REINTENTO_BUZON_SIN_LISTA, jobs.ejecutar_consulta_buzon, (job_id,))]

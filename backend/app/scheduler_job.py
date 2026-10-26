@@ -305,7 +305,7 @@ def encolar_detracciones_semanal() -> dict:
         db.close()
 
 
-def enviar_resumenes_diarios(horas_atras: int = 12) -> dict:
+def enviar_resumenes_diarios(horas_atras: int = 24) -> dict:
     """
     Busca los ConsultaJob completados con mensajes nuevos en las ultimas
     `horas_atras` horas que todavia no se incluyeron en ningun correo
@@ -313,6 +313,11 @@ def enviar_resumenes_diarios(horas_atras: int = 12) -> dict:
     resumen a cada usuario de ese tenant. Marca esos jobs como notificados
     para no repetir el aviso si esto se vuelve a correr (p.ej. durante
     pruebas manuales).
+
+    24 horas (antes 12): la consulta de la noche paso a las 9:15 p.m. (la
+    franja de 7:30-9:00 p.m. SUNAT no carga la lista del buzon), asi que
+    termina despues del resumen de las 9:30 p.m.; lo que quede se incluye
+    en el resumen del dia siguiente en vez de perderse.
     """
     db = SessionLocal()
     try:
