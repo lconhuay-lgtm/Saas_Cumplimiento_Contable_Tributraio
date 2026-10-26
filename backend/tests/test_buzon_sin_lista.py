@@ -1,4 +1,6 @@
 """Lista del Buzon que no carga: falla de SUNAT si la empresa ya tenia notificaciones."""
+import uuid
+
 import adapter
 
 
@@ -68,7 +70,7 @@ def test_reintento_unico_45_minutos_despues(db_session, monkeypatch):
 
     encolados = []
     monkeypatch.setattr(cola_consultas, "enqueue_in", lambda espera, funcion, *args, **kw: encolados.append((espera, funcion, args)))
-    empresa_id = "11111111-1111-1111-1111-111111111111"
+    empresa_id = str(uuid.uuid4())
     job_id = jobs._reintentar_buzon_sin_lista(db_session, empresa_id)
 
     reintento = db_session.query(ConsultaJob).filter(ConsultaJob.id == job_id).one()
