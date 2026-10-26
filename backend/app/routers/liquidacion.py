@@ -210,8 +210,8 @@ def guardar_api_sire(
 ):
     empresa = obtener_empresa_visible(empresa_id, usuario, db)
     _exigir_responsable(empresa, usuario)
-    config = _config(db, empresa.id)
-    if not config.activa:
+    config = db.get(LiquidacionEmpresa, empresa.id)
+    if config is None or not config.activa:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Primero un administrador debe activar la Liquidación en vivo para esta empresa.")
     config.api_client_id = datos.client_id.strip()
     config.api_secret_cifrado, config.api_dek_cifrada = cifrar_clave_sol(datos.client_secret.strip())
@@ -225,7 +225,9 @@ def guardar_api_sire(
 def borrar_api_sire(empresa_id: str, db: Session = Depends(get_db), usuario: Usuario = Depends(get_usuario_actual)):
     empresa = obtener_empresa_visible(empresa_id, usuario, db)
     _exigir_responsable(empresa, usuario)
-    config = _config(db, empresa.id)
+    config = db.get(LiquidacionEmpresa, empresa.id)
+    if config is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Esta empresa no tiene credenciales guardadas.")
     config.api_client_id = config.api_secret_cifrado = config.api_dek_cifrada = None
     config.api_estado, config.api_mensaje, config.api_probado_en, config.sire_periodos = "sin_configurar", None, None, None
     _evento(db, empresa.id, usuario, "api_borrada")
