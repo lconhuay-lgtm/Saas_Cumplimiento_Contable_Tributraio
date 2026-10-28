@@ -2137,6 +2137,29 @@ def _entrar_mis_declaraciones_y_pagos(navegador: SunatWebNavigator, empresa: dic
     return None
 
 
+def entrar_marco_plataforma_unica(driver, segundos: int = 45) -> bool:
+    """
+    Deja el driver dentro del marco de una opcion de Mis Declaraciones y Pagos
+    ya abierta (driver.get de su exe=). El src del iframe es la URL del menu
+    (action=execute...); la pantalla real (e-plataformaunica) es a donde
+    redirige, asi que se mira la ubicacion de adentro de cada marco y que ya
+    tenga el token.
+    """
+    for _ in range(segundos):
+        for marco in driver.find_elements(By.TAG_NAME, "iframe"):
+            try:
+                driver.switch_to.frame(marco)
+                if driver.execute_script(
+                    "return location.host.indexOf('plataformaunica') >= 0 && !!sessionStorage.getItem('token')"
+                ):
+                    return True
+            except Exception:
+                pass
+            driver.switch_to.default_content()
+        time.sleep(1)
+    return False
+
+
 def consultar_detracciones(
     ruc: str,
     usuario_sol: str,
@@ -2196,26 +2219,7 @@ def consultar_detracciones(
         _reportar("abriendo_detracciones")
         driver = navegador.driver
         driver.get(_URL_OPCION_DETRACCIONES)
-        # El src del iframe es la URL del menu (action=execute...); la pantalla
-        # real (e-plataformaunica) es a donde redirige, asi que se mira la
-        # ubicacion de adentro de cada marco y que ya tenga el token.
-        listo = False
-        for _ in range(45):
-            for marco in driver.find_elements(By.TAG_NAME, "iframe"):
-                try:
-                    driver.switch_to.frame(marco)
-                    listo = bool(driver.execute_script(
-                        "return location.host.indexOf('plataformaunica') >= 0 && !!sessionStorage.getItem('token')"
-                    ))
-                except Exception:
-                    listo = False
-                if listo:
-                    break
-                driver.switch_to.default_content()
-            if listo:
-                break
-            time.sleep(1)
-        if not listo:
+        if not entrar_marco_plataforma_unica(driver):
             navegador._guardar_captura_error("detracciones_sin_pantalla")
             return {**resultado_vacio, "error": "La Consulta de Pago de Detracciones no termino de cargar"}
 

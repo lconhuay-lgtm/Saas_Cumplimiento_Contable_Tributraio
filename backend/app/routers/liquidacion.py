@@ -8,22 +8,30 @@ Liquidacion en vivo -- Etapa 1 (configuracion y acceso).
 - "Probar conexion" pide el token a SUNAT y lista los periodos del SIRE.
 - El regimen se sugiere por el codigo de tributo de sus pagos de Renta y el
   responsable (o un admin) lo confirma o lo cambia.
+- Bloque 1 del piloto: el responsable (o un admin) pide leer de SUNAT los
+  datos de un periodo (ver jobs_liquidacion.py) y ve el avance y lo guardado.
 Cada cambio queda en LiquidacionEvento.
 """
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.acceso import es_admin, filtrar_empresas_visibles, obtener_empresa_visible
 from app.database import get_db
 from app.deps import get_usuario_actual
+from app.hora_peru import hoy_peru
+from app.jobs_liquidacion import FUENTES, crear_lecturas, encolar_lecturas, lecturas_en_curso, rango_fuente
 from app.models import (
-    CredencialSol, DeclaracionSunat, Empresa, LiquidacionEmpresa, LiquidacionEvento, SireEstadoPeriodo, Tenant, Usuario,
+    CredencialSol, DeclaracionSunat, Empresa, LiquidacionComprobante, LiquidacionCuentaControl, LiquidacionDeclaracion,
+    LiquidacionEmpresa, LiquidacionEvento, LiquidacionLectura, LiquidacionRetencionPercepcion, SireEstadoPeriodo, Tenant,
+    Usuario,
 )
 from app.schemas import (
     REGIMENES_LIQUIDACION, LiquidacionActivarRequest, LiquidacionApiRequest, LiquidacionDetalleResponse,
-    LiquidacionEmpresaItem, LiquidacionEventoItem, LiquidacionListaResponse, LiquidacionRegimenRequest,
+    LiquidacionEmpresaItem, LiquidacionEventoItem, LiquidacionLecturaRequest, LiquidacionLecturasResponse,
+    LiquidacionListaResponse, LiquidacionRegimenRequest,
 )
 from app.security import cifrar_clave_sol, descifrar_clave_sol
 from app.sire_api import ErrorApiSire, probar_conexion
@@ -285,3 +293,110 @@ def cambiar_regimen(
     _evento(db, empresa.id, usuario, "regimen_cambiado", datos.regimen)
     db.commit()
     return _item(db, empresa, config)
+
+
+# --- Bloque 1: lecturas de SUNAT ---
+
+def _puede_leer(empresa: Empresa, usuario: Usuario) -> bool:
+    return es_admin(usuario) or empresa.asignado_a_usuario_id == usuario.id
+
+
+def _resumen_periodo(db: Session, empresa_id: str, periodo: str, hasta_cuenta: str) -> dict:
+    """Lo que hay guardado para el periodo, para que se pueda revisar contra SUNAT."""
+    C = LiquidacionComprobante
+    resumen = {}
+    for libro, nombre in (("RVIE", "ventas"), ("RCE", "compras")):
+        n, base, igv = db.query(
+            func.count(C.id), func.coalesce(func.sum(C.base_gravada + C.descuento_base), 0),
+            func.coalesce(func.sum(C.igv + C.descuento_igv), 0),
+        ).filter(C.empresa_id == empresa_id, C.libro == libro, C.fuente == "propuesta", C.periodo == periodo).one()
+        resumen[nombre] = {"cantidad": n, "base": round(base, 2), "igv": round(igv, 2)}
+
+    R = LiquidacionRetencionPercepcion
+    for tipo, origen, nombre in (("retencion", "comprobante", "retenciones"), ("percepcion", "comprobante", "percepciones"),
+                                 ("percepcion", "aduanas", "aduanas")):
+        n, monto = db.query(func.count(R.id), func.coalesce(func.sum(R.monto), 0)).filter(
+            R.empresa_id == empresa_id, R.tipo == tipo, R.origen == origen, R.periodo == periodo, R.cuenta.is_(True),
+        ).one()
+        resumen[nombre] = {"cantidad": n, "monto": round(monto, 2)}
+
+    D = LiquidacionDeclaracion
+    n, ultimo = db.query(func.count(D.id), func.max(D.periodo)).filter(D.empresa_id == empresa_id, D.vigente.is_(True)).one()
+    resumen["declaraciones"] = {"cantidad": n, "ultimo_periodo": ultimo}
+
+    CC = LiquidacionCuentaControl
+    n, ultimo = db.query(func.count(func.distinct(CC.periodo)), func.max(CC.periodo)).filter(
+        CC.empresa_id == empresa_id, CC.periodo <= hasta_cuenta,
+    ).one()
+    resumen["cuenta_control"] = {"periodos": n, "ultimo_periodo": ultimo}
+    return resumen
+
+
+def _estado_lecturas(db: Session, empresa: Empresa, usuario: Usuario, periodo: str) -> dict:
+    hoy = hoy_peru()
+    ultimas = []
+    for fuente in FUENTES:
+        lectura = (
+            db.query(LiquidacionLectura)
+            .filter(
+                LiquidacionLectura.empresa_id == empresa.id,
+                LiquidacionLectura.fuente == fuente,
+                LiquidacionLectura.periodo_hasta == rango_fuente(fuente, periodo, hoy)[1],
+            )
+            .order_by(LiquidacionLectura.creado_en.desc())
+            .first()
+        )
+        if lectura is not None:
+            ultimas.append(lectura)
+    return {
+        "periodo": periodo,
+        "en_curso": bool(lecturas_en_curso(db, empresa.id, datetime.now(timezone.utc))),
+        "puede_leer": _puede_leer(empresa, usuario),
+        "lecturas": ultimas,
+        "resumen": _resumen_periodo(db, empresa.id, periodo, rango_fuente("cuenta_control", periodo, hoy)[1]),
+    }
+
+
+@router.get("/empresas/{empresa_id}/liquidacion/lecturas", response_model=LiquidacionLecturasResponse)
+def ver_lecturas(
+    empresa_id: str,
+    periodo: str = Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_actual),
+):
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
+    return _estado_lecturas(db, empresa, usuario, periodo)
+
+
+@router.post("/empresas/{empresa_id}/liquidacion/lecturas", response_model=LiquidacionLecturasResponse)
+def pedir_lecturas(
+    empresa_id: str,
+    datos: LiquidacionLecturaRequest,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_actual),
+):
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
+    if not _puede_leer(empresa, usuario):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo el responsable asignado o un administrador puede leer los datos de SUNAT.")
+    config = db.get(LiquidacionEmpresa, empresa.id)
+    if config is None or not config.activa:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Primero un administrador debe activar la Liquidación en vivo para esta empresa.")
+    if datos.periodo > hoy_peru().strftime("%Y-%m"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ese periodo todavía no empieza.")
+    if db.query(CredencialSol).filter(CredencialSol.empresa_id == empresa.id).first() is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La empresa no tiene clave SOL guardada.")
+
+    tiene_api = bool(config.api_client_id and config.api_secret_cifrado)
+    fuentes = datos.fuentes or [f for f in FUENTES if f != "sire" or tiene_api]
+    if any(f not in FUENTES for f in fuentes):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fuente no válida.")
+    if "sire" in fuentes and not tiene_api:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Primero guarda las credenciales de la API del SIRE.")
+    if lecturas_en_curso(db, empresa.id, datetime.now(timezone.utc)):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ya hay una lectura en curso para esta empresa. Espera a que termine.")
+
+    lecturas = crear_lecturas(db, empresa.id, usuario.id, datos.periodo, fuentes)
+    _evento(db, empresa.id, usuario, "lectura_solicitada", datos.periodo)
+    db.commit()
+    encolar_lecturas(lecturas)
+    return _estado_lecturas(db, empresa, usuario, datos.periodo)

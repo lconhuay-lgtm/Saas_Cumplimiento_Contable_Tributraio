@@ -1,13 +1,19 @@
 """
-API oficial del SIRE (Liquidacion en vivo, Etapa 1): token OAuth2 de SUNAT
-y la consulta de periodos que sirve de "Probar conexion".
+API oficial del SIRE (Liquidacion en vivo): token OAuth2 de SUNAT, la
+consulta de periodos que sirve de "Probar conexion" (Etapa 1) y la descarga
+de la propuesta de ventas (RVIE) y compras (RCE) de un periodo (Bloque 1).
 
 El cliente genera su client_id/client_secret en el Menu SOL ("Credenciales
 de API SUNAT"); el usuario y la clave SOL son los mismos que ya guarda
 CredencialSol. SUNAT pide el usuario como RUC + usuario SOL, todo junto.
 Nada de esto usa Selenium ni ocupa la sesion SOL de la empresa.
 """
+import io
 import logging
+import time
+import unicodedata
+import zipfile
+from datetime import datetime
 
 import requests
 
@@ -85,3 +91,168 @@ def probar_conexion(client_id: str, client_secret: str, ruc: str, usuario_sol: s
         raise ErrorApiSire(f"La conexión funcionó, pero el SIRE devolvió un error: {detalle}")
     datos = r.json()
     return sum(len(ejercicio.get("lisPeriodos") or []) for ejercicio in datos) if isinstance(datos, list) else 0
+
+
+# --- Propuesta del periodo (Bloque 1) ---
+# Probado con BASCAT el 28/10/2026: la propuesta del mes en curso existe
+# durante el mes. Se pide por ticket, el archivo esta listo en ~10 s y llega
+# en un zip con un txt separado por "|" con encabezado.
+URL_LIBROS = "https://api-sire.sunat.gob.pe/v1/contribuyente/migeigv/libros"
+COD_LIBRO = {"RVIE": "140000", "RCE": "080000"}
+ESPERA_TICKET_SEG = 10
+INTENTOS_TICKET = 18
+
+
+def _get(token: str, url: str, **params) -> requests.Response:
+    try:
+        return requests.get(
+            url, params=params or None, timeout=60,
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        )
+    except requests.RequestException as e:
+        raise ErrorApiSire(f"El SIRE no respondió ({e.__class__.__name__}). Se reintentará en la próxima lectura.")
+
+
+def _exigir_200(r: requests.Response, que: str) -> None:
+    if r.status_code == 429:
+        raise ErrorApiSire(f"El SIRE pidió esperar antes de {que} (demasiados pedidos seguidos).")
+    if r.status_code != 200:
+        raise ErrorApiSire(f"El SIRE devolvió un error al {que}: HTTP {r.status_code} {_detalle_sunat(r)}")
+
+
+def pedir_propuesta(token: str, libro: str, periodo: str) -> str:
+    """Pide el archivo de la propuesta (periodo "AAAAMM") y devuelve el numero de ticket."""
+    if libro == "RVIE":
+        r = _get(token, f"{URL_LIBROS}/rvie/propuesta/web/propuesta/{periodo}/exportapropuesta", codTipoArchivo="0")
+    else:
+        r = _get(
+            token, f"{URL_LIBROS}/rce/propuesta/web/propuesta/{periodo}/exportacioncomprobantepropuesta",
+            codTipoArchivo="0", codOrigenEnvio="2",
+        )
+    _exigir_200(r, f"pedir la propuesta {libro} {periodo}")
+    ticket = (r.json() or {}).get("numTicket")
+    if not ticket:
+        raise ErrorApiSire(f"El SIRE no devolvió ticket para la propuesta {libro} {periodo}.")
+    return str(ticket)
+
+
+def descargar_ticket(token: str, libro: str, periodo: str, ticket: str) -> bytes:
+    """Espera a que el ticket termine y baja su archivo."""
+    for _ in range(INTENTOS_TICKET):
+        time.sleep(ESPERA_TICKET_SEG)
+        r = _get(
+            token, f"{URL_LIBROS}/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets",
+            perIni=periodo, perFin=periodo, page="1", perPage="20", numTicket=ticket,
+        )
+        _exigir_200(r, f"consultar el ticket {ticket}")
+        registros = (r.json() or {}).get("registros") or []
+        reg = registros[0] if registros else {}
+        if "error" in str(reg.get("desEstadoProceso") or "").lower():
+            raise ErrorApiSire(f"El SIRE no pudo generar la propuesta {libro} {periodo}: {reg.get('desEstadoProceso')}")
+        archivos = reg.get("archivoReporte") or []
+        if not archivos:
+            continue
+        a = archivos[0]
+        d = _get(
+            token, f"{URL_LIBROS}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte",
+            nomArchivoReporte=a.get("nomArchivoReporte"),
+            # SUNAT escribe "Achivo" en este campo.
+            codTipoArchivoReporte=a.get("codTipoAchivoReporte") or a.get("codTipoArchivoReporte"),
+            codLibro=COD_LIBRO[libro], perTributario=periodo, codProceso=reg.get("codProceso"), numTicket=ticket,
+        )
+        _exigir_200(d, f"descargar la propuesta {libro} {periodo}")
+        return d.content
+    raise ErrorApiSire(f"El SIRE no terminó de generar la propuesta {libro} {periodo} en 3 minutos.")
+
+
+def _clave_columna(nombre: str) -> str:
+    """'Apellidos Nombres/ Razón  Social' -> 'apellidos nombres/ razon social' (sin BOM, tildes ni espacios dobles)."""
+    sin_tildes = unicodedata.normalize("NFKD", nombre.replace("﻿", "")).encode("ascii", "ignore").decode()
+    return " ".join(sin_tildes.lower().split())
+
+
+def leer_archivo_propuesta(contenido: bytes) -> list[dict]:
+    """Filas del txt de la propuesta (dentro del zip), como {columna normalizada: valor}."""
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(contenido))
+        texto = zf.read(zf.namelist()[0]).decode("utf-8", errors="replace")
+    except zipfile.BadZipFile:
+        texto = contenido.decode("utf-8", errors="replace")
+    lineas = [linea for linea in texto.splitlines() if linea.strip()]
+    if not lineas:
+        return []
+    columnas = [_clave_columna(c) for c in lineas[0].split("|")]
+    return [dict(zip(columnas, (v.strip() for v in linea.split("|")))) for linea in lineas[1:]]
+
+
+def _num(valor) -> float:
+    try:
+        return round(float(str(valor or "0").replace(",", "")), 2)
+    except ValueError:
+        return 0.0
+
+
+def _fecha(valor) -> str | None:
+    try:
+        return datetime.strptime(str(valor or "").strip(), "%d/%m/%Y").date().isoformat()
+    except ValueError:
+        return None
+
+
+def normalizar_comprobante(libro: str, fila: dict, periodo: str) -> dict:
+    """
+    Una fila de la propuesta con los campos de LiquidacionComprobante.
+    periodo: "AAAA-MM" pedido (se usa si la fila no trae el suyo).
+    """
+    g = fila.get
+    tipo, serie, numero = g("tipo cp/doc.", ""), g("serie del cdp", ""), g("nro cp o doc. nro inicial (rango)", "")
+    doc = g("nro doc identidad", "")
+    per = g("periodo", "")
+    comun = {
+        "car_sunat": g("car sunat", "") or f"{tipo}-{serie}-{numero}-{doc}",
+        "periodo": f"{per[:4]}-{per[4:6]}" if len(per) >= 6 and per[:6].isdigit() else periodo,
+        "fecha_emision": _fecha(g("fecha de emision")),
+        "tipo_comprobante": tipo,
+        "serie": serie,
+        "numero": numero,
+        "doc_contraparte": doc,
+        "nombre_contraparte": g("apellidos nombres/ razon social", ""),
+        "total": _num(g("total cp")),
+        "moneda": g("moneda", "") or "PEN",
+        "datos": fila,
+    }
+    if libro == "RVIE":
+        return {
+            **comun,
+            "base_gravada": _num(g("bi gravada")),
+            "igv": _num(g("igv / ipm")),
+            "descuento_base": _num(g("dscto bi")),
+            "descuento_igv": _num(g("dscto igv / ipm")),
+            "base_dgng": 0.0,
+            "igv_dgng": 0.0,
+            "no_gravado": round(_num(g("mto exonerado")) + _num(g("mto inafecto")), 2),
+            "exportacion": _num(g("valor facturado exportacion")),
+            "detraccion": "",
+            "dam": "",
+        }
+    return {
+        **comun,
+        "base_gravada": _num(g("bi gravado dg")),
+        "igv": _num(g("igv / ipm dg")),
+        "descuento_base": 0.0,
+        "descuento_igv": 0.0,
+        "base_dgng": _num(g("bi gravado dgng")),
+        "igv_dgng": _num(g("igv / ipm dgng")),
+        "no_gravado": _num(g("valor adq. ng")),
+        "exportacion": 0.0,
+        "detraccion": g("detraccion", ""),
+        "dam": g("cod. dam o dsi", ""),
+    }
+
+
+def descargar_propuesta(token: str, libro: str, periodo: str) -> list[dict]:
+    """Comprobantes de la propuesta del periodo ("AAAA-MM"), ya normalizados."""
+    aaaamm = periodo.replace("-", "")
+    ticket = pedir_propuesta(token, libro, aaaamm)
+    filas = leer_archivo_propuesta(descargar_ticket(token, libro, aaaamm, ticket))
+    return [normalizar_comprobante(libro, f, periodo) for f in filas]

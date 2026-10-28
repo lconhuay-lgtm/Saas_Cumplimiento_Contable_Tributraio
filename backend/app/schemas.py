@@ -1027,3 +1027,33 @@ class LiquidacionApiRequest(BaseModel):
 
 class LiquidacionRegimenRequest(BaseModel):
     regimen: str
+
+
+# --- Liquidacion en vivo (Bloque 1: lecturas de SUNAT) ---
+
+class LiquidacionLecturaRequest(BaseModel):
+    periodo: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    fuentes: list[str] | None = None  # None: todas (el SIRE solo si hay credenciales de la API)
+
+
+class LiquidacionLecturaItem(BaseModel):
+    fuente: str
+    estado: str  # pendiente | en_progreso | completado | error
+    etapa: str | None
+    periodo_desde: str | None
+    periodo_hasta: str | None
+    registros_leidos: int
+    creado_en: datetime
+    finalizado_en: datetime | None
+    error: str | None
+
+    class Config:
+        from_attributes = True
+
+
+class LiquidacionLecturasResponse(BaseModel):
+    periodo: str
+    en_curso: bool
+    puede_leer: bool
+    lecturas: list[LiquidacionLecturaItem]  # la ultima de cada fuente
+    resumen: dict  # lo guardado para el periodo, por fuente

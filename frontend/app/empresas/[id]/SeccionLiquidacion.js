@@ -6,10 +6,12 @@ import { api } from "../../../lib/api";
 import { fechaHoraPeru } from "../../../lib/fechas";
 import { ACCIONES_EVENTO, ESTADOS_LIQUIDACION, REGIMENES, textoRegimen } from "../../../lib/liquidacion";
 import ConfirmDialog from "../../../components/ConfirmDialog";
+import DatosSunatLiquidacion from "./DatosSunatLiquidacion";
 
 // Pestana "Liquidacion en vivo" de cada empresa (Etapa 1): activacion (admin),
 // regimen tributario, credenciales de la API del SIRE (solo el responsable)
-// y prueba de conexion, con el historial de cambios.
+// y prueba de conexion, con el historial de cambios. Bloque 1: los datos
+// leidos de SUNAT para el calculo (DatosSunatLiquidacion).
 export default function SeccionLiquidacion({ empresaId }) {
   const [datos, setDatos] = useState(null);
   const [error, setError] = useState("");
@@ -238,6 +240,8 @@ export default function SeccionLiquidacion({ empresaId }) {
             )}
           </div>
         </div>
+
+        {datos.activa && <DatosSunatLiquidacion empresaId={empresaId} />}
       </div>
 
       {/* Historial */}

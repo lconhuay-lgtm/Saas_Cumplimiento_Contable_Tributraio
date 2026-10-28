@@ -352,6 +352,11 @@ export const api = {
   probarApiSire: (empresaId) => apiFetch(`/empresas/${empresaId}/liquidacion/probar`, { method: "POST" }),
   cambiarRegimenLiquidacion: (empresaId, regimen) =>
     apiFetch(`/empresas/${empresaId}/liquidacion/regimen`, { method: "PUT", body: JSON.stringify({ regimen }) }),
+  // Bloque 1: lecturas de SUNAT de un periodo ("AAAA-MM").
+  verLecturasLiquidacion: (empresaId, periodo) =>
+    apiFetch(`/empresas/${empresaId}/liquidacion/lecturas?periodo=${periodo}`),
+  pedirLecturasLiquidacion: (empresaId, periodo) =>
+    apiFetch(`/empresas/${empresaId}/liquidacion/lecturas`, { method: "POST", body: JSON.stringify({ periodo }) }),
 
   importarEmpresas: (archivo) => {
     const formData = new FormData();
