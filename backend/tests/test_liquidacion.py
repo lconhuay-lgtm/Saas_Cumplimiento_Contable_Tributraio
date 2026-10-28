@@ -2,7 +2,10 @@
 from datetime import date
 
 import app.routers.liquidacion as liquidacion
-from app.models import DeclaracionSunat, LiquidacionEmpresa, Usuario
+from app.models import (
+    DeclaracionSunat, LiquidacionCalculo, LiquidacionComprobante, LiquidacionConciliacion, LiquidacionCuentaControl,
+    LiquidacionDeclaracion, LiquidacionEmpresa, LiquidacionEvento, LiquidacionLectura, LiquidacionRetencionPercepcion, Usuario,
+)
 from app.sire_api import ErrorApiSire
 from tests.test_rbac_miembro import _armar_tenant_con_miembro
 
@@ -102,3 +105,25 @@ def test_probar_conexion(client, db_session, monkeypatch):
 def test_miembro_no_ve_empresa_ajena(client, db_session):
     ctx = _armar_tenant_con_miembro(client, db_session)
     assert client.get(f"/empresas/{ctx['empresa_ajena_id']}/liquidacion", headers=ctx["headers_miembro"]).status_code == 404
+
+
+def test_eliminar_empresa_borra_sus_datos_de_liquidacion(client, db_session):
+    ctx = _armar_tenant_con_miembro(client, db_session)
+    eid = ctx["empresa_asignada_id"]
+    _activar(client, ctx, eid)
+    db_session.add_all([
+        LiquidacionLectura(empresa_id=eid, fuente="sire"),
+        LiquidacionDeclaracion(empresa_id=eid, periodo="2026-09", num_orden="1212191089", casillas={"184": 55213.0}),
+        LiquidacionComprobante(empresa_id=eid, periodo="2026-09", libro="RVIE", fuente="propuesta", car_sunat="CAR1", datos={}),
+        LiquidacionRetencionPercepcion(empresa_id=eid, tipo="retencion", origen="comprobante", documento="R001-1", periodo="2026-09"),
+        LiquidacionCuentaControl(empresa_id=eid, periodo="2026-09", tipo="retencion"),
+        LiquidacionCalculo(empresa_id=eid, periodo="2026-10", fecha=date(2026, 10, 28), casillas={}, fuentes={}),
+        LiquidacionConciliacion(empresa_id=eid, periodo="2026-09", num_orden="1212191089", casilla="184"),
+    ])
+    db_session.commit()
+
+    assert client.delete(f"/empresas/{eid}", headers=ctx["headers_admin"]).status_code == 204
+    db_session.expire_all()
+    for modelo in (LiquidacionEmpresa, LiquidacionEvento, LiquidacionLectura, LiquidacionDeclaracion, LiquidacionComprobante,
+                   LiquidacionRetencionPercepcion, LiquidacionCuentaControl, LiquidacionCalculo, LiquidacionConciliacion):
+        assert db_session.query(modelo).filter_by(empresa_id=eid).count() == 0, modelo.__tablename__

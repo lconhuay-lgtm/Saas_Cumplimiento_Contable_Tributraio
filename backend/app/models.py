@@ -192,6 +192,17 @@ class Empresa(Base):
     canario_checks: Mapped[list["CanarioCheck"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     obligaciones: Mapped[list["EmpresaObligacion"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     tareas: Mapped[list["TareaObligacion"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    # Liquidacion en vivo: sin estas relaciones, eliminar una empresa que ya
+    # tenia configuracion o datos de liquidacion fallaba por la llave foranea.
+    liquidacion: Mapped["LiquidacionEmpresa | None"] = relationship(cascade="all, delete-orphan", uselist=False)
+    liquidacion_eventos: Mapped[list["LiquidacionEvento"]] = relationship(cascade="all, delete-orphan")
+    liquidacion_lecturas: Mapped[list["LiquidacionLectura"]] = relationship(cascade="all, delete-orphan")
+    liquidacion_declaraciones: Mapped[list["LiquidacionDeclaracion"]] = relationship(cascade="all, delete-orphan")
+    liquidacion_comprobantes: Mapped[list["LiquidacionComprobante"]] = relationship(cascade="all, delete-orphan")
+    liquidacion_retenciones_percepciones: Mapped[list["LiquidacionRetencionPercepcion"]] = relationship(cascade="all, delete-orphan")
+    liquidacion_cuenta_control: Mapped[list["LiquidacionCuentaControl"]] = relationship(cascade="all, delete-orphan")
+    liquidacion_calculos: Mapped[list["LiquidacionCalculo"]] = relationship(cascade="all, delete-orphan")
+    liquidacion_conciliaciones: Mapped[list["LiquidacionConciliacion"]] = relationship(cascade="all, delete-orphan")
 
 
 class CredencialSol(Base):
@@ -1018,4 +1029,204 @@ class LiquidacionEvento(Base):
     usuario_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
     accion: Mapped[str] = mapped_column(String(40), nullable=False)
     detalle: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+# --- Liquidacion en vivo: piloto de octubre 2026 (PLAN_LIQUIDACION_EN_VIVO.md, Bloque 0) ---
+# Todo se lee de SUNAT en solo lectura. Montos en soles con decimales tal como
+# vienen; el redondeo a soles enteros (parametro 4.3) se hace al calcular.
+
+
+class LiquidacionLectura(Base):
+    """
+    Bitacora de cada lectura de una fuente para la Liquidacion en vivo, mismo
+    patron que las demas consultas (estado / etapa / error).
+
+    fuente: "declaraciones" (0621 por los servicios de Mis Declaraciones y
+    Pagos) | "sire" (propuesta por la API oficial) | "retenciones" |
+    "percepciones" (comprobantes recibidos, Menu SOL) | "aduanas"
+    (Liquidaciones de Cobranza, consulta publica) | "cuenta_control".
+    """
+    __tablename__ = "liquidacion_lecturas"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    solicitado_por: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
+    fuente: Mapped[str] = mapped_column(String(20), nullable=False)
+    periodo_desde: Mapped[str | None] = mapped_column(String(7), nullable=True)  # "YYYY-MM"
+    periodo_hasta: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    estado: Mapped[str] = mapped_column(String(20), default="pendiente", nullable=False, index=True)
+    etapa: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    registros_leidos: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    iniciado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finalizado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+
+
+class LiquidacionDeclaracion(Base):
+    """
+    Un 0621 presentado, con todas sus casillas tal como las devuelve
+    factoriaDetalleFormulario ({"100": 1186202.0, "184": 55213.0, ...}).
+    Una fila por numero de orden: la original y cada rectificatoria. Para un
+    periodo manda la ultima presentada (vigente=True, parametro CA7).
+    """
+    __tablename__ = "liquidacion_declaraciones"
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "num_orden", name="uq_liq_declaracion_empresa_orden"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    periodo: Mapped[str] = mapped_column(String(7), nullable=False, index=True)  # "YYYY-MM"
+    num_orden: Mapped[str] = mapped_column(String(20), nullable=False)
+    rectificatoria: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    fecha_presentacion: Mapped[date | None] = mapped_column(Date, nullable=True)
+    casillas: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    vigente: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    leido_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class LiquidacionComprobante(Base):
+    """
+    Un comprobante del Registro de Ventas (RVIE) o de Compras (RCE) del SIRE,
+    leido por la API oficial. car_sunat es la clave unica que SUNAT le da a
+    cada comprobante en el registro. fuente: "propuesta" | "preliminar" |
+    "presentado" (parametro 3.3: manda el presentado, luego el preliminar,
+    luego la propuesta).
+
+    Ventas: base_gravada / igv son "BI Gravada" / "IGV / IPM" y
+    descuento_base / descuento_igv los "Dscto". Compras: base_gravada / igv
+    son los "DG" (destinados a ventas gravadas) y los destinados a gravadas y
+    no gravadas van en base_dgng / igv_dgng. La fila completa queda en datos
+    por si una columna hace falta despues.
+    """
+    __tablename__ = "liquidacion_comprobantes"
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "libro", "fuente", "car_sunat", name="uq_liq_comprobante_empresa_libro_fuente_car"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    periodo: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
+    libro: Mapped[str] = mapped_column(String(4), nullable=False)  # "RVIE" | "RCE"
+    fuente: Mapped[str] = mapped_column(String(12), nullable=False)
+    car_sunat: Mapped[str] = mapped_column(String(40), nullable=False)
+    fecha_emision: Mapped[date | None] = mapped_column(Date, nullable=True)
+    tipo_comprobante: Mapped[str] = mapped_column(String(4), nullable=False, default="")
+    serie: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    numero: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    doc_contraparte: Mapped[str] = mapped_column(String(15), nullable=False, default="")
+    nombre_contraparte: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    base_gravada: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    igv: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    descuento_base: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    descuento_igv: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    base_dgng: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    igv_dgng: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    no_gravado: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    exportacion: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    total: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    moneda: Mapped[str] = mapped_column(String(3), nullable=False, default="PEN")
+    detraccion: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    dam: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    datos: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    leido_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class LiquidacionRetencionPercepcion(Base):
+    """
+    Una retencion o percepcion de IGV que le hicieron a la empresa.
+
+    origen: "comprobante" (comprobante electronico recibido, Menu SOL
+    11.5.8.1.2 / 11.5.7.1.2) | "aduanas" (Liquidacion de Cobranza tipo 0038,
+    consulta publica). documento: serie-numero del comprobante o numero de la
+    LC. periodo: mes en que cuenta (parametros 3.5 y 3.6: emision del
+    comprobante; en aduanas, fecha de liquidacion). Los revertidos y las LC
+    pendientes no cuentan (3.5, 3.7) pero se guardan.
+    """
+    __tablename__ = "liquidacion_retenciones_percepciones"
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "tipo", "origen", "ruc_agente", "documento", name="uq_liq_retper_empresa_documento"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    tipo: Mapped[str] = mapped_column(String(10), nullable=False)  # "retencion" | "percepcion"
+    origen: Mapped[str] = mapped_column(String(12), nullable=False)  # "comprobante" | "aduanas"
+    ruc_agente: Mapped[str] = mapped_column(String(15), nullable=False, default="")
+    documento: Mapped[str] = mapped_column(String(40), nullable=False)
+    periodo: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
+    fecha_emision: Mapped[date | None] = mapped_column(Date, nullable=True)  # en aduanas: fecha de liquidacion
+    fecha_pago: Mapped[date | None] = mapped_column(Date, nullable=True)  # solo aduanas
+    monto: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    cuenta: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)  # False: revertido o LC pendiente
+    referencia: Mapped[str] = mapped_column(String(40), nullable=False, default="")  # DUA en aduanas
+    leido_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class LiquidacionCuentaControl(Base):
+    """
+    "Consulto mis Retenciones y Percepciones IGV - Sujeto" (Menu SOL
+    12.8.2.1.2) por periodo declarado. Para las percepciones de importacion
+    SUNAT pide el RUC de Aduanas (20131312955) como agente.
+    """
+    __tablename__ = "liquidacion_cuenta_control"
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "periodo", "tipo", "ruc_agente", name="uq_liq_cuenta_control"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    periodo: Mapped[str] = mapped_column(String(7), nullable=False)
+    tipo: Mapped[str] = mapped_column(String(10), nullable=False)  # "retencion" | "percepcion"
+    ruc_agente: Mapped[str] = mapped_column(String(15), nullable=False, default="")  # "" = todos los agentes
+    monto_base: Mapped[float] = mapped_column(Float, nullable=False, default=0)  # pagado / cobrado / valor de la DAM
+    monto: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    leido_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class LiquidacionCalculo(Base):
+    """
+    Foto del calculo de un periodo en un dia (parametro 3.12): las casillas
+    estimadas con el mismo numero que el 0621 ({"131": 211707, "184": ...},
+    en soles enteros) y, por componente, de donde salio cada dato y de cuando
+    es (fuentes). Recalcular el mismo dia reemplaza la foto de ese dia.
+    """
+    __tablename__ = "liquidacion_calculos"
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "periodo", "fecha", name="uq_liq_calculo_empresa_periodo_fecha"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    periodo: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
+    fecha: Mapped[date] = mapped_column(Date, nullable=False)  # dia de Lima
+    casillas: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    fuentes: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class LiquidacionConciliacion(Base):
+    """
+    Diferencia entre lo estimado y lo declarado en una casilla de un 0621
+    (parametros CO1-CO4): se avisa desde S/ 10; el responsable la marca como
+    explicada con un comentario y el supervisor la ve.
+    """
+    __tablename__ = "liquidacion_conciliaciones"
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "num_orden", "casilla", name="uq_liq_conciliacion_orden_casilla"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    periodo: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
+    num_orden: Mapped[str] = mapped_column(String(20), nullable=False)
+    casilla: Mapped[str] = mapped_column(String(5), nullable=False)
+    estimado: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    declarado: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    explicada: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    comentario: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    explicada_por_usuario_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
+    explicada_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
