@@ -269,6 +269,9 @@ def ejecutar_lecturas_liquidacion(lectura_ids: list[str]) -> None:
     db = SessionLocal()
 
     def _guardar(lectura: LiquidacionLectura, **campos) -> None:
+        # La etapa la escribe otra sesion (_reportero): sin refrescar, poner
+        # etapa=None no se detecta como cambio y la ultima etapa quedaba.
+        db.refresh(lectura)
         for k, v in campos.items():
             setattr(lectura, k, v)
         db.commit()

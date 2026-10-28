@@ -280,6 +280,7 @@ def test_trabajo_de_lecturas(client, db_session, monkeypatch):
         "declaraciones": ("completado", 1), "retenciones": ("completado", 1), "percepciones": ("error", 0),
         "cuenta_control": ("completado", 1), "aduanas": ("completado", 0), "sire": ("completado", 4),
     }
+    assert {l.etapa for l in db_session.query(LiquidacionLectura)} == {None}  # no queda la ultima etapa
     assert ("sol", (date(2026, 10, 1), date(2026, 10, 31)), ("2025-10", "2026-09")) in llamadas
     assert db_session.query(LiquidacionComprobante).count() == 4
 
