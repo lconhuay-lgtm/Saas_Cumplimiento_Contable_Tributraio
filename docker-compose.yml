@@ -47,8 +47,11 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql://buzon:buzon_dev_password@postgres:5432/buzon_saas}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       PYTHONUNBUFFERED: "1"
+    # Solo 127.0.0.1, igual que postgres/redis: en produccion se entra por el
+    # dominio (Caddy en el servidor reenvia a localhost:8000). Publicado en
+    # 0.0.0.0 la API quedaba abierta por IP, saltandose Caddy y Cloudflare.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -150,8 +153,9 @@ services:
     restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    # Solo 127.0.0.1 por lo mismo que el backend (Caddy reenvia a localhost:3000).
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - backend
 
