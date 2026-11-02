@@ -37,7 +37,7 @@ export const ESTADOS_LIQUIDACION = {
   lista: {
     texto: "Lista",
     chip: "bg-emerald-50 text-emerald-700",
-    siguiente: "Todo configurado. Lee los datos de SUNAT del mes para ver el estimado.",
+    siguiente: "Todo configurado. Los datos de SUNAT se leen solos cada madrugada; el estimado está en Cumplimiento › Liquidación en vivo.",
   },
 };
 

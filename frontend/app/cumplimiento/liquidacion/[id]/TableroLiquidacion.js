@@ -1,9 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import { AlertTriangle, Calculator, CheckCircle2 } from "lucide-react";
-import { api } from "../../../lib/api";
-import { fechaHoraPeru, fechaPeru, hoyPeruIso } from "../../../lib/fechas";
-import { textoPeriodo, textoSoles } from "../../../lib/liquidacion";
+import { api } from "../../../../lib/api";
+import { fechaHoraPeru, fechaPeru, hoyPeruIso } from "../../../../lib/fechas";
+import { textoPeriodo, textoSoles } from "../../../../lib/liquidacion";
 
 // Bloque 2 de la Liquidacion en vivo: el estimado del IGV y la Renta del
 // periodo si el mes cerrara hoy (backend/app/calculo_liquidacion.py), con

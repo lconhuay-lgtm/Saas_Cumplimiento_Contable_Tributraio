@@ -11,7 +11,7 @@ import app.routers.liquidacion as liquidacion
 import lectores_liquidacion
 from app.aduanas_lc import extraer_detalle, extraer_listado, meses
 from app.models import (
-    LiquidacionCalculo, LiquidacionComprobante, LiquidacionCuentaControl, LiquidacionDeclaracion, LiquidacionEmpresa, LiquidacionLectura,
+    CronogramaVencimiento, LiquidacionCalculo, LiquidacionComprobante, LiquidacionCuentaControl, LiquidacionDeclaracion, LiquidacionEmpresa, LiquidacionLectura,
     LiquidacionRetencionPercepcion,
 )
 from app.security import cifrar_clave_sol
@@ -317,3 +317,73 @@ def test_clave_rechazada_no_se_reintenta(client, db_session, monkeypatch):
     assert estado["declaraciones"] == ("error", "SUNAT rechazó el usuario o la clave SOL")
     assert estado["retenciones"] == ("error", "SUNAT rechazó el usuario o la clave SOL")
     assert estado["aduanas"][0] == "completado"  # Aduanas no usa la clave
+
+
+def test_dias_habiles_hasta_el_vencimiento():
+    assert jobs_liquidacion.dias_habiles_hasta(date(2026, 11, 3), date(2026, 11, 17)) == 10
+    assert jobs_liquidacion.dias_habiles_hasta(date(2026, 11, 13), date(2026, 11, 16)) == 1  # viernes -> lunes
+    assert jobs_liquidacion.dias_habiles_hasta(date(2026, 11, 17), date(2026, 11, 17)) == 0
+    assert jobs_liquidacion.dias_habiles_hasta(date(2026, 11, 18), date(2026, 11, 17)) == -1
+
+
+def test_lectura_automatica_de_madrugada(client, db_session, monkeypatch):
+    ctx = _preparar_empresa(client, db_session)
+    emp, otra = ctx["empresa_asignada_id"], ctx["empresa_ajena_id"]
+    client.patch(f"/empresas/{otra}", json={"activo": True}, headers=ctx["headers_admin"])
+    client.post(f"/liquidacion/empresas/{otra}/activar", json={"activa": True}, headers=ctx["headers_admin"])
+    db_session.add(CronogramaVencimiento(periodo_tributario="2026-10", grupo="1", tipo="mensual",
+                                         fecha_vencimiento=datetime(2026, 11, 17, tzinfo=timezone.utc)))
+    db_session.commit()
+    monkeypatch.setattr(jobs_liquidacion, "SessionLocal", sessionmaker(bind=db_session.get_bind(), autoflush=False))
+    encoladas = []
+    monkeypatch.setattr(jobs_liquidacion, "encolar_lecturas", lambda lecturas, espera=None: encoladas.append((
+        lecturas[0].empresa_id, espera.total_seconds() if espera else 0,
+        {l.fuente: (l.periodo_desde, l.periodo_hasta) for l in lecturas},
+    )))
+
+    def correr(hoy):
+        encoladas.clear()
+        r = jobs_liquidacion.encolar_liquidacion_automatica(hoy)
+        for l in db_session.query(LiquidacionLectura).filter(LiquidacionLectura.estado == "pendiente"):
+            l.estado, l.finalizado_en = "completado", datetime.now(timezone.utc)
+        db_session.commit()
+        return r, {e: fuentes for e, _, fuentes in encoladas}
+
+    octubre = ("2026-10", "2026-10")
+    # Martes 3/11: solo SIRE y Aduanas de octubre (vence en 10 dias habiles). La otra empresa no tiene API del SIRE.
+    r, plan = correr(date(2026, 11, 3))
+    assert r["empresas_encoladas"] == 2
+    assert sorted(s for _, s, _ in encoladas) == [0, jobs_liquidacion.ESPACIADO_AUTOMATICO_SEG]
+    assert plan == {emp: {"aduanas": octubre, "sire": octubre}, otra: {"aduanas": octubre}}
+
+    # Jueves 5/11: ademas el Menu SOL, el 0621 (falta el de octubre) y la cuenta de control (nunca leida).
+    _, plan = correr(date(2026, 11, 5))
+    assert plan[emp] == {
+        "aduanas": octubre, "sire": octubre, "retenciones": octubre, "percepciones": octubre,
+        "declaraciones": ("2026-08", "2026-10"), "cuenta_control": ("2025-10", "2026-09"),
+    }
+
+    # Viernes 13/11: faltan 2 dias habiles -> Menu SOL a diario; la cuenta de control ya es de esta semana.
+    # La otra empresa no tiene vencimiento cargado y no es lunes ni jueves: solo Aduanas.
+    _, plan = correr(date(2026, 11, 13))
+    assert set(plan[emp]) == {"aduanas", "sire", "retenciones", "percepciones", "declaraciones"}
+    assert set(plan[otra]) == {"aduanas"}
+
+    # Aparece el 0621 de octubre: el lunes 16/11 ya sigue noviembre y no vuelve a leer el 0621.
+    # La otra empresa tiene una lectura en curso (pedida a mano): no se le encola otra.
+    jobs_liquidacion.aplicar_declaraciones(db_session, emp, [
+        {"num_orden": "99", "periodo": "2026-10", "rectificatoria": False, "fecha_presentacion": "2026-11-15", "casillas": {}},
+    ], AHORA)
+    jobs_liquidacion.crear_lecturas(db_session, otra, None, "2026-11", ["aduanas"])
+    db_session.commit()
+    r, plan = correr(date(2026, 11, 16))
+    noviembre = ("2026-11", "2026-11")
+    assert r["saltadas"] == 1 and set(plan) == {emp}
+    assert plan[emp] == {
+        "aduanas": noviembre, "sire": noviembre, "retenciones": noviembre, "percepciones": noviembre,
+        "cuenta_control": ("2025-11", "2026-10"),
+    }
+
+    # Sin el 0621, el mes anterior se sigue hasta el dia 20.
+    assert jobs_liquidacion.periodo_a_seguir(db_session, otra, date(2026, 11, 20)) == "2026-10"
+    assert jobs_liquidacion.periodo_a_seguir(db_session, otra, date(2026, 11, 21)) == "2026-11"

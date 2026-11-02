@@ -56,6 +56,7 @@ from app.scheduler_job import (
     encolar_deudas_diario, encolar_sire_programado, encolar_declaraciones_programado, encolar_detracciones_semanal,
     encolar_detracciones_carga_inicial,
 )
+from app.jobs_liquidacion import encolar_liquidacion_automatica
 from app.database import SessionLocal
 from app.cronograma_sunat import asegurar_cronograma_vigente
 from app.cronograma_sire import asegurar_cronograma_sire_vigente
@@ -99,6 +100,11 @@ SIRE_MINUTO_UTC = int(os.environ.get("SIRE_MINUTO_UTC", "30"))
 #                                   con el cronograma mensual)
 DECLARACIONES_HORA_UTC = int(os.environ.get("DECLARACIONES_HORA_UTC", "16"))
 DECLARACIONES_MINUTO_UTC = int(os.environ.get("DECLARACIONES_MINUTO_UTC", "30"))
+#   LIQUIDACION_HORA_UTC=8:00 -> 3:00 a.m. hora Peru (Liquidacion en vivo, ver
+#                                app.jobs_liquidacion.encolar_liquidacion_automatica);
+#                                termina antes de la consulta masiva de las 6:00 a.m.
+LIQUIDACION_HORA_UTC = int(os.environ.get("LIQUIDACION_HORA_UTC", "8"))
+LIQUIDACION_MINUTO_UTC = int(os.environ.get("LIQUIDACION_MINUTO_UTC", "0"))
 
 
 def job_chequeo(etiqueta: str):
@@ -192,6 +198,14 @@ def job_declaraciones_programado():
         logger.info(f"Lectura programada de declaraciones encolada: {encolar_declaraciones_programado()}")
     except Exception:
         logger.exception("Fallo la lectura programada de declaraciones")
+
+
+def job_liquidacion_automatica():
+    logger.info("Encolando la lectura automatica de la Liquidacion en vivo...")
+    try:
+        logger.info(f"Lectura automatica de la Liquidacion en vivo encolada: {encolar_liquidacion_automatica()}")
+    except Exception:
+        logger.exception("Fallo la lectura automatica de la Liquidacion en vivo")
 
 
 def job_detracciones_semanal():
@@ -363,6 +377,11 @@ if __name__ == "__main__":
         CronTrigger(hour=DECLARACIONES_HORA_UTC, minute=DECLARACIONES_MINUTO_UTC),
         id="declaraciones_programado",
     )
+    scheduler.add_job(
+        job_liquidacion_automatica,
+        CronTrigger(hour=LIQUIDACION_HORA_UTC, minute=LIQUIDACION_MINUTO_UTC),
+        id="liquidacion_automatica",
+    )
     # Lunes 12:00 p.m. de Peru (17:00 UTC), lejos de las consultas masivas del buzon.
     scheduler.add_job(
         job_detracciones_semanal,
@@ -391,6 +410,7 @@ if __name__ == "__main__":
         f"Lectura de deudas a las {DEUDAS_HORA_UTC:02d}:{DEUDAS_MINUTO_UTC:02d} UTC y "
         f"del SIRE (las que lo necesitan) a las {SIRE_HORA_UTC:02d}:{SIRE_MINUTO_UTC:02d} UTC. "
         f"Declaraciones (las que lo necesitan) a las {DECLARACIONES_HORA_UTC:02d}:{DECLARACIONES_MINUTO_UTC:02d} UTC. "
+        f"Liquidacion en vivo (empresas activadas) a las {LIQUIDACION_HORA_UTC:02d}:{LIQUIDACION_MINUTO_UTC:02d} UTC. "
         "(para probar sin esperar, usa los endpoints /admin/chequeo-nocturno, "
         "/admin/enviar-resumenes, /admin/canario/ejecutar, /admin/limpieza-diagnosticos "
         "y POST /cronograma/sincronizar; para tareas, POST /tareas/generar)"

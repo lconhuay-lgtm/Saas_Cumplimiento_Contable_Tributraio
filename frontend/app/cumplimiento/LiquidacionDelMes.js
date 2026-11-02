@@ -8,8 +8,8 @@ import { periodosElegibles, textoPeriodo, textoRegimen, textoSoles } from "../..
 import FiltroDigitoRuc, { coincideDigitoRuc } from "./FiltroDigitoRuc";
 
 // Bloque 2 de la Liquidacion en vivo: el estimado del periodo de cada empresa
-// activada, ordenado por vencimiento (parametros 4.5 y 4.7). El detalle de
-// cada una esta en su pestana "Liquidacion en vivo" (TableroLiquidacion).
+// activada, ordenado por vencimiento (parametros 4.5 y 4.7). Clic en una
+// empresa abre su tablero (cumplimiento/liquidacion/[id]).
 function textoVence(vence) {
   if (!vence) return { texto: "—", nota: "", urgente: false };
   const dias = Math.round((Date.parse(vence) - Date.parse(hoyPeruIso())) / 86400000);
@@ -121,7 +121,7 @@ export default function LiquidacionDelMes() {
               return (
                 <tr key={e.empresa_id} className="align-top">
                   <td className="px-4 py-3">
-                    <Link href={`/empresas/${e.empresa_id}?tab=liquidacion`} className="font-semibold text-ink hover:text-accent">
+                    <Link href={`/cumplimiento/liquidacion/${e.empresa_id}`} className="font-semibold text-ink hover:text-accent">
                       {e.razon_social}
                     </Link>
                     <div className="text-xs text-slate-500">

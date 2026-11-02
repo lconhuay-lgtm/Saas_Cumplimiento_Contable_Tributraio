@@ -1,24 +1,18 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { BookOpen, CheckCircle2, KeyRound, Loader2, PlugZap, Trash2 } from "lucide-react";
+import { BookOpen, Calculator, CheckCircle2, KeyRound, Loader2, PlugZap, Trash2 } from "lucide-react";
 import { api } from "../../../lib/api";
 import { fechaHoraPeru } from "../../../lib/fechas";
-import { ACCIONES_EVENTO, ESTADOS_LIQUIDACION, REGIMENES, periodosElegibles, textoRegimen } from "../../../lib/liquidacion";
+import { ACCIONES_EVENTO, ESTADOS_LIQUIDACION, REGIMENES, textoRegimen } from "../../../lib/liquidacion";
 import ConfirmDialog from "../../../components/ConfirmDialog";
-import DatosSunatLiquidacion from "./DatosSunatLiquidacion";
-import TableroLiquidacion from "./TableroLiquidacion";
 
-// Pestana "Liquidacion en vivo" de cada empresa (Etapa 1): activacion (admin),
-// regimen tributario, credenciales de la API del SIRE (solo el responsable)
-// y prueba de conexion, con el historial de cambios. Bloque 1: los datos
-// leidos de SUNAT para el calculo (DatosSunatLiquidacion). Bloque 2: arriba
-// de todo, el estimado del periodo (TableroLiquidacion); la configuracion
-// queda debajo (parametro 4.10).
+// Pestana "Liquidacion en vivo" de cada empresa: la configuracion (Etapa 1):
+// activacion (admin), regimen tributario, credenciales de la API del SIRE
+// (solo el responsable) y prueba de conexion, con el historial de cambios.
+// El tablero del mes y los datos leidos de SUNAT estan en Cumplimiento ›
+// Liquidacion en vivo › empresa (cumplimiento/liquidacion/[id]), como en el boceto.
 export default function SeccionLiquidacion({ empresaId }) {
-  const [{ lista: periodos, porDefecto }] = useState(periodosElegibles);
-  const [periodo, setPeriodo] = useState(porDefecto);
-  const [version, setVersion] = useState(0); // sube al terminar una lectura: el tablero recalcula
   const [datos, setDatos] = useState(null);
   const [error, setError] = useState("");
   const [ocupado, setOcupado] = useState(null); // "activar" | "guardar" | "probar" | "borrar" | "regimen"
@@ -84,14 +78,25 @@ export default function SeccionLiquidacion({ empresaId }) {
   return (
     <div className="mt-6 grid gap-5 xl:grid-cols-[1.4fr_1fr]">
       {datos.activa && (
-        <div className="xl:col-span-2">
-          <TableroLiquidacion empresaId={empresaId} periodo={periodo} periodos={periodos} onPeriodo={setPeriodo} version={version} />
+        <div className={`${caja} flex flex-wrap items-center justify-between gap-3 xl:col-span-2`}>
+          <div>
+            <h3 className="flex items-center gap-2 text-base font-bold text-ink">
+              <Calculator size={17} strokeWidth={1.75} className="text-accent" />
+              Liquidación del mes
+            </h3>
+            <p className="mt-1 text-sm text-slate-600">
+              El estimado del IGV y la Renta y los datos leídos de SUNAT están en Cumplimiento › Liquidación en vivo.
+            </p>
+          </div>
+          <Link
+            href={`/cumplimiento/liquidacion/${empresaId}`}
+            className="flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-bold text-white transition-colors hover:opacity-90"
+          >
+            Ver la liquidación
+          </Link>
         </div>
       )}
       <div className="space-y-5">
-        {datos.activa && (
-          <DatosSunatLiquidacion empresaId={empresaId} periodo={periodo} onLeido={() => setVersion((v) => v + 1)} />
-        )}
         {error && <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>}
 
         {/* Situacion */}

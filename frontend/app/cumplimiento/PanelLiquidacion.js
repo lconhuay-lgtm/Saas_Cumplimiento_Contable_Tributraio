@@ -78,8 +78,8 @@ export default function PanelLiquidacion() {
     <>
       <div className="mt-5 flex flex-wrap items-start justify-between gap-3">
         <p className="max-w-3xl text-sm text-slate-600">
-          Cuánto IGV y Renta pagaría cada empresa si el mes cerrara hoy, con los datos leídos de SUNAT. El detalle de cada
-          una (cómo se llega al monto y lo declarado) está en su pestaña «Liquidación en vivo».
+          Cuánto IGV y Renta pagaría cada empresa si el mes cerrara hoy, con los datos leídos de SUNAT cada madrugada.
+          Haz clic en una empresa para abrir su tablero: cómo se llega al monto, lo declarado y los datos de SUNAT.
         </p>
         <Link
           href="/liquidacion/guia"
@@ -164,7 +164,10 @@ export default function PanelLiquidacion() {
                   return (
                     <tr key={e.empresa_id} className="align-top">
                       <td className="px-4 py-3">
-                        <Link href={`/empresas/${e.empresa_id}?tab=liquidacion`} className="font-semibold text-ink hover:text-accent">
+                        <Link
+                          href={e.activa ? `/cumplimiento/liquidacion/${e.empresa_id}` : `/empresas/${e.empresa_id}?tab=liquidacion`}
+                          className="font-semibold text-ink hover:text-accent"
+                        >
                           {e.razon_social}
                         </Link>
                         <div className="text-xs text-slate-500">RUC {e.ruc}</div>

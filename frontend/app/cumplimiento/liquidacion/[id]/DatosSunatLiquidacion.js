@@ -1,15 +1,16 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle, DatabaseZap, Loader2 } from "lucide-react";
-import { api } from "../../../lib/api";
-import { fechaHoraPeru } from "../../../lib/fechas";
-import { ESTADOS_LECTURA, ETAPAS_LECTURA, FUENTES_LECTURA, textoPeriodo, textoSoles } from "../../../lib/liquidacion";
+import { api } from "../../../../lib/api";
+import { fechaHoraPeru } from "../../../../lib/fechas";
+import { ESTADOS_LECTURA, ETAPAS_LECTURA, FUENTES_LECTURA, textoPeriodo, textoSoles } from "../../../../lib/liquidacion";
 
 // Bloque 1 de la Liquidacion en vivo: leer de SUNAT los datos de un periodo
 // (0621, retenciones, percepciones, cuenta de control, Aduanas y SIRE) y ver
 // el avance de cada fuente y lo que quedo guardado. Solo lectura en SUNAT.
 // El periodo lo elige el tablero (TableroLiquidacion); al terminar una
-// lectura se avisa con onLeido para que recalcule.
+// lectura se avisa con onLeido para que recalcule. Ademas se lee solo cada
+// madrugada (backend: jobs_liquidacion.encolar_liquidacion_automatica).
 const SEGUNDOS_REFRESCO = 6;
 
 function textoResumen(fuente, r) {
@@ -104,8 +105,12 @@ export default function DatosSunatLiquidacion({ empresaId, periodo, onLeido }) {
         </div>
       </div>
       <p className="mt-2 text-sm text-slate-600">
-        Lee de SUNAT, solo consultando, todo lo que necesita el cálculo de {textoPeriodo(periodo)}. Toma unos 10 minutos;
-        puedes salir de esta página mientras tanto. Al terminar, el estimado se actualiza solo.
+        Se lee solo cada madrugada a las 3:00 a.m.: el SIRE y Aduanas todos los días; las retenciones, percepciones y el
+        0621, los lunes y jueves y a diario desde 5 días hábiles antes del vencimiento.
+      </p>
+      <p className="mt-1 text-sm text-slate-600">
+        Con el botón se lee en el momento todo lo de {textoPeriodo(periodo)}. Toma unos 10 minutos; puedes salir de esta
+        página mientras tanto. Al terminar, el estimado se actualiza solo.
       </p>
 
       {error && <div className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>}

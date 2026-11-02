@@ -8,7 +8,8 @@ sesiones SOL de la misma empresa a la vez:
   3. aduanas: percepciones de importacion (consulta publica, sin clave)
   4. sire: propuesta de ventas y compras del periodo (API oficial)
 Todo es de solo lectura. Cada fuente reemplaza lo guardado en su rango con la
-lectura completa de SUNAT.
+lectura completa de SUNAT. Se piden con el boton "Leer datos de SUNAT" y, cada
+madrugada, solas (encolar_liquidacion_automatica, al final).
 """
 import logging
 import time
@@ -234,11 +235,15 @@ def lecturas_en_curso(db, empresa_id: str, ahora: datetime) -> list[LiquidacionL
     ).all()
 
 
-def crear_lecturas(db, empresa_id: str, usuario_id: str | None, periodo: str, fuentes: list[str]) -> list[LiquidacionLectura]:
+def crear_lecturas(
+    db, empresa_id: str, usuario_id: str | None, periodo: str, fuentes: list[str],
+    rangos: dict[str, tuple[str, str]] | None = None,
+) -> list[LiquidacionLectura]:
+    """`rangos`: periodos de alguna fuente distintos de los de rango_fuente (la lectura automatica lee menos historia)."""
     hoy = hoy_peru()
     lecturas = []
     for fuente in sorted(set(fuentes), key=FUENTES.index):
-        desde, hasta = rango_fuente(fuente, periodo, hoy)
+        desde, hasta = (rangos or {}).get(fuente) or rango_fuente(fuente, periodo, hoy)
         lectura = LiquidacionLectura(
             empresa_id=empresa_id, solicitado_por=usuario_id, fuente=fuente,
             periodo_desde=desde, periodo_hasta=hasta, estado="pendiente",
@@ -249,10 +254,115 @@ def crear_lecturas(db, empresa_id: str, usuario_id: str | None, periodo: str, fu
     return lecturas
 
 
-def encolar_lecturas(lecturas: list[LiquidacionLectura]) -> None:
+def encolar_lecturas(lecturas: list[LiquidacionLectura], espera: timedelta | None = None) -> None:
     from app.queue_conn import cola_consultas
 
-    cola_consultas.enqueue(ejecutar_lecturas_liquidacion, [l.id for l in lecturas], job_timeout="90m")
+    ids = [l.id for l in lecturas]
+    if espera:
+        cola_consultas.enqueue_in(espera, ejecutar_lecturas_liquidacion, ids, job_timeout="90m")
+    else:
+        cola_consultas.enqueue(ejecutar_lecturas_liquidacion, ids, job_timeout="90m")
+
+
+# --- Lectura automatica de cada madrugada (Fase 3, adelantada al piloto) ---
+# Parametros 3.1 y 3.2 con un cambio: el Menu SOL iba a las 6:00 a.m., pero a
+# esa hora empieza la consulta masiva del buzon (panel maestro) y compiten por
+# los mismos cupos de SUNAT. Todo va en un solo trabajo por empresa a las 3:00 a.m.:
+#   - SIRE y Aduanas (solo el mes): todas las noches.
+#   - Retenciones y percepciones: lunes y jueves, y a diario desde 5 dias
+#     habiles antes del vencimiento hasta que aparezca el 0621.
+#   - 0621: esos mismos dias, mientras falte el del mes anterior.
+#   - Cuenta de control: esos mismos dias, si la ultima lectura tiene mas de una semana.
+DIAS_SOL = (0, 3)  # lunes y jueves
+DIAS_HABILES_ANTES_DEL_VENCIMIENTO = 5
+# Hasta este dia se sigue el mes anterior si su 0621 no aparece (igual que periodosElegibles() del frontend).
+DIA_LIMITE_MES_ANTERIOR = 20
+DIAS_REFRESCO_CUENTA_CONTROL = 7
+# Cada empresa pide 2 propuestas al SIRE, que acepta una por minuto.
+ESPACIADO_AUTOMATICO_SEG = 2 * SEGUNDOS_ENTRE_PEDIDOS_SIRE
+
+
+def dias_habiles_hasta(hoy: date, vence: date) -> int:
+    """Dias habiles (lunes a viernes) de hoy al vencimiento: 0 el mismo dia, negativo si ya vencio."""
+    paso = 1 if vence >= hoy else -1
+    dias, dia = 0, hoy
+    while dia != vence:
+        dia += timedelta(days=paso)
+        if dia.weekday() < 5:
+            dias += paso
+    return dias
+
+
+def _declarado(db, empresa_id: str, periodo: str) -> bool:
+    return db.query(LiquidacionDeclaracion.id).filter(
+        LiquidacionDeclaracion.empresa_id == empresa_id, LiquidacionDeclaracion.periodo == periodo,
+    ).first() is not None
+
+
+def periodo_a_seguir(db, empresa_id: str, hoy: date) -> str:
+    """El mes anterior hasta que aparezca su 0621 (o hasta el dia 20); despues, el mes en curso."""
+    actual = hoy.strftime("%Y-%m")
+    anterior = sumar_meses(actual, -1)
+    if hoy.day <= DIA_LIMITE_MES_ANTERIOR and not _declarado(db, empresa_id, anterior):
+        return anterior
+    return actual
+
+
+def plan_automatico(db, empresa: Empresa, config: LiquidacionEmpresa, hoy: date) -> tuple[str, dict[str, tuple[str, str]]]:
+    """Periodo que sigue la empresa y las fuentes que se leen esta noche, con su rango."""
+    from app.calculo_liquidacion import vencimiento
+
+    periodo = periodo_a_seguir(db, empresa.id, hoy)
+    fuentes = {"aduanas": (periodo, periodo)}
+    if config.api_client_id and config.api_secret_cifrado:
+        fuentes["sire"] = (periodo, periodo)
+    vence = vencimiento(db, empresa, periodo)
+    if hoy.weekday() in DIAS_SOL or (vence and dias_habiles_hasta(hoy, vence) <= DIAS_HABILES_ANTES_DEL_VENCIMIENTO):
+        fuentes["retenciones"] = fuentes["percepciones"] = (periodo, periodo)
+        if not _declarado(db, empresa.id, sumar_meses(hoy.strftime("%Y-%m"), -1)):
+            fuentes["declaraciones"] = (sumar_meses(periodo, -2), periodo)
+        desde, hasta = rango_fuente("cuenta_control", periodo, hoy)
+        reciente = db.query(LiquidacionLectura.id).filter(
+            LiquidacionLectura.empresa_id == empresa.id,
+            LiquidacionLectura.fuente == "cuenta_control",
+            LiquidacionLectura.estado == "completado",
+            LiquidacionLectura.periodo_hasta >= hasta,
+            LiquidacionLectura.finalizado_en >= datetime.now(timezone.utc) - timedelta(days=DIAS_REFRESCO_CUENTA_CONTROL),
+        ).first()
+        if reciente is None:
+            fuentes["cuenta_control"] = (desde, hasta)
+    return periodo, fuentes
+
+
+def encolar_liquidacion_automatica(hoy: date | None = None) -> dict:
+    """Cada madrugada: un trabajo por empresa activada, espaciados para respetar el cupo del SIRE."""
+    from app.cumplimiento import empresas_de_tenants_activos, filtrar_activas_en_sunat
+
+    hoy = hoy or hoy_peru()
+    db = SessionLocal()
+    try:
+        empresas = (
+            filtrar_activas_en_sunat(empresas_de_tenants_activos(db))
+            .join(LiquidacionEmpresa, LiquidacionEmpresa.empresa_id == Empresa.id)
+            .filter(LiquidacionEmpresa.activa.is_(True))
+            .order_by(Empresa.razon_social)
+            .all()
+        )
+        con_clave = {eid for (eid,) in db.query(CredencialSol.empresa_id)}
+        encoladas, saltadas = [], 0
+        for empresa in empresas:
+            if empresa.id not in con_clave or lecturas_en_curso(db, empresa.id, datetime.now(timezone.utc)):
+                saltadas += 1
+                continue
+            periodo, fuentes = plan_automatico(db, empresa, db.get(LiquidacionEmpresa, empresa.id), hoy)
+            lecturas = crear_lecturas(db, empresa.id, None, periodo, list(fuentes), rangos=fuentes)
+            db.commit()
+            encolar_lecturas(lecturas, espera=timedelta(seconds=len(encoladas) * ESPACIADO_AUTOMATICO_SEG))
+            encoladas.append(f"{empresa.ruc} {periodo} {','.join(l.fuente for l in lecturas)}")
+        logger.info(f"Lectura automatica de liquidacion: {len(encoladas)} empresa(s), {saltadas} saltada(s)")
+        return {"empresas_encoladas": len(encoladas), "saltadas": saltadas, "detalle": encoladas}
+    finally:
+        db.close()
 
 
 def _esperar_turno_sire(espera_maxima_seg: int = 30 * 60) -> None:
