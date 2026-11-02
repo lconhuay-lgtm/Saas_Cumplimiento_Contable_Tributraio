@@ -1,25 +1,16 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertCircle, DatabaseZap, Loader2 } from "lucide-react";
 import { api } from "../../../lib/api";
-import { fechaHoraPeru, hoyPeru } from "../../../lib/fechas";
-import { ESTADOS_LECTURA, ETAPAS_LECTURA, FUENTES_LECTURA, textoPeriodo } from "../../../lib/liquidacion";
+import { fechaHoraPeru } from "../../../lib/fechas";
+import { ESTADOS_LECTURA, ETAPAS_LECTURA, FUENTES_LECTURA, textoPeriodo, textoSoles } from "../../../lib/liquidacion";
 
 // Bloque 1 de la Liquidacion en vivo: leer de SUNAT los datos de un periodo
 // (0621, retenciones, percepciones, cuenta de control, Aduanas y SIRE) y ver
 // el avance de cada fuente y lo que quedo guardado. Solo lectura en SUNAT.
-const soles = new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN", maximumFractionDigits: 0 });
+// El periodo lo elige el tablero (TableroLiquidacion); al terminar una
+// lectura se avisa con onLeido para que recalcule.
 const SEGUNDOS_REFRESCO = 6;
-
-function periodosElegibles() {
-  const { anio, mes, dia } = hoyPeru();
-  const lista = [0, 1, 2].map((atras) => {
-    const total = anio * 12 + mes - 1 - atras;
-    return `${Math.floor(total / 12)}-${String((total % 12) + 1).padStart(2, "0")}`;
-  });
-  // Hasta el dia 20 lo que se esta por declarar es el mes pasado.
-  return { lista, porDefecto: dia <= 20 ? lista[1] : lista[0] };
-}
 
 function textoResumen(fuente, r) {
   if (!r) return "";
@@ -30,26 +21,31 @@ function textoResumen(fuente, r) {
         : "Sin declaraciones guardadas";
     case "retenciones":
     case "percepciones":
-      return `${r[fuente].cantidad} comprobante(s) del mes · ${soles.format(r[fuente].monto)}`;
+      return `${r[fuente].cantidad} comprobante(s) del mes · ${textoSoles(r[fuente].monto)}`;
     case "aduanas":
-      return `${r.aduanas.cantidad} liquidación(es) del mes · ${soles.format(r.aduanas.monto)}`;
+      return `${r.aduanas.cantidad} liquidación(es) del mes · ${textoSoles(r.aduanas.monto)}`;
     case "cuenta_control":
       return r.cuenta_control.periodos
         ? `${r.cuenta_control.periodos} periodos · hasta ${textoPeriodo(r.cuenta_control.ultimo_periodo)}`
         : "Sin periodos guardados";
     case "sire":
-      return `Ventas: ${r.ventas.cantidad} · IGV ${soles.format(r.ventas.igv)} — Compras: ${r.compras.cantidad} · IGV ${soles.format(r.compras.igv)}`;
+      return `Ventas: ${r.ventas.cantidad} · IGV ${textoSoles(r.ventas.igv)} — Compras: ${r.compras.cantidad} · IGV ${textoSoles(r.compras.igv)}`;
     default:
       return "";
   }
 }
 
-export default function DatosSunatLiquidacion({ empresaId }) {
-  const [{ lista, porDefecto }] = useState(periodosElegibles);
-  const [periodo, setPeriodo] = useState(porDefecto);
+export default function DatosSunatLiquidacion({ empresaId, periodo, onLeido }) {
   const [datos, setDatos] = useState(null);
   const [error, setError] = useState("");
   const [pidiendo, setPidiendo] = useState(false);
+  const enCursoAntes = useRef(false);
+
+  useEffect(() => {
+    if (enCursoAntes.current && datos && !datos.en_curso) onLeido?.();
+    enCursoAntes.current = Boolean(datos?.en_curso);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datos?.en_curso]);
 
   async function cargar() {
     try {
@@ -95,15 +91,6 @@ export default function DatosSunatLiquidacion({ empresaId }) {
           Datos de SUNAT
         </h3>
         <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={periodo}
-            onChange={(e) => setPeriodo(e.target.value)}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm capitalize focus:border-accent focus:outline-none"
-          >
-            {lista.map((p) => (
-              <option key={p} value={p}>{textoPeriodo(p)}</option>
-            ))}
-          </select>
           {datos?.puede_leer && (
             <button
               onClick={leer}
@@ -118,7 +105,7 @@ export default function DatosSunatLiquidacion({ empresaId }) {
       </div>
       <p className="mt-2 text-sm text-slate-600">
         Lee de SUNAT, solo consultando, todo lo que necesita el cálculo de {textoPeriodo(periodo)}. Toma unos 10 minutos;
-        puedes salir de esta página mientras tanto.
+        puedes salir de esta página mientras tanto. Al terminar, el estimado se actualiza solo.
       </p>
 
       {error && <div className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>}

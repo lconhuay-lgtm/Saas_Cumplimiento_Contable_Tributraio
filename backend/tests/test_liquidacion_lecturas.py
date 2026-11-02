@@ -11,7 +11,7 @@ import app.routers.liquidacion as liquidacion
 import lectores_liquidacion
 from app.aduanas_lc import extraer_detalle, extraer_listado, meses
 from app.models import (
-    LiquidacionComprobante, LiquidacionCuentaControl, LiquidacionDeclaracion, LiquidacionEmpresa, LiquidacionLectura,
+    LiquidacionCalculo, LiquidacionComprobante, LiquidacionCuentaControl, LiquidacionDeclaracion, LiquidacionEmpresa, LiquidacionLectura,
     LiquidacionRetencionPercepcion,
 )
 from app.security import cifrar_clave_sol
@@ -283,6 +283,10 @@ def test_trabajo_de_lecturas(client, db_session, monkeypatch):
     assert {l.etapa for l in db_session.query(LiquidacionLectura)} == {None}  # no queda la ultima etapa
     assert ("sol", (date(2026, 10, 1), date(2026, 10, 31)), ("2025-10", "2026-09")) in llamadas
     assert db_session.query(LiquidacionComprobante).count() == 4
+    # Al terminar queda la foto del calculo del dia: IGV 36 - 36 = 0 y la retencion de 30 pasa al mes siguiente.
+    (foto,) = db_session.query(LiquidacionCalculo).all()
+    assert (foto.periodo, foto.fecha, foto.casillas["131"], foto.casillas["178"], foto.casillas["165"]) == (
+        "2026-10", date(2026, 11, 3), 36, 36, 30)
 
     vista = client.get(f"/empresas/{emp}/liquidacion/lecturas?periodo=2026-10", headers=ctx["headers_miembro"]).json()
     assert vista["en_curso"] is False

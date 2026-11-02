@@ -1,6 +1,7 @@
 // Textos compartidos de la Liquidacion en vivo (pestana de Cumplimiento y
 // pestana dentro de cada empresa). Los estados vienen del backend
 // (routers/liquidacion.py::_estado), en orden de lo que falta hacer.
+import { hoyPeru } from "./fechas";
 
 export const ESTADOS_LIQUIDACION = {
   no_activada: {
@@ -36,7 +37,7 @@ export const ESTADOS_LIQUIDACION = {
   lista: {
     texto: "Lista",
     chip: "bg-emerald-50 text-emerald-700",
-    siguiente: "Todo configurado. El cálculo diario empieza cuando se publique la siguiente etapa.",
+    siguiente: "Todo configurado. Lee los datos de SUNAT del mes para ver el estimado.",
   },
 };
 
@@ -99,4 +100,21 @@ export function textoPeriodo(periodo) {
   if (!periodo) return "";
   const [anio, mes] = periodo.split("-").map(Number);
   return `${MESES[mes - 1]} ${anio}`;
+}
+
+/** Los ultimos 3 periodos y el que se muestra primero: hasta el dia 20 lo que se esta por declarar es el mes pasado. */
+export function periodosElegibles() {
+  const { anio, mes, dia } = hoyPeru();
+  const lista = [0, 1, 2].map((atras) => {
+    const total = anio * 12 + mes - 1 - atras;
+    return `${Math.floor(total / 12)}-${String((total % 12) + 1).padStart(2, "0")}`;
+  });
+  return { lista, porDefecto: dia <= 20 ? lista[1] : lista[0] };
+}
+
+const FORMATO_SOLES = new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN", maximumFractionDigits: 0 });
+
+/** Soles enteros, como el 0621: 34005 -> "S/ 34,005". */
+export function textoSoles(monto) {
+  return FORMATO_SOLES.format(monto || 0);
 }

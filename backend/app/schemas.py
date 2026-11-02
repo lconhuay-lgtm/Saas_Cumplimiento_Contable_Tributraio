@@ -1057,3 +1057,62 @@ class LiquidacionLecturasResponse(BaseModel):
     puede_leer: bool
     lecturas: list[LiquidacionLecturaItem]  # la ultima de cada fuente
     resumen: dict  # lo guardado para el periodo, por fuente
+
+
+# --- Liquidacion en vivo (Bloque 2: calculo del IGV y la Renta) ---
+
+class LiquidacionLineaItem(BaseModel):
+    casilla: str | None  # numero de casilla del 0621
+    concepto: str
+    monto: int | None  # soles enteros
+    tipo: str  # dato | subtotal | total | arrastre
+    fuente: str | None
+    declarado: int | None  # la casilla del 0621 presentado, si ya hay
+    signo: int  # -1: se resta
+
+
+class LiquidacionDeclaradoItem(BaseModel):
+    num_orden: str
+    fecha_presentacion: date | None
+
+
+class LiquidacionCalculoResponse(BaseModel):
+    periodo: str
+    regimen: str | None
+    vence: date | None
+    hay_datos: bool  # False: falta leer el SIRE del periodo
+    datos_al: datetime | None  # la lectura mas antigua de las que se usaron
+    fechas: dict[str, datetime | None]  # ultima lectura de cada fuente
+    igv_por_pagar: int
+    saldo_a_favor: int
+    renta_porcentaje: float | None
+    renta_por_pagar: int | None
+    casillas: dict[str, int]
+    lineas_igv: list[LiquidacionLineaItem]
+    lineas_siguiente: list[LiquidacionLineaItem]
+    lineas_renta: list[LiquidacionLineaItem]
+    avisos: list[str]
+    declarado: LiquidacionDeclaradoItem | None
+
+
+class LiquidacionPanelItem(BaseModel):
+    empresa_id: str
+    ruc: str
+    razon_social: str
+    regimen: str | None
+    responsable_nombre: str | None
+    vence: date | None
+    hay_datos: bool
+    datos_al: datetime | None
+    igv_por_pagar: int
+    saldo_a_favor: int
+    renta_por_pagar: int | None
+    avisos: int
+    declarado: bool
+    igv_declarado: int | None  # 681 del 0621 presentado
+    renta_declarada: int | None  # 312
+
+
+class LiquidacionPanelResponse(BaseModel):
+    periodo: str
+    empresas: list[LiquidacionPanelItem]

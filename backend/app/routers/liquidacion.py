@@ -10,15 +10,18 @@ Liquidacion en vivo -- Etapa 1 (configuracion y acceso).
   responsable (o un admin) lo confirma o lo cambia.
 - Bloque 1 del piloto: el responsable (o un admin) pide leer de SUNAT los
   datos de un periodo (ver jobs_liquidacion.py) y ve el avance y lo guardado.
+- Bloque 2: el estimado del IGV y la Renta del periodo (calculo_liquidacion.py)
+  en el tablero de la empresa y en el panel de las empresas activadas.
 Cada cambio queda en LiquidacionEvento.
 """
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.acceso import es_admin, filtrar_empresas_visibles, obtener_empresa_visible
+from app.calculo_liquidacion import calcular_periodo
 from app.database import get_db
 from app.deps import get_usuario_actual
 from app.hora_peru import hoy_peru
@@ -30,8 +33,8 @@ from app.models import (
 )
 from app.schemas import (
     REGIMENES_LIQUIDACION, LiquidacionActivarRequest, LiquidacionApiRequest, LiquidacionDetalleResponse,
-    LiquidacionEmpresaItem, LiquidacionEventoItem, LiquidacionLecturaRequest, LiquidacionLecturasResponse,
-    LiquidacionListaResponse, LiquidacionRegimenRequest,
+    LiquidacionCalculoResponse, LiquidacionEmpresaItem, LiquidacionEventoItem, LiquidacionLecturaRequest,
+    LiquidacionLecturasResponse, LiquidacionListaResponse, LiquidacionPanelResponse, LiquidacionRegimenRequest,
 )
 from app.security import cifrar_clave_sol, descifrar_clave_sol
 from app.sire_api import ErrorApiSire, probar_conexion
@@ -400,3 +403,57 @@ def pedir_lecturas(
     db.commit()
     encolar_lecturas(lecturas)
     return _estado_lecturas(db, empresa, usuario, datos.periodo)
+
+
+# --- Bloque 2: calculo del IGV y la Renta ---
+
+PATRON_PERIODO = r"^\d{4}-(0[1-9]|1[0-2])$"
+
+
+@router.get("/empresas/{empresa_id}/liquidacion/calculo", response_model=LiquidacionCalculoResponse)
+def ver_calculo(
+    empresa_id: str,
+    periodo: str = Query(pattern=PATRON_PERIODO),
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_actual),
+):
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
+    return calcular_periodo(db, empresa, periodo)
+
+
+@router.get("/liquidacion/panel", response_model=LiquidacionPanelResponse)
+def panel_liquidacion(
+    periodo: str = Query(pattern=PATRON_PERIODO),
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_actual),
+):
+    """El estimado del periodo de cada empresa activada que el usuario ve, por vencimiento."""
+    empresas = (
+        filtrar_empresas_visibles(db.query(Empresa), usuario)
+        .join(LiquidacionEmpresa, LiquidacionEmpresa.empresa_id == Empresa.id)
+        .filter(Empresa.activo.is_(True), LiquidacionEmpresa.activa.is_(True))
+        .all()
+    )
+    filas = []
+    for empresa in empresas:
+        calculo = calcular_periodo(db, empresa, periodo)
+        lineas = {l["casilla"]: l for l in calculo["lineas_igv"] + calculo["lineas_renta"] if l["casilla"]}
+        filas.append({
+            "empresa_id": empresa.id,
+            "ruc": empresa.ruc,
+            "razon_social": empresa.razon_social,
+            "regimen": calculo["regimen"],
+            "responsable_nombre": _nombre(empresa.asignado_a),
+            "vence": calculo["vence"],
+            "hay_datos": calculo["hay_datos"],
+            "datos_al": calculo["datos_al"],
+            "igv_por_pagar": calculo["igv_por_pagar"],
+            "saldo_a_favor": calculo["saldo_a_favor"],
+            "renta_por_pagar": calculo["renta_por_pagar"],
+            "avisos": len(calculo["avisos"]),
+            "declarado": calculo["declarado"] is not None,
+            "igv_declarado": lineas["681"]["declarado"],
+            "renta_declarada": lineas["312"]["declarado"],
+        })
+    filas.sort(key=lambda f: (f["vence"] is None, f["vence"] or date.max, f["razon_social"]))
+    return {"periodo": periodo, "empresas": filas}

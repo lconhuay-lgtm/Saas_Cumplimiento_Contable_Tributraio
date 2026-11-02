@@ -5,11 +5,14 @@ import { BookOpen, Loader2, Search, Settings2 } from "lucide-react";
 import { api } from "../../lib/api";
 import { ESTADOS_LIQUIDACION, textoRegimen } from "../../lib/liquidacion";
 import FiltroDigitoRuc, { coincideDigitoRuc } from "./FiltroDigitoRuc";
+import LiquidacionDelMes from "./LiquidacionDelMes";
 
-// Etapa 1 de la Liquidacion en vivo: activar empresas (solo admin) y ver que
-// le falta a cada una para quedar lista (responsable, API del SIRE, prueba).
-// El tablero con el IGV del mes se suma aca en las etapas siguientes.
+// Liquidacion en vivo en Cumplimiento. Vista "Liquidación del mes" (Bloque 2):
+// el estimado de cada empresa activada, por vencimiento. Vista
+// "Configuración" (Etapa 1): activar empresas (solo admin) y ver que le falta
+// a cada una para quedar lista (responsable, API del SIRE, prueba).
 export default function PanelLiquidacion() {
+  const [vista, setVista] = useState(null); // "mes" | "configuracion"
   const [datos, setDatos] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
@@ -27,7 +30,9 @@ export default function PanelLiquidacion() {
       const data = await api.listarLiquidacion();
       setDatos(data);
       // Sin ninguna activada todavia, el admin necesita ver todas para elegir.
-      if (!data.empresas.some((e) => e.activa)) setSoloActivadas(false);
+      const hayActivas = data.empresas.some((e) => e.activa);
+      if (!hayActivas) setSoloActivadas(false);
+      setVista((v) => v || (hayActivas ? "mes" : "configuracion"));
       setError("");
     } catch (err) {
       setError(err.message);
@@ -73,8 +78,8 @@ export default function PanelLiquidacion() {
     <>
       <div className="mt-5 flex flex-wrap items-start justify-between gap-3">
         <p className="max-w-3xl text-sm text-slate-600">
-          Cuánto IGV y Renta pagaría cada empresa si el mes cerrara hoy. En esta primera etapa se activan las empresas y se
-          conecta la API del SIRE de cada una; el cálculo diario se suma en las etapas siguientes.
+          Cuánto IGV y Renta pagaría cada empresa si el mes cerrara hoy, con los datos leídos de SUNAT. El detalle de cada
+          una (cómo se llega al monto y lo declarado) está en su pestaña «Liquidación en vivo».
         </p>
         <Link
           href="/liquidacion/guia"
@@ -86,107 +91,125 @@ export default function PanelLiquidacion() {
         </Link>
       </div>
 
-      {error && <div className="mt-4 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>}
-
-      {datos && (
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <Tarjeta titulo="Empresas activadas" valor={`${datos.activas} de ${datos.incluidas} incluidas`}
-            nota={adicionales ? `${adicionales} adicional(es) fuera del plan fijo` : "Dentro del plan fijo"} />
-          <Tarjeta titulo="Listas" valor={conteo.lista || 0} nota="API conectada y afiliadas al SIRE" />
-          <Tarjeta titulo="Por configurar" valor={(conteo.falta_api || 0) + (conteo.falta_responsable || 0) + (conteo.sin_probar || 0)}
-            nota="Falta responsable, API o la prueba" />
-          <Tarjeta titulo="Con problema" valor={(conteo.api_error || 0) + (conteo.no_afiliada || 0)}
-            nota="Error de conexión o no afiliadas al SIRE" />
-        </div>
-      )}
-
-      <div className="mt-5 flex flex-wrap items-center gap-3">
-        <div className="relative">
-          <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            value={busqueda}
-            onChange={(e) => setBusqueda(e.target.value)}
-            placeholder="Buscar por nombre o RUC"
-            className="w-64 rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-sm focus:border-accent focus:outline-none"
-          />
-        </div>
-        <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
-          <input type="checkbox" checked={soloActivadas} onChange={(e) => setSoloActivadas(e.target.checked)} className="accent-accent" />
-          Solo activadas
-        </label>
-        <FiltroDigitoRuc digitos={digitos} onCambio={setDigitos} />
+      <div className="mt-5 inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-sm font-semibold">
+        {[["mes", "Liquidación del mes"], ["configuracion", "Configuración"]].map(([id, texto]) => (
+          <button
+            key={id}
+            onClick={() => setVista(id)}
+            className={`rounded-md px-3.5 py-1.5 transition-colors ${vista === id ? "bg-accent text-white" : "text-slate-600 hover:text-accent"}`}
+          >
+            {texto}
+          </button>
+        ))}
       </div>
 
-      <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 bg-white">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-            <tr>
-              <th className="px-4 py-3">Empresa</th>
-              <th className="px-4 py-3">Responsable</th>
-              <th className="px-4 py-3">Régimen</th>
-              <th className="px-4 py-3">Situación</th>
-              <th className="px-4 py-3 text-right">Acciones</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {visibles.length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
-                  {soloActivadas
-                    ? "Ninguna empresa activada con estos filtros. Desmarca \"Solo activadas\" para ver todas."
-                    : "Ninguna empresa con estos filtros."}
-                </td>
-              </tr>
-            )}
-            {visibles.map((e) => {
-              const estado = ESTADOS_LIQUIDACION[e.estado] || ESTADOS_LIQUIDACION.no_activada;
-              return (
-                <tr key={e.empresa_id} className="align-top">
-                  <td className="px-4 py-3">
-                    <Link href={`/empresas/${e.empresa_id}?tab=liquidacion`} className="font-semibold text-ink hover:text-accent">
-                      {e.razon_social}
-                    </Link>
-                    <div className="text-xs text-slate-500">RUC {e.ruc}</div>
-                  </td>
-                  <td className="px-4 py-3 text-slate-600">{e.responsable_nombre || <span className="text-amber-600">Sin asignar</span>}</td>
-                  <td className="px-4 py-3 text-slate-600">
-                    {e.regimen ? textoRegimen(e.regimen) : e.regimen_sugerido ? `${textoRegimen(e.regimen_sugerido)} (sugerido)` : "Sin definir"}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${estado.chip}`}>{estado.texto}</span>
-                    {e.activa && e.estado !== "lista" && <div className="mt-1 max-w-xs text-xs text-slate-500">{estado.siguiente}</div>}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-2">
-                      {datos.es_admin && (
-                        <button
-                          onClick={() => alternar(e)}
-                          disabled={cambiando === e.empresa_id}
-                          className={`flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors disabled:opacity-60 ${
-                            e.activa ? "border border-slate-200 text-slate-600 hover:border-red-300 hover:text-red-600" : "bg-accent text-white hover:opacity-90"
-                          }`}
-                        >
-                          {cambiando === e.empresa_id && <Loader2 size={13} className="animate-spin" />}
-                          {e.activa ? "Desactivar" : "Activar"}
-                        </button>
-                      )}
-                      {e.activa && (
-                        <Link
-                          href={`/empresas/${e.empresa_id}?tab=liquidacion`}
-                          className="flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:border-accent hover:text-accent"
-                        >
-                          <Settings2 size={13} strokeWidth={1.75} />
-                          Configurar
-                        </Link>
-                      )}
-                    </div>
-                  </td>
+      {vista === "mes" ? (
+        <LiquidacionDelMes />
+      ) : (
+        <>
+          {error && <div className="mt-4 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>}
+
+          {datos && (
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <Tarjeta titulo="Empresas activadas" valor={`${datos.activas} de ${datos.incluidas} incluidas`}
+                nota={adicionales ? `${adicionales} adicional(es) fuera del plan fijo` : "Dentro del plan fijo"} />
+              <Tarjeta titulo="Listas" valor={conteo.lista || 0} nota="API conectada y afiliadas al SIRE" />
+              <Tarjeta titulo="Por configurar" valor={(conteo.falta_api || 0) + (conteo.falta_responsable || 0) + (conteo.sin_probar || 0)}
+                nota="Falta responsable, API o la prueba" />
+              <Tarjeta titulo="Con problema" valor={(conteo.api_error || 0) + (conteo.no_afiliada || 0)}
+                nota="Error de conexión o no afiliadas al SIRE" />
+            </div>
+          )}
+
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <div className="relative">
+              <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                placeholder="Buscar por nombre o RUC"
+                className="w-64 rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-sm focus:border-accent focus:outline-none"
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
+              <input type="checkbox" checked={soloActivadas} onChange={(e) => setSoloActivadas(e.target.checked)} className="accent-accent" />
+              Solo activadas
+            </label>
+            <FiltroDigitoRuc digitos={digitos} onCambio={setDigitos} />
+          </div>
+
+          <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-4 py-3">Empresa</th>
+                  <th className="px-4 py-3">Responsable</th>
+                  <th className="px-4 py-3">Régimen</th>
+                  <th className="px-4 py-3">Situación</th>
+                  <th className="px-4 py-3 text-right">Acciones</th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {visibles.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                      {soloActivadas
+                        ? "Ninguna empresa activada con estos filtros. Desmarca \"Solo activadas\" para ver todas."
+                        : "Ninguna empresa con estos filtros."}
+                    </td>
+                  </tr>
+                )}
+                {visibles.map((e) => {
+                  const estado = ESTADOS_LIQUIDACION[e.estado] || ESTADOS_LIQUIDACION.no_activada;
+                  return (
+                    <tr key={e.empresa_id} className="align-top">
+                      <td className="px-4 py-3">
+                        <Link href={`/empresas/${e.empresa_id}?tab=liquidacion`} className="font-semibold text-ink hover:text-accent">
+                          {e.razon_social}
+                        </Link>
+                        <div className="text-xs text-slate-500">RUC {e.ruc}</div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">{e.responsable_nombre || <span className="text-amber-600">Sin asignar</span>}</td>
+                      <td className="px-4 py-3 text-slate-600">
+                        {e.regimen ? textoRegimen(e.regimen) : e.regimen_sugerido ? `${textoRegimen(e.regimen_sugerido)} (sugerido)` : "Sin definir"}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${estado.chip}`}>{estado.texto}</span>
+                        {e.activa && e.estado !== "lista" && <div className="mt-1 max-w-xs text-xs text-slate-500">{estado.siguiente}</div>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-2">
+                          {datos.es_admin && (
+                            <button
+                              onClick={() => alternar(e)}
+                              disabled={cambiando === e.empresa_id}
+                              className={`flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors disabled:opacity-60 ${
+                                e.activa ? "border border-slate-200 text-slate-600 hover:border-red-300 hover:text-red-600" : "bg-accent text-white hover:opacity-90"
+                              }`}
+                            >
+                              {cambiando === e.empresa_id && <Loader2 size={13} className="animate-spin" />}
+                              {e.activa ? "Desactivar" : "Activar"}
+                            </button>
+                          )}
+                          {e.activa && (
+                            <Link
+                              href={`/empresas/${e.empresa_id}?tab=liquidacion`}
+                              className="flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:border-accent hover:text-accent"
+                            >
+                              <Settings2 size={13} strokeWidth={1.75} />
+                              Configurar
+                            </Link>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </>
   );
 }

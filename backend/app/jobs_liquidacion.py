@@ -465,6 +465,17 @@ def ejecutar_lecturas_liquidacion(lectura_ids: list[str]) -> None:
                 _fallar(lectura, str(e), leidos)
 
         logger.info(f"Lecturas de liquidacion de {empresa.ruc}: " + ", ".join(f"{l.fuente}={l.estado}" for l in lecturas.values()))
+
+        # 5. Foto del calculo con los datos nuevos (Bloque 2). Una falla aca no ensucia las lecturas.
+        try:
+            from app.calculo_liquidacion import calcular_periodo, guardar_foto
+
+            periodo = max(l.periodo_hasta for l in lecturas.values())
+            guardar_foto(db, empresa.id, periodo, calcular_periodo(db, empresa, periodo), hoy_peru())
+            db.commit()
+        except Exception:
+            logger.exception(f"Calculo de liquidacion de {empresa.ruc}")
+            db.rollback()
     except Exception:
         logger.exception(f"Error en las lecturas de liquidacion {lectura_ids}")
         db.rollback()
