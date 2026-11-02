@@ -57,6 +57,7 @@ from app.scheduler_job import (
     encolar_detracciones_carga_inicial,
 )
 from app.jobs_liquidacion import encolar_liquidacion_automatica
+from app.huerfanos import marcar_jobs_huerfanos
 from app.database import SessionLocal
 from app.cronograma_sunat import asegurar_cronograma_vigente
 from app.cronograma_sire import asegurar_cronograma_sire_vigente
@@ -206,6 +207,14 @@ def job_liquidacion_automatica():
         logger.info(f"Lectura automatica de la Liquidacion en vivo encolada: {encolar_liquidacion_automatica()}")
     except Exception:
         logger.exception("Fallo la lectura automatica de la Liquidacion en vivo")
+
+
+def job_jobs_huerfanos():
+    """Jobs cortados a mitad (p. ej. por un despliegue) que quedaron en_progreso: ver app/huerfanos.py."""
+    try:
+        marcar_jobs_huerfanos()
+    except Exception:
+        logger.exception("Fallo la limpieza de jobs huerfanos")
 
 
 def job_detracciones_semanal():
@@ -378,6 +387,11 @@ if __name__ == "__main__":
         id="declaraciones_programado",
     )
     scheduler.add_job(
+        job_jobs_huerfanos,
+        IntervalTrigger(minutes=15),
+        id="jobs_huerfanos",
+    )
+    scheduler.add_job(
         job_liquidacion_automatica,
         CronTrigger(hour=LIQUIDACION_HORA_UTC, minute=LIQUIDACION_MINUTO_UTC),
         id="liquidacion_automatica",
@@ -411,6 +425,7 @@ if __name__ == "__main__":
         f"del SIRE (las que lo necesitan) a las {SIRE_HORA_UTC:02d}:{SIRE_MINUTO_UTC:02d} UTC. "
         f"Declaraciones (las que lo necesitan) a las {DECLARACIONES_HORA_UTC:02d}:{DECLARACIONES_MINUTO_UTC:02d} UTC. "
         f"Liquidacion en vivo (empresas activadas) a las {LIQUIDACION_HORA_UTC:02d}:{LIQUIDACION_MINUTO_UTC:02d} UTC. "
+        "Limpieza de jobs huerfanos cada 15 minutos. "
         "(para probar sin esperar, usa los endpoints /admin/chequeo-nocturno, "
         "/admin/enviar-resumenes, /admin/canario/ejecutar, /admin/limpieza-diagnosticos "
         "y POST /cronograma/sincronizar; para tareas, POST /tareas/generar)"

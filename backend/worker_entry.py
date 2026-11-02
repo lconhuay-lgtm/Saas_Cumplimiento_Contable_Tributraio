@@ -130,35 +130,15 @@ def _reconciliar_al_arrancar():
     De paso se suman FichaRucJob y ReporteTributarioJob a la limpieza --
     antes solo se cubria ConsultaJob, aunque los otros dos tipos de job
     pueden quedar huerfanos exactamente igual.
+
+    Update (02/11/2026): la limpieza pasa a app/huerfanos.py con un limite por
+    tipo de job (tambien los de Cumplimiento y la Liquidacion en vivo, que
+    duran mas de 10m) y el scheduler la repite cada 15 minutos.
     """
-    from datetime import datetime, timedelta, timezone
-    from app.database import SessionLocal
-    from app.models import ConsultaJob, FichaRucJob, ReporteTributarioJob
+    from app.huerfanos import marcar_jobs_huerfanos
 
-    LIMITE_HUERFANO = timedelta(minutes=15)
-    corte = datetime.now(timezone.utc) - LIMITE_HUERFANO
-
-    db = SessionLocal()
-    try:
-        total_huerfanos = 0
-        for Modelo in (ConsultaJob, FichaRucJob, ReporteTributarioJob):
-            huerfanos = (
-                db.query(Modelo)
-                .filter(Modelo.estado == "en_progreso", Modelo.iniciado_en < corte)
-                .all()
-            )
-            for job in huerfanos:
-                job.estado = "error"
-                job.finalizado_en = datetime.now(timezone.utc)
-                job.error = "Job huerfano: el worker que lo procesaba se reinicio o fallo antes de terminar (limpiado automaticamente)"
-            total_huerfanos += len(huerfanos)
-        if total_huerfanos:
-            db.commit()
-            logger.warning(f"Reconciliacion al arrancar: {total_huerfanos} job(s) huerfano(s) marcados como error.")
-    finally:
-        db.close()
-
-    logger.info("Reconciliacion al arrancar completa.")
+    total_huerfanos = marcar_jobs_huerfanos()
+    logger.info(f"Reconciliacion al arrancar completa ({total_huerfanos} job(s) huerfano(s) marcados como error).")
 
 
 if __name__ == "__main__":
