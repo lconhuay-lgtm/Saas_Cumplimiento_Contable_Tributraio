@@ -138,6 +138,24 @@ def test_calculo_del_periodo(client, db_session):
     assert lineas["178"]["signo"] == -1 and lineas["681"]["tipo"] == "total"
     assert calculo["avisos"] == ["Percepciones de importación por S/ 999 todavía sin pagar: no se restan hasta que se paguen."]
 
+    # "Como se llega al monto" en lenguaje simple: las lineas suman el resultado.
+    monto = calculo["lineas_monto"]
+    assert [(l["concepto"], l["monto"], l["signo"]) for l in monto] == [
+        ("IGV de ventas gravadas", 1584, 1), ("Crédito fiscal de compras", 522, -1),
+        ("Saldo a favor del mes anterior", 2000, -1), ("Percepciones del mes y no aplicadas", 0, -1),
+        ("Retenciones del mes y no aplicadas", 0, -1), ("Saldo a favor", 938, 1),
+    ]
+    assert sum(l["monto"] * l["signo"] for l in monto[:-1]) == -938
+    assert monto[0]["fuente"] == "SIRE ventas · 3 comprobantes · base S/ 8,800"
+    assert monto[1]["fuente"] == "SIRE compras · 3 comprobantes · incluye importaciones (IGV S/ 180)"
+    assert monto[3]["nota"] == "S/ 420 no alcanzan a aplicarse: pasan al mes siguiente"
+    # Comparacion con los 0621 presentados: no hay octubre 2025; setiembre y agosto no dejaron IGV a pagar.
+    assert calculo["comparacion"] == [
+        {"concepto": "Octubre 2025 (mismo mes)", "periodo": "2025-10", "igv": None},
+        {"concepto": "Setiembre 2026 (mes anterior)", "periodo": "2026-09", "igv": 0},
+        {"concepto": "Promedio de los últimos 2 meses declarados", "periodo": None, "igv": 0},
+    ]
+
     # Un periodo ya declarado muestra lo declarado al lado.
     setiembre = client.get(f"/empresas/{emp}/liquidacion/calculo?periodo=2026-09", headers=ctx["headers_miembro"]).json()
     assert setiembre["declarado"]["num_orden"] == "900"
@@ -206,3 +224,36 @@ def test_panel_por_vencimiento(client, db_session):
         "2026-11-16", 0, 938, 43, 1)
     assert (fila["declarado"], fila["igv_declarado"], fila["regimen"]) == (False, None, "mype")
     assert client.get("/liquidacion/panel?periodo=2026-13", headers=ctx["headers_admin"]).status_code == 422
+
+
+def test_serie_dia_a_dia(client, db_session):
+    from app.calculo_liquidacion import serie_diaria
+    from app.models import Empresa
+
+    ctx = _armar_tenant_con_miembro(client, db_session)
+    emp = ctx["empresa_asignada_id"]
+    client.post(f"/liquidacion/empresas/{emp}/activar", json={"activa": True}, headers=ctx["headers_admin"])
+
+    def con_fecha(comprobante, dia):
+        comprobante.fecha_emision = date(2026, 10, dia) if dia else None
+        return comprobante
+
+    db_session.add_all([
+        con_fecha(_comprobante(emp, "RVIE", 1, "01", base=1000.0, igv=180.0), 10),
+        con_fecha(_comprobante(emp, "RVIE", 2, "01", base=2000.0, igv=360.0), 20),
+        con_fecha(_comprobante(emp, "RCE", 1, "01", base=500.0, igv=90.0), 5),
+        con_fecha(_comprobante(emp, "RCE", 2, "01", base=100.0, igv=18.0), None),  # sin fecha: cuenta desde el dia 1
+        _lectura(emp, "sire", "2026-10", "2026-10"),
+    ])
+    db_session.commit()
+
+    puntos = {p["fecha"].day: (p["ventas"], p["credito"], p["por_pagar"])
+              for p in serie_diaria(db_session, db_session.get(Empresa, emp), "2026-10", date(2026, 10, 15))}
+    assert len(puntos) == 15  # hasta hoy
+    assert (puntos[1], puntos[5], puntos[10], puntos[15]) == ((0, 18, 0), (0, 108, 0), (180, 108, 72), (180, 108, 72))
+
+    # El mes cerrado sale completo y el ultimo dia es el estimado del mes.
+    r = client.get(f"/empresas/{emp}/liquidacion/serie?periodo=2026-10", headers=ctx["headers_miembro"]).json()
+    assert len(r["puntos"]) == 31 and r["puntos"][-1] == {"fecha": "2026-10-31", "ventas": 540, "credito": 108, "por_pagar": 432}
+    # Sin SIRE leido no hay serie.
+    assert client.get(f"/empresas/{emp}/liquidacion/serie?periodo=2026-09", headers=ctx["headers_miembro"]).json()["puntos"] == []

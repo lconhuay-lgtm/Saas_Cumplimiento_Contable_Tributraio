@@ -16,7 +16,7 @@ aplicarse pasa al mes siguiente (164 y 165) y lo que queda es el 681. Como el
 formulario, cada casilla de datos se redondea a soles enteros y las de
 resultado se calculan con las ya redondeadas (4.3).
 """
-from datetime import date, timezone
+from datetime import date, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.orm import Session
@@ -206,7 +206,7 @@ def porcentaje_renta(
 
 
 class _Datos:
-    """Lo guardado de una empresa que usa el calculo, leido una sola vez."""
+    """Lo guardado de una empresa que usa el calculo, leido una sola vez (cada consulta queda en memoria)."""
 
     def __init__(self, db: Session, empresa_id: str):
         self.db = db
@@ -216,6 +216,12 @@ class _Datos:
             por_periodo.setdefault(d.periodo, []).append(d)
         self.declaraciones = por_periodo
         self._declaradas: dict[str, dict] = {}
+        self._consultas: dict[tuple, object] = {}
+
+    def _una_vez(self, clave: tuple, consulta):
+        if clave not in self._consultas:
+            self._consultas[clave] = consulta()
+        return self._consultas[clave]
 
     def declarado(self, periodo: str) -> dict[str, float]:
         if periodo not in self._declaradas:
@@ -223,7 +229,7 @@ class _Datos:
         return self._declaradas[periodo]
 
     def ultima_lectura(self, fuente: str, periodo: str) -> LiquidacionLectura | None:
-        return (
+        return self._una_vez(("lectura", fuente, periodo), lambda: (
             self.db.query(LiquidacionLectura)
             .filter(
                 LiquidacionLectura.empresa_id == self.empresa_id,
@@ -234,24 +240,24 @@ class _Datos:
             )
             .order_by(LiquidacionLectura.finalizado_en.desc())
             .first()
-        )
+        ))
 
     def comprobantes(self, libro: str, periodo: str) -> list[LiquidacionComprobante]:
-        return self.db.query(LiquidacionComprobante).filter(
+        return self._una_vez(("comprobantes", libro, periodo), lambda: self.db.query(LiquidacionComprobante).filter(
             LiquidacionComprobante.empresa_id == self.empresa_id,
             LiquidacionComprobante.libro == libro,
             LiquidacionComprobante.fuente == "propuesta",
             LiquidacionComprobante.periodo == periodo,
-        ).all()
+        ).all())
 
     def retenciones_percepciones(self, periodo: str) -> list[LiquidacionRetencionPercepcion]:
-        return self.db.query(LiquidacionRetencionPercepcion).filter(
+        return self._una_vez(("retper", periodo), lambda: self.db.query(LiquidacionRetencionPercepcion).filter(
             LiquidacionRetencionPercepcion.empresa_id == self.empresa_id,
             LiquidacionRetencionPercepcion.periodo == periodo,
-        ).all()
+        ).all())
 
     def pagos(self, periodo: str, tributos: tuple[str, ...]) -> float:
-        return sum(
+        return self._una_vez(("pagos", periodo, tributos), lambda: sum(
             p.importe_pagado
             for p in self.db.query(DeclaracionSunat).filter(
                 DeclaracionSunat.empresa_id == self.empresa_id,
@@ -259,7 +265,30 @@ class _Datos:
                 DeclaracionSunat.formulario == "1662",
                 DeclaracionSunat.cod_tributo.in_(tributos),
             )
-        )
+        ))
+
+
+class _DatosAl(_Datos):
+    """
+    Los mismos datos, pero del periodo solo lo emitido hasta `corte`: con eso
+    se rehace cada dia del mes para el grafico "Como va el mes, dia a dia".
+    Comparte las consultas ya hechas con `base`.
+    """
+
+    def __init__(self, base: _Datos, periodo: str, corte: date):
+        self.__dict__.update(base.__dict__)
+        self._periodo, self._corte = periodo, corte
+
+    def _hasta_el_corte(self, filas: list, periodo: str) -> list:
+        if periodo != self._periodo:
+            return filas
+        return [f for f in filas if f.fecha_emision is None or f.fecha_emision <= self._corte]
+
+    def comprobantes(self, libro: str, periodo: str) -> list[LiquidacionComprobante]:
+        return self._hasta_el_corte(super().comprobantes(libro, periodo), periodo)
+
+    def retenciones_percepciones(self, periodo: str) -> list[LiquidacionRetencionPercepcion]:
+        return self._hasta_el_corte(super().retenciones_percepciones(periodo), periodo)
 
 
 def _linea(casilla: str | None, concepto: str, monto: int | None, tipo: str = "dato", fuente: str | None = None,
@@ -307,15 +336,18 @@ def _calcular(datos: _Datos, periodo: str, regimen: str | None, nivel: int = 0) 
     # inafecto las declara sin credito (casilla 113, MISKY SONKO 09/2026) y una
     # con ventas de los dos tipos aplica su prorrata (173).
     igv_compras = sire["108"] + sire["111"] + sire["115"]
+    credito_nota = None
     if c["100"] <= 0 and not c["106"] and c["105"] + c["109"] > 0 and igv_compras > 0:
         c["178"] = 0
         credito_regla = f"SIRE: {len(compras)} compras; sin crédito porque este mes solo hay ventas no gravadas"
+        credito_nota = f"Sin crédito: este mes solo hay ventas no gravadas (IGV de compras S/ {soles(igv_compras):,})"
         avisos.append(
             f"Este mes solo hay ventas no gravadas: el IGV de las compras (S/ {soles(igv_compras):,}) no da crédito fiscal (casilla 113)."
         )
     elif prorrata is not None and 0 < prorrata < 1 and igv_compras > 0:
         c["178"] = soles(igv_compras * prorrata)
         credito_regla = f"SIRE: {len(compras)} compras; prorrata {prorrata:.4f} del último 0621"
+        credito_nota = f"Con la prorrata {prorrata:.4f} del último 0621, sobre S/ {soles(igv_compras):,} de IGV de compras"
         avisos.append(
             f"Se aplica la prorrata del último 0621 ({prorrata:.4f}): crédito de S/ {c['178']:,} sobre S/ {soles(igv_compras):,} de IGV de compras."
         )
@@ -396,7 +428,9 @@ def _calcular(datos: _Datos, periodo: str, regimen: str | None, nivel: int = 0) 
         "renta_regla": regla,
         "renta_por_pagar": max(c["312"] - c["317"], 0) if porcentaje is not None else None,
         "ventas": len(ventas),
+        "compras": len(compras),
         "credito_regla": credito_regla,
+        "credito_nota": credito_nota,
         "base_regla": base_regla,
         "percepciones_comprobantes": soles(percep_comprobantes),
         "percepciones_aduanas": soles(percep_aduanas),
@@ -404,6 +438,92 @@ def _calcular(datos: _Datos, periodo: str, regimen: str | None, nivel: int = 0) 
         "fechas": fechas,
         "avisos": avisos,
     }
+
+
+def _lineas_monto(c: dict, r: dict) -> list[dict]:
+    """
+    "Como se llega al monto" en lenguaje simple, como el boceto. Cada resta es
+    lo que de verdad se aplica, asi que las lineas suman el resultado; lo que
+    no alcanza a aplicarse se anota porque pasa al mes siguiente.
+    """
+    def linea(concepto, monto, signo=-1, fuente=None, nota=None, tipo="dato"):
+        return {"concepto": concepto, "monto": monto, "signo": signo, "fuente": fuente, "nota": nota, "tipo": tipo}
+
+    percepciones, retenciones = c["171"] + c["168"], c["179"] + c["176"]
+    fuente_compras = f"SIRE compras · {r['compras']} comprobantes"
+    if c["115"]:
+        fuente_compras += f" · incluye importaciones (IGV S/ {c['115']:,})"
+    fuente_percepciones = f"Comprobantes S/ {r['percepciones_comprobantes']:,} · Aduanas S/ {r['percepciones_aduanas']:,}"
+    if c["168"]:
+        fuente_percepciones += f" · de meses anteriores S/ {c['168']:,}"
+    fuente_retenciones = f"Comprobantes de retención recibidos S/ {c['179']:,}"
+    if c["176"]:
+        fuente_retenciones += f" · de meses anteriores S/ {c['176']:,}"
+
+    def no_aplicadas(monto):
+        return f"S/ {monto:,} no alcanzan a aplicarse: pasan al mes siguiente" if monto else None
+
+    lineas = [
+        linea("IGV de ventas gravadas", c["131"], 1, f"SIRE ventas · {r['ventas']} comprobantes · base S/ {c['100'] - c['102']:,}"),
+        linea("Crédito fiscal de compras", c["178"], fuente=fuente_compras, nota=r["credito_nota"]),
+        linea("Saldo a favor del mes anterior", c["145"],
+              fuente=r["origen_arrastre"] or "Sin 0621 ni estimado del mes anterior: se toma 0"),
+        linea("Percepciones del mes y no aplicadas", percepciones - c["164"], fuente=fuente_percepciones, nota=no_aplicadas(c["164"])),
+        linea("Retenciones del mes y no aplicadas", retenciones - c["165"], fuente=fuente_retenciones, nota=no_aplicadas(c["165"])),
+    ]
+    if c["184"] < 0:
+        lineas.append(linea("Saldo a favor", -c["184"], 1, nota="Pasa al mes siguiente", tipo="total"))
+    elif c["185"]:
+        lineas += [
+            linea("IGV a pagar", c["681"], 1, tipo="subtotal"),
+            linea("Pagos ya hechos del periodo", c["185"], fuente="Boletas 1662 (tributo 1011)"),
+            linea("IGV a pagar hoy", max(c["681"] - c["185"], 0), 1, tipo="total"),
+        ]
+    else:
+        lineas.append(linea("IGV a pagar hoy", c["681"], 1, tipo="total"))
+    return lineas
+
+
+def _igv_declarado(datos: _Datos, periodo: str) -> int | None:
+    """IGV a pagar (681) del 0621 de un periodo; None si no se declaro el IGV."""
+    dec = datos.declarado(periodo)
+    return soles(dec.get("681")) if any(k in dec for k in ("681", "184", "140", "131")) else None
+
+
+def _comparacion(datos: _Datos, periodo: str) -> list[dict]:
+    """Como en el boceto: el IGV a pagar del mismo mes del ano anterior, del mes anterior y el promedio de 12 meses."""
+    mismo, anterior = sumar_meses(periodo, -12), sumar_meses(periodo, -1)
+    ultimos = [v for v in (_igv_declarado(datos, sumar_meses(periodo, -n)) for n in range(1, 13)) if v is not None]
+    return [
+        {"concepto": f"{texto_periodo(mismo).capitalize()} (mismo mes)", "periodo": mismo, "igv": _igv_declarado(datos, mismo)},
+        {"concepto": f"{texto_periodo(anterior).capitalize()} (mes anterior)", "periodo": anterior,
+         "igv": _igv_declarado(datos, anterior)},
+        {"concepto": f"Promedio de los últimos {len(ultimos)} meses declarados" if ultimos else "Promedio de los últimos 12 meses",
+         "periodo": None, "igv": round(sum(ultimos) / len(ultimos)) if ultimos else None},
+    ]
+
+
+def serie_diaria(db: Session, empresa: Empresa, periodo: str, hoy: date) -> list[dict]:
+    """
+    Cada dia del periodo, hasta hoy, rehecho con lo emitido hasta ese dia: IGV
+    de ventas (131), credito fiscal (178) e IGV a pagar (681), para "Como va
+    el mes, dia a dia". Usa la fecha de emision de la ultima propuesta del
+    SIRE; las fotos diarias (3.12) muestran ademas lo que SUNAT tenia cada dia.
+    """
+    config = db.get(LiquidacionEmpresa, empresa.id)
+    regimen = config.regimen if config else None
+    datos = _Datos(db, empresa.id)
+    if datos.ultima_lectura("sire", periodo) is None:
+        return []
+    inicio = date(int(periodo[:4]), int(periodo[5:7]), 1)
+    fin = min((inicio + timedelta(days=32)).replace(day=1) - timedelta(days=1), hoy)
+    puntos = []
+    dia = inicio
+    while dia <= fin:
+        c = _calcular(_DatosAl(datos, periodo, dia), periodo, regimen)["casillas"]
+        puntos.append({"fecha": dia, "ventas": c["131"], "credito": c["178"], "por_pagar": c["681"]})
+        dia += timedelta(days=1)
+    return puntos
 
 
 def vencimiento(db: Session, empresa: Empresa, periodo: str):
@@ -468,8 +588,11 @@ def calcular_periodo(db: Session, empresa: Empresa, periodo: str) -> dict:
         "igv_por_pagar": r["igv_por_pagar"],
         "saldo_a_favor": r["saldo_a_favor"],
         "renta_porcentaje": r["renta_porcentaje"],
+        "renta_regla": r["renta_regla"],
         "renta_por_pagar": r["renta_por_pagar"],
         "casillas": c,
+        "lineas_monto": _lineas_monto(c, r),
+        "comparacion": _comparacion(datos, periodo),
         "lineas_igv": lineas_igv,
         "lineas_siguiente": siguiente,
         "lineas_renta": lineas_renta,

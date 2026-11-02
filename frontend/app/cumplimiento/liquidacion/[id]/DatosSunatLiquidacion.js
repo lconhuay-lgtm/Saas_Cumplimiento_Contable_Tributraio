@@ -1,18 +1,14 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
 import { AlertCircle, DatabaseZap, Loader2 } from "lucide-react";
-import { api } from "../../../../lib/api";
 import { fechaHoraPeru } from "../../../../lib/fechas";
 import { ESTADOS_LECTURA, ETAPAS_LECTURA, FUENTES_LECTURA, textoPeriodo, textoSoles } from "../../../../lib/liquidacion";
 
-// Bloque 1 de la Liquidacion en vivo: leer de SUNAT los datos de un periodo
-// (0621, retenciones, percepciones, cuenta de control, Aduanas y SIRE) y ver
-// el avance de cada fuente y lo que quedo guardado. Solo lectura en SUNAT.
-// El periodo lo elige el tablero (TableroLiquidacion); al terminar una
-// lectura se avisa con onLeido para que recalcule. Ademas se lee solo cada
-// madrugada (backend: jobs_liquidacion.encolar_liquidacion_automatica).
-const SEGUNDOS_REFRESCO = 6;
-
+// Bloque 1 de la Liquidacion en vivo: lo leido de SUNAT para el periodo
+// (0621, retenciones, percepciones, cuenta de control, Aduanas y SIRE), el
+// avance de cada fuente y lo que quedo guardado. Solo lectura en SUNAT. El
+// estado viene de useLecturas; el boton "Actualizar ahora" esta en el
+// encabezado del tablero. Ademas se lee solo cada madrugada (backend:
+// jobs_liquidacion.encolar_liquidacion_automatica).
 function textoResumen(fuente, r) {
   if (!r) return "";
   switch (fuente) {
@@ -36,81 +32,21 @@ function textoResumen(fuente, r) {
   }
 }
 
-export default function DatosSunatLiquidacion({ empresaId, periodo, onLeido }) {
-  const [datos, setDatos] = useState(null);
-  const [error, setError] = useState("");
-  const [pidiendo, setPidiendo] = useState(false);
-  const enCursoAntes = useRef(false);
-
-  useEffect(() => {
-    if (enCursoAntes.current && datos && !datos.en_curso) onLeido?.();
-    enCursoAntes.current = Boolean(datos?.en_curso);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [datos?.en_curso]);
-
-  async function cargar() {
-    try {
-      setDatos(await api.verLecturasLiquidacion(empresaId, periodo));
-      setError("");
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  useEffect(() => {
-    setDatos(null);
-    cargar();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [empresaId, periodo]);
-
-  useEffect(() => {
-    if (!datos?.en_curso) return undefined;
-    const reloj = setInterval(cargar, SEGUNDOS_REFRESCO * 1000);
-    return () => clearInterval(reloj);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [datos?.en_curso, empresaId, periodo]);
-
-  async function leer() {
-    setPidiendo(true);
-    setError("");
-    try {
-      setDatos(await api.pedirLecturasLiquidacion(empresaId, periodo));
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setPidiendo(false);
-    }
-  }
-
+export default function DatosSunatLiquidacion({ periodo, lecturas }) {
+  const { datos, error } = lecturas;
   const porFuente = Object.fromEntries((datos?.lecturas || []).map((l) => [l.fuente, l]));
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="flex items-center gap-2 text-base font-bold text-ink">
-          <DatabaseZap size={17} strokeWidth={1.75} className="text-accent" />
-          Datos de SUNAT
-        </h3>
-        <div className="flex flex-wrap items-center gap-2">
-          {datos?.puede_leer && (
-            <button
-              onClick={leer}
-              disabled={pidiendo || datos.en_curso}
-              className="flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-bold text-white transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {(pidiendo || datos.en_curso) && <Loader2 size={14} className="animate-spin" />}
-              {datos.en_curso ? "Leyendo..." : "Leer datos de SUNAT"}
-            </button>
-          )}
-        </div>
-      </div>
+      <h3 className="flex items-center gap-2 font-heading text-lg font-bold text-ink">
+        <DatabaseZap size={17} strokeWidth={1.75} className="text-accent" />
+        Datos de SUNAT de {textoPeriodo(periodo)}
+        {datos?.en_curso && <Loader2 size={15} className="animate-spin text-accent" />}
+      </h3>
       <p className="mt-2 text-sm text-slate-600">
-        Se lee solo cada madrugada a las 3:00 a.m.: el SIRE y Aduanas todos los días; las retenciones, percepciones y el
-        0621, los lunes y jueves y a diario desde 5 días hábiles antes del vencimiento.
-      </p>
-      <p className="mt-1 text-sm text-slate-600">
-        Con el botón se lee en el momento todo lo de {textoPeriodo(periodo)}. Toma unos 10 minutos; puedes salir de esta
-        página mientras tanto. Al terminar, el estimado se actualiza solo.
+        Se leen solos cada madrugada a las 3:00 a.m.: el SIRE y Aduanas todos los días; las retenciones, percepciones y el
+        0621, los lunes y jueves y a diario desde 5 días hábiles antes del vencimiento. «Actualizar ahora» lee todo en el
+        momento (unos 10 minutos; puedes salir de la página).
       </p>
 
       {error && <div className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>}
@@ -118,12 +54,12 @@ export default function DatosSunatLiquidacion({ empresaId, periodo, onLeido }) {
       {!datos ? (
         !error && <p className="mt-4 text-sm text-slate-500">Cargando...</p>
       ) : (
-        <ul className="mt-4 divide-y divide-slate-100">
+        <ul className="mt-4 grid gap-x-8 divide-y divide-slate-100 lg:grid-cols-2 lg:divide-y-0">
           {FUENTES_LECTURA.map((f) => {
             const lectura = porFuente[f.id];
             const estado = lectura ? ESTADOS_LECTURA[lectura.estado] || ESTADOS_LECTURA.pendiente : null;
             return (
-              <li key={f.id} className="py-3">
+              <li key={f.id} className="py-3 lg:border-b lg:border-slate-100">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="text-sm font-semibold text-ink">{f.texto}</div>

@@ -1071,6 +1071,22 @@ class LiquidacionLineaItem(BaseModel):
     signo: int  # -1: se resta
 
 
+class LiquidacionMontoItem(BaseModel):
+    """Una linea de "Como se llega al monto" en lenguaje simple (boceto)."""
+    concepto: str
+    monto: int
+    signo: int  # -1: se resta
+    tipo: str  # dato | subtotal | total
+    fuente: str | None
+    nota: str | None
+
+
+class LiquidacionComparacionItem(BaseModel):
+    concepto: str
+    periodo: str | None
+    igv: int | None  # 681 del 0621 presentado; None si no hay
+
+
 class LiquidacionDeclaradoItem(BaseModel):
     num_orden: str
     fecha_presentacion: date | None
@@ -1086,13 +1102,28 @@ class LiquidacionCalculoResponse(BaseModel):
     igv_por_pagar: int
     saldo_a_favor: int
     renta_porcentaje: float | None
+    renta_regla: str
     renta_por_pagar: int | None
     casillas: dict[str, int]
+    lineas_monto: list[LiquidacionMontoItem]
+    comparacion: list[LiquidacionComparacionItem]
     lineas_igv: list[LiquidacionLineaItem]
     lineas_siguiente: list[LiquidacionLineaItem]
     lineas_renta: list[LiquidacionLineaItem]
     avisos: list[str]
     declarado: LiquidacionDeclaradoItem | None
+
+
+class LiquidacionPuntoItem(BaseModel):
+    fecha: date
+    ventas: int  # 131
+    credito: int  # 178
+    por_pagar: int  # 681
+
+
+class LiquidacionSerieResponse(BaseModel):
+    periodo: str
+    puntos: list[LiquidacionPuntoItem]
 
 
 class LiquidacionPanelItem(BaseModel):

@@ -360,6 +360,8 @@ export const api = {
   verCalculoLiquidacion: (empresaId, periodo) =>
     apiFetch(`/empresas/${empresaId}/liquidacion/calculo?periodo=${periodo}`),
   verPanelLiquidacion: (periodo) => apiFetch(`/liquidacion/panel?periodo=${periodo}`),
+  verSerieLiquidacion: (empresaId, periodo) =>
+    apiFetch(`/empresas/${empresaId}/liquidacion/serie?periodo=${periodo}`),
 
   importarEmpresas: (archivo) => {
     const formData = new FormData();

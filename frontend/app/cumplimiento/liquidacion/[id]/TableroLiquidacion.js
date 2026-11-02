@@ -1,37 +1,174 @@
 "use client";
 import { useEffect, useState } from "react";
-import { AlertTriangle, Calculator, CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Loader2, RefreshCw } from "lucide-react";
 import { api } from "../../../../lib/api";
-import { fechaHoraPeru, fechaPeru, hoyPeruIso } from "../../../../lib/fechas";
-import { textoPeriodo, textoSoles } from "../../../../lib/liquidacion";
+import { fechaHoraPeru, fechaPeru, hoyPeru, hoyPeruIso } from "../../../../lib/fechas";
+import { textoPeriodo, textoRegimen, textoSoles } from "../../../../lib/liquidacion";
+import DatosSunatLiquidacion from "./DatosSunatLiquidacion";
+import GraficoDiario, { COLOR_REFERENCIA, SERIES } from "./GraficoDiario";
 
-// Bloque 2 de la Liquidacion en vivo: el estimado del IGV y la Renta del
-// periodo si el mes cerrara hoy (backend/app/calculo_liquidacion.py), con
-// "como se llega al monto" casilla por casilla y, si ya se presento el 0621,
-// lo declarado al lado. Una diferencia de mas de S/ 10 se marca (parametro 7.1).
+// Tablero de la Liquidacion en vivo de una empresa con el orden del boceto
+// (Liquidación en vivo.html): fuente, hora de los datos y vencimiento; IGV,
+// proyeccion y Renta; el mes dia a dia; "como se llega al monto" en lenguaje
+// simple; alertas y comparacion con los 0621 anteriores. Lo que llega en
+// fases futuras (proyeccion, compras y detracciones, PDF y Excel) se muestra
+// marcado. Al final, plegado, el detalle por casilla del 0621 para comparar
+// con lo declarado (diferencias de mas de S/ 10, parametro 7.1).
 const UMBRAL_DIFERENCIA = 10;
+// Parametro 4.6: "Requiere atencion" si el IGV sube 15 % o mas frente al mismo mes del ano anterior.
+const ALZA_DE_ATENCION = 0.15;
+
+const CAJA = "rounded-xl border border-slate-200 bg-white p-5";
+const BOTON = "flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed";
+
+function mayuscula(texto) {
+  return texto ? texto[0].toUpperCase() + texto.slice(1) : texto;
+}
 
 function diasHasta(fecha) {
   return Math.round((Date.parse(fecha) - Date.parse(hoyPeruIso())) / 86400000);
 }
 
-function textoVence(vence) {
-  if (!vence) return "Sin fecha de vencimiento en el cronograma";
-  const dias = diasHasta(vence);
-  const fecha = fechaPeru(vence, { timeZone: "UTC" });
-  if (dias < 0) return `Venció el ${fecha}`;
-  if (dias === 0) return `Vence hoy, ${fecha}`;
-  return `Vence el ${fecha} (en ${dias} día${dias === 1 ? "" : "s"})`;
+function diaMes(fecha, opciones = {}) {
+  return fechaPeru(fecha, { day: "2-digit", month: "2-digit", ...opciones });
 }
 
-function Monto({ linea }) {
-  if (linea.monto === null || linea.monto === undefined) return <span className="text-slate-400">—</span>;
-  return <>{linea.signo < 0 && linea.monto ? "− " : ""}{textoSoles(linea.monto)}</>;
+function textoActualizado(instante) {
+  const dia = hoyPeruIso(new Date(instante)) === hoyPeruIso() ? "hoy" : diaMes(instante);
+  return `${dia}, ${fechaHoraPeru(instante, { hour: "numeric", minute: "2-digit" })}`;
+}
+
+function porcentaje(p) {
+  return `${+(p * 100).toFixed(2)} %`;
+}
+
+function Etiqueta({ tono, children }) {
+  const tonos = {
+    azul: "bg-accent-light text-accent",
+    gris: "bg-slate-100 text-slate-600",
+    ambar: "bg-amber-50 text-amber-800",
+    verde: "bg-emerald-50 text-emerald-700",
+  };
+  return <span className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${tonos[tono]}`}>{children}</span>;
+}
+
+function Tarjeta({ titulo, valor, tonoValor = "text-ink", borde = "border-slate-200", children }) {
+  return (
+    <div className={`rounded-xl border ${borde} bg-white p-5`}>
+      <div className="text-sm text-slate-600">{titulo}</div>
+      <div className={`mt-1 font-heading text-4xl font-bold tabular-nums ${tonoValor}`}>{valor}</div>
+      <div className="mt-2 space-y-0.5 text-xs text-slate-600">{children}</div>
+    </div>
+  );
+}
+
+function Pronto({ fase }) {
+  return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">{fase}</span>;
+}
+
+function ComoSeLlega({ lineas, casillas }) {
+  const noGravadas = casillas["105"] + casillas["109"];
+  return (
+    <div className={CAJA}>
+      <h3 className="font-heading text-lg font-bold text-ink">Cómo se llega al monto</h3>
+      <ul className="mt-2">
+        {lineas.map((l) => {
+          const resultado = l.tipo === "total" || l.tipo === "subtotal";
+          const grande = l.tipo === "total";
+          return (
+            <li key={l.concepto} className={`flex items-start justify-between gap-4 border-t py-3 first:border-t-0 ${grande ? "border-slate-300" : "border-slate-100"}`}>
+              <div className="min-w-0">
+                <div className={grande ? "font-heading text-lg font-bold text-ink" : "font-semibold text-ink"}>
+                  {resultado ? "= " : l.signo < 0 ? "− " : ""}
+                  {l.concepto}
+                </div>
+                {l.fuente && <div className="mt-0.5 text-xs text-slate-500">{l.fuente}</div>}
+                {l.nota && <div className="mt-0.5 text-xs text-amber-700">{l.nota}</div>}
+              </div>
+              <div className={`whitespace-nowrap tabular-nums ${grande ? "font-heading text-2xl font-bold text-ink" : "font-semibold text-ink"}`}>
+                {l.signo < 0 ? "− " : ""}
+                {textoSoles(l.monto)}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2.5 text-xs text-slate-600">
+        <span className="font-semibold text-ink">Aparte (información):</span> ventas no gravadas {textoSoles(noGravadas)} (no suman
+        IGV, sí suman a la Renta)
+        {casillas["106"] ? ` · exportaciones ${textoSoles(casillas["106"])}` : ""}.
+      </div>
+    </div>
+  );
+}
+
+function Alertas({ alertas }) {
+  const hay = alertas.length > 0;
+  return (
+    <div className={`rounded-xl border bg-white p-5 ${hay ? "border-red-200" : "border-slate-200"}`}>
+      <h3 className="font-heading text-lg font-bold text-ink">Alertas</h3>
+      {!hay && <p className="mt-2 text-sm text-slate-500">Sin alertas para este periodo.</p>}
+      <ul className="mt-3 space-y-2">
+        {alertas.map((a) => (
+          <li key={a.texto} className={`rounded-lg px-3 py-2.5 ${a.fuerte ? "bg-red-50" : "bg-slate-50"}`}>
+            {a.titulo && <div className="font-semibold text-red-700">{a.titulo}</div>}
+            <div className={`text-sm ${a.fuerte ? "text-red-700" : "text-slate-700"}`}>{a.texto}</div>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+        Resumen diario a las 8:00 a.m. por correo y en la plataforma <Pronto fase="Fase 7" />
+      </p>
+    </div>
+  );
+}
+
+function Comparacion({ filas }) {
+  return (
+    <div className={CAJA}>
+      <h3 className="font-heading text-lg font-bold text-ink">Comparación</h3>
+      <p className="mt-0.5 text-xs text-slate-500">IGV a pagar de los 0621 presentados.</p>
+      <ul className="mt-3 space-y-2 text-sm">
+        {filas.map((f) => (
+          <li key={f.concepto} className="flex justify-between gap-3">
+            <span className="text-slate-600">{f.concepto}</span>
+            <span className="font-semibold tabular-nums text-ink">{f.igv === null ? "Sin 0621" : textoSoles(f.igv)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function ComprasPronto({ compras }) {
+  const grupos = ["Detracción pagada", "Con plazo para depositar", "No depositada · vencida", "Por verificar", "Excluidos a mano"];
+  return (
+    <div className="rounded-xl border border-dashed border-slate-300 bg-white p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="flex items-center gap-2 font-heading text-lg font-bold text-ink">
+          Compras, detracciones y crédito fiscal <Pronto fase="Fase 5 · enero" />
+        </h3>
+        <button disabled className={`${BOTON} bg-slate-100 text-slate-400`}>Revisar compras</button>
+      </div>
+      <p className="mt-1 text-sm text-slate-600">
+        Aquí se cruzarán {compras !== null ? `las ${compras} compras del mes` : "las compras del mes"} con los depósitos de
+        detracción, y el responsable decidirá qué se incluye o excluye del crédito.
+      </p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {grupos.map((g) => (
+          <div key={g} className="rounded-lg bg-slate-50 p-3">
+            <div className="text-xs font-semibold text-slate-500">{g}</div>
+            <div className="mt-1 font-heading text-xl font-bold text-slate-300">—</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function TablaLineas({ titulo, lineas, conDeclarado }) {
   return (
-    <div className="mt-4 overflow-x-auto">
+    <div className="mt-3 overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
           <tr className="border-b border-slate-200">
@@ -51,7 +188,7 @@ function TablaLineas({ titulo, lineas, conDeclarado }) {
                 <td className="py-2 pr-2 font-mono text-xs text-slate-500">{l.casilla || ""}</td>
                 <td className={`py-2 pr-2 ${fuerte ? "font-bold text-ink" : "text-slate-700"}`}>{l.concepto}</td>
                 <td className={`whitespace-nowrap py-2 pr-2 text-right tabular-nums ${fuerte ? "font-bold text-ink" : "text-slate-700"}`}>
-                  <Monto linea={l} />
+                  {l.monto === null ? "—" : `${l.signo < 0 && l.monto ? "− " : ""}${textoSoles(l.monto)}`}
                 </td>
                 {conDeclarado && (
                   <td className={`whitespace-nowrap py-2 pr-2 text-right tabular-nums ${diferencia ? "font-bold text-amber-700" : "text-slate-500"}`}>
@@ -68,114 +205,247 @@ function TablaLineas({ titulo, lineas, conDeclarado }) {
   );
 }
 
-export default function TableroLiquidacion({ empresaId, periodo, periodos, onPeriodo, version }) {
+function DetalleCasillas({ calculo }) {
+  const conDeclarado = Boolean(calculo.declarado);
+  const diferencias = conDeclarado
+    ? [...calculo.lineas_igv, ...calculo.lineas_siguiente, ...calculo.lineas_renta].filter(
+      (l) => l.declarado !== null && l.monto !== null && Math.abs(l.monto - l.declarado) > UMBRAL_DIFERENCIA,
+    ).length
+    : 0;
+  return (
+    <details key={calculo.periodo} open={conDeclarado} className={`${CAJA} group`}>
+      <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2">
+        <span className="font-heading text-lg font-bold text-ink">Detalle por casilla del 0621</span>
+        <span className="text-xs text-slate-500">
+          {conDeclarado
+            ? diferencias
+              ? `${diferencias} casilla(s) difieren en más de S/ ${UMBRAL_DIFERENCIA} de lo declarado`
+              : "Cuadra con lo declarado"
+            : "Para comparar con el 0621 cuando se presente"}
+          <span className="ml-2 text-accent group-open:hidden">Ver</span>
+          <span className="ml-2 hidden text-accent group-open:inline">Ocultar</span>
+        </span>
+      </summary>
+      <h4 className="mt-4 text-sm font-bold text-ink">IGV</h4>
+      <TablaLineas titulo="Concepto" lineas={calculo.lineas_igv} conDeclarado={conDeclarado} />
+      <h4 className="mt-5 text-sm font-bold text-ink">Pasa al mes siguiente</h4>
+      <TablaLineas titulo="Concepto" lineas={calculo.lineas_siguiente} conDeclarado={conDeclarado} />
+      <h4 className="mt-5 text-sm font-bold text-ink">Renta</h4>
+      <TablaLineas titulo="Concepto" lineas={calculo.lineas_renta} conDeclarado={conDeclarado} />
+      <p className="mt-4 text-xs text-slate-500">
+        Estimado en soles enteros, como el 0621. Las ventas y compras salen de la propuesta del SIRE: si el registro final
+        excluye o agrega comprobantes, el monto declarado puede cambiar.
+      </p>
+    </details>
+  );
+}
+
+export default function TableroLiquidacion({ empresaId, periodo, periodos, onPeriodo, version, lecturas }) {
   const [calculo, setCalculo] = useState(null);
+  const [serie, setSerie] = useState(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let vigente = true;
     setCalculo(null);
+    setSerie(null);
     api.verCalculoLiquidacion(empresaId, periodo)
       .then((data) => vigente && (setCalculo(data), setError("")))
       .catch((err) => vigente && setError(err.message));
+    api.verSerieLiquidacion(empresaId, periodo)
+      .then((data) => vigente && setSerie(data.puntos))
+      .catch(() => vigente && setSerie([]));
     return () => {
       vigente = false;
     };
   }, [empresaId, periodo, version]);
 
-  const conDeclarado = Boolean(calculo?.declarado);
+  const hoy = hoyPeru();
+  const mesActual = hoyPeruIso().slice(0, 7);
+  const enCurso = periodo === mesActual;
+  const mes = textoPeriodo(periodo).split(" ")[0];
+  const [anio, numeroMes] = periodo.split("-").map(Number);
+  const diasDelMes = new Date(anio, numeroMes, 0).getDate();
+  const leyendo = lecturas.pidiendo || lecturas.datos?.en_curso;
 
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="flex items-center gap-2 text-base font-bold text-ink">
-            <Calculator size={17} strokeWidth={1.75} className="text-accent" />
-            <span>Liquidación de <span className="capitalize">{textoPeriodo(periodo)}</span></span>
-          </h3>
-          <p className="mt-1 text-sm text-slate-600">
-            Lo que se pagaría si el mes cerrara hoy, con los datos leídos de SUNAT
-            {calculo?.datos_al ? ` (datos al ${fechaHoraPeru(calculo.datos_al, { dateStyle: "short", timeStyle: "short" })})` : ""}.
-          </p>
-        </div>
+  const controles = (
+    <div className="flex flex-wrap items-end gap-2">
+      <label className="text-xs font-semibold text-slate-500">
+        Periodo
         <select
           value={periodo}
           onChange={(e) => onPeriodo(e.target.value)}
-          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm capitalize focus:border-accent focus:outline-none"
+          className="mt-1 block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-ink focus:border-accent focus:outline-none"
         >
           {periodos.map((p) => (
-            <option key={p} value={p}>{textoPeriodo(p)}</option>
+            <option key={p} value={p}>{mayuscula(textoPeriodo(p))}{p === mesActual ? " (en curso)" : ""}</option>
           ))}
         </select>
+      </label>
+      <button disabled title="Llega en la Fase 7" className={`${BOTON} border border-slate-200 bg-white text-slate-400`}>PDF</button>
+      <button disabled title="Llega en la Fase 7" className={`${BOTON} border border-slate-200 bg-white text-slate-400`}>Excel</button>
+      {lecturas.datos?.puede_leer && (
+        <button onClick={lecturas.leer} disabled={leyendo} className={`${BOTON} bg-accent font-bold text-white hover:opacity-90 disabled:opacity-60`}>
+          {leyendo ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+          {leyendo ? "Leyendo SUNAT..." : "Actualizar ahora"}
+        </button>
+      )}
+    </div>
+  );
+
+  if (!calculo) {
+    return (
+      <div className="mt-5">
+        {controles}
+        {error ? (
+          <div className="mt-4 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>
+        ) : (
+          <p className="mt-6 text-sm text-slate-500">Calculando...</p>
+        )}
+      </div>
+    );
+  }
+
+  const c = calculo.casillas;
+  const saldo = calculo.saldo_a_favor > 0;
+  const montoMes = saldo ? calculo.saldo_a_favor : calculo.igv_por_pagar;
+  const declaradoIgv = calculo.lineas_igv.find((l) => l.casilla === "681")?.declarado;
+  const [mismoMes, , promedio] = calculo.comparacion;
+  const textoMismoMes = mismoMes.periodo ? textoPeriodo(mismoMes.periodo) : "";
+  const alza = mismoMes.igv ? (c["681"] - mismoMes.igv) / mismoMes.igv : null;
+  const requiereAtencion = alza !== null && alza >= ALZA_DE_ATENCION;
+  const lecturaSire = calculo.fechas.sire;
+
+  const alertas = [];
+  if (requiereAtencion) {
+    alertas.push({
+      fuerte: true,
+      titulo: `El IGV supera en ${Math.round(alza * 100)} % a ${textoMismoMes}`,
+      texto: `${mayuscula(textoPeriodo(periodo))}: ${textoSoles(c["681"])} · ${mayuscula(textoMismoMes)}: ${textoSoles(mismoMes.igv)}.`,
+    });
+  }
+  calculo.avisos.forEach((a) => alertas.push({ texto: a }));
+  const vence = calculo.vence;
+
+  return (
+    <div className="mt-4 space-y-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <Etiqueta tono="azul">Fuente: SIRE · propuesta</Etiqueta>
+        <Etiqueta tono={lecturaSire ? "gris" : "ambar"}>
+          {lecturaSire ? `Actualizado ${textoActualizado(lecturaSire)}` : "Falta leer el SIRE del mes"}
+        </Etiqueta>
+        {calculo.declarado ? (
+          <Etiqueta tono="verde">
+            <CheckCircle2 size={13} />
+            Declarado
+            {calculo.declarado.fecha_presentacion ? ` el ${fechaPeru(calculo.declarado.fecha_presentacion, { timeZone: "UTC" })}` : ""}
+            {` (orden ${calculo.declarado.num_orden})`}
+          </Etiqueta>
+        ) : vence ? (
+          <Etiqueta tono="ambar">
+            Vence el {fechaPeru(vence, { timeZone: "UTC" })} ·{" "}
+            {diasHasta(vence) < 0 ? "venció" : diasHasta(vence) === 0 ? "hoy" : `en ${diasHasta(vence)} días`}
+          </Etiqueta>
+        ) : (
+          <Etiqueta tono="gris">Sin vencimiento en el cronograma</Etiqueta>
+        )}
+        {lecturas.datos?.en_curso && (
+          <Etiqueta tono="azul">
+            <Loader2 size={13} className="animate-spin" />
+            Leyendo datos de SUNAT
+          </Etiqueta>
+        )}
       </div>
 
-      {error && <div className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>}
-      {!calculo && !error && <p className="mt-4 text-sm text-slate-500">Calculando...</p>}
+      {controles}
+      {lecturas.error && <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{lecturas.error}</div>}
 
-      {calculo && (
-        <>
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-lg border border-slate-200 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                {calculo.saldo_a_favor ? "IGV: saldo a favor" : "IGV por pagar"}
-              </div>
-              <div className={`mt-1 text-2xl font-extrabold ${calculo.saldo_a_favor ? "text-emerald-700" : "text-ink"}`}>
-                {textoSoles(calculo.saldo_a_favor || calculo.igv_por_pagar)}
-              </div>
-              <div className="mt-0.5 text-xs text-slate-500">
-                {calculo.saldo_a_favor ? "Pasa al mes siguiente" : "Casilla 681 menos pagos ya hechos"}
-              </div>
-            </div>
-            <div className="rounded-lg border border-slate-200 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Renta por pagar</div>
-              <div className="mt-1 text-2xl font-extrabold text-ink">
-                {calculo.renta_por_pagar === null ? "—" : textoSoles(calculo.renta_por_pagar)}
-              </div>
-              <div className="mt-0.5 text-xs text-slate-500">
-                {calculo.renta_porcentaje === null ? "Falta el régimen" : `Pago a cuenta de ${(calculo.renta_porcentaje * 100).toFixed(2)} %`}
-              </div>
-            </div>
-            <div className="rounded-lg border border-slate-200 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Vencimiento</div>
-              <div className="mt-1 text-sm font-bold text-ink">{textoVence(calculo.vence)}</div>
-              <div className="mt-0.5 text-xs text-slate-500">Según el último dígito del RUC</div>
-            </div>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Tarjeta
+          titulo={`${saldo ? "Saldo a favor" : "IGV a pagar"} ${enCurso ? `si ${mes} cerrara hoy` : `de ${mes}`}`}
+          valor={textoSoles(montoMes)}
+          tonoValor={saldo ? "text-emerald-700" : "text-ink"}
+        >
+          <div>{lecturaSire ? `con ventas y compras al ${diaMes(lecturaSire)}` : "falta leer el SIRE del mes"}</div>
+          {saldo && <div>pasa al mes siguiente</div>}
+          {declaradoIgv !== null && declaradoIgv !== undefined && (
+            <div className="font-semibold text-emerald-700">Declarado en el 0621: {textoSoles(declaradoIgv)}</div>
+          )}
+        </Tarjeta>
+        <Tarjeta
+          titulo="IGV proyectado al cierre"
+          valor={enCurso ? "—" : textoSoles(montoMes)}
+          tonoValor={enCurso ? "text-slate-300" : requiereAtencion ? "text-red-700" : "text-ink"}
+          borde={requiereAtencion ? "border-red-200" : "border-slate-200"}
+        >
+          <div className="flex items-center gap-2">
+            {enCurso ? <>La proyección al ritmo del mes llega pronto <Pronto fase="Fase 6" /></> : "El mes ya cerró: es el monto final"}
           </div>
-
-          {calculo.declarado && (
-            <div className="mt-4 flex items-start gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800">
-              <CheckCircle2 size={16} className="mt-0.5 shrink-0" />
-              <span>
-                Ya se presentó el 0621 (orden {calculo.declarado.num_orden}
-                {calculo.declarado.fecha_presentacion ? `, ${fechaPeru(calculo.declarado.fecha_presentacion, { timeZone: "UTC" })}` : ""}).
-                La columna «Declarado» muestra lo presentado; en ámbar, las casillas que difieren en más de S/ {UMBRAL_DIFERENCIA}.
-              </span>
+          {alza !== null && (
+            <div className={`font-semibold ${requiereAtencion ? "text-red-700" : "text-slate-700"}`}>
+              {alza >= 0 ? "+" : ""}
+              {Math.round(alza * 100)} % frente a {textoMismoMes} ({textoSoles(mismoMes.igv)})
             </div>
           )}
+          {alza === null && promedio.igv !== null && <div>Promedio de 12 meses: {textoSoles(promedio.igv)}</div>}
+        </Tarjeta>
+        <Tarjeta titulo="Pago a cuenta de Renta" valor={calculo.renta_por_pagar === null ? "—" : textoSoles(calculo.renta_por_pagar)}>
+          <div title={calculo.renta_regla}>
+            {calculo.renta_porcentaje === null
+              ? "Falta el régimen: confírmalo en Configuración"
+              : `${porcentaje(calculo.renta_porcentaje)} de ingresos netos ${textoSoles(c["301"])} (${textoRegimen(calculo.regimen)})`}
+          </div>
+          {c["317"] > 0 && <div>menos pagos ya hechos {textoSoles(c["317"])}</div>}
+        </Tarjeta>
+      </div>
 
-          {calculo.avisos.length > 0 && (
-            <ul className="mt-4 space-y-1.5 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
-              {calculo.avisos.map((a) => (
-                <li key={a} className="flex items-start gap-2">
-                  <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-                  {a}
-                </li>
-              ))}
-            </ul>
-          )}
+      <div className={CAJA}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="font-heading text-lg font-bold text-ink">Cómo va el mes, día a día</h3>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
+            {SERIES.map((s) => (
+              <span key={s.clave} className="flex items-center gap-1.5">
+                <span className="h-0.5 w-4 rounded" style={{ backgroundColor: s.color }} />
+                {s.texto}
+              </span>
+            ))}
+            {mismoMes.igv !== null && (
+              <span className="flex items-center gap-1.5">
+                <span className="w-4 border-t-2 border-dashed" style={{ borderColor: COLOR_REFERENCIA }} />
+                Declarado {textoMismoMes}
+              </span>
+            )}
+          </div>
+        </div>
+        {serie === null ? (
+          <p className="mt-6 text-sm text-slate-500">Armando el gráfico...</p>
+        ) : (
+          <GraficoDiario
+            puntos={serie}
+            diasDelMes={diasDelMes}
+            referencia={mismoMes.igv ? { texto: `Declarado ${textoMismoMes}`, monto: mismoMes.igv } : null}
+            hoy={enCurso ? hoy.dia : null}
+          />
+        )}
+        <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+          Cada día se rehace con la fecha de emisión de los comprobantes de la propuesta del SIRE. La línea de proyección
+          llega con la Fase 6.
+        </p>
+      </div>
 
-          <h4 className="mt-5 text-sm font-bold text-ink">Cómo se llega al IGV</h4>
-          <TablaLineas titulo="Concepto" lineas={calculo.lineas_igv} conDeclarado={conDeclarado} />
-          <h4 className="mt-5 text-sm font-bold text-ink">Pasa al mes siguiente</h4>
-          <TablaLineas titulo="Concepto" lineas={calculo.lineas_siguiente} conDeclarado={conDeclarado} />
-          <h4 className="mt-5 text-sm font-bold text-ink">Cómo se llega a la Renta</h4>
-          <TablaLineas titulo="Concepto" lineas={calculo.lineas_renta} conDeclarado={conDeclarado} />
-          <p className="mt-4 text-xs text-slate-500">
-            Estimado en soles enteros, como el 0621. Las ventas y compras salen de la propuesta del SIRE: si el registro
-            final excluye o agrega comprobantes, el monto declarado puede cambiar.
-          </p>
-        </>
-      )}
+      <div className="grid gap-5 lg:grid-cols-[1.4fr_1fr]">
+        <ComoSeLlega lineas={calculo.lineas_monto} casillas={c} />
+        <div className="space-y-5">
+          <Alertas alertas={alertas} />
+          <Comparacion filas={calculo.comparacion} />
+        </div>
+      </div>
+
+      <ComprasPronto compras={lecturas.datos?.resumen?.compras?.cantidad ?? null} />
+
+      <DetalleCasillas calculo={calculo} />
+
+      <DatosSunatLiquidacion periodo={periodo} lecturas={lecturas} />
     </div>
   );
 }

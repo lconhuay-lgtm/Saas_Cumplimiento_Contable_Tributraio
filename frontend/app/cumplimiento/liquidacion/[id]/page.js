@@ -6,8 +6,8 @@ import { ArrowLeft, ChevronRight, Settings2 } from "lucide-react";
 import Sidebar from "../../../../components/Sidebar";
 import { api, getToken } from "../../../../lib/api";
 import { periodosElegibles, textoRegimen } from "../../../../lib/liquidacion";
-import DatosSunatLiquidacion from "./DatosSunatLiquidacion";
 import TableroLiquidacion from "./TableroLiquidacion";
+import useLecturas from "./useLecturas";
 
 // Tablero de la Liquidacion en vivo de una empresa, dentro de Cumplimiento como
 // en el boceto (Cumplimiento › Liquidacion en vivo › empresa): el estimado del
@@ -25,6 +25,7 @@ export default function TableroEmpresaPage() {
   const [version, setVersion] = useState(0); // sube al terminar una lectura: el tablero recalcula
   const [empresa, setEmpresa] = useState(null);
   const [error, setError] = useState("");
+  const lecturas = useLecturas(id, periodo, () => setVersion((v) => v + 1));
 
   useEffect(() => {
     if (!getToken()) {
@@ -49,9 +50,9 @@ export default function TableroEmpresaPage() {
 
         <div className="mt-4 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-extrabold tracking-tight text-ink">{empresa?.razon_social || "Liquidación en vivo"}</h1>
+            <h1 className="font-heading text-3xl font-bold tracking-tight text-ink">{empresa?.razon_social || "Liquidación en vivo"}</h1>
             {empresa && (
-              <p className="mt-1 text-sm text-slate-500">
+              <p className="mt-1 text-sm text-slate-600">
                 RUC {empresa.ruc} · {empresa.regimen ? textoRegimen(empresa.regimen) : "Régimen sin definir"} ·{" "}
                 {empresa.responsable_nombre ? `Responsable: ${empresa.responsable_nombre}` : "Sin responsable asignado"}
               </p>
@@ -80,10 +81,14 @@ export default function TableroEmpresaPage() {
         )}
 
         {empresa?.activa && (
-          <div className="mt-6 space-y-5">
-            <TableroLiquidacion empresaId={id} periodo={periodo} periodos={periodos} onPeriodo={setPeriodo} version={version} />
-            <DatosSunatLiquidacion empresaId={id} periodo={periodo} onLeido={() => setVersion((v) => v + 1)} />
-          </div>
+          <TableroLiquidacion
+            empresaId={id}
+            periodo={periodo}
+            periodos={periodos}
+            onPeriodo={setPeriodo}
+            version={version}
+            lecturas={lecturas}
+          />
         )}
       </main>
     </div>

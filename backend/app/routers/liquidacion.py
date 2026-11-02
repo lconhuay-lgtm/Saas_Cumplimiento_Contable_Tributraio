@@ -21,7 +21,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.acceso import es_admin, filtrar_empresas_visibles, obtener_empresa_visible
-from app.calculo_liquidacion import calcular_periodo
+from app.calculo_liquidacion import calcular_periodo, serie_diaria
 from app.database import get_db
 from app.deps import get_usuario_actual
 from app.hora_peru import hoy_peru
@@ -35,6 +35,7 @@ from app.schemas import (
     REGIMENES_LIQUIDACION, LiquidacionActivarRequest, LiquidacionApiRequest, LiquidacionDetalleResponse,
     LiquidacionCalculoResponse, LiquidacionEmpresaItem, LiquidacionEventoItem, LiquidacionLecturaRequest,
     LiquidacionLecturasResponse, LiquidacionListaResponse, LiquidacionPanelResponse, LiquidacionRegimenRequest,
+    LiquidacionSerieResponse,
 )
 from app.security import cifrar_clave_sol, descifrar_clave_sol
 from app.sire_api import ErrorApiSire, probar_conexion
@@ -419,6 +420,18 @@ def ver_calculo(
 ):
     empresa = obtener_empresa_visible(empresa_id, usuario, db)
     return calcular_periodo(db, empresa, periodo)
+
+
+@router.get("/empresas/{empresa_id}/liquidacion/serie", response_model=LiquidacionSerieResponse)
+def ver_serie(
+    empresa_id: str,
+    periodo: str = Query(pattern=PATRON_PERIODO),
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_actual),
+):
+    """El mes dia a dia, para el grafico del tablero."""
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
+    return {"periodo": periodo, "puntos": serie_diaria(db, empresa, periodo, hoy_peru())}
 
 
 @router.get("/liquidacion/panel", response_model=LiquidacionPanelResponse)
