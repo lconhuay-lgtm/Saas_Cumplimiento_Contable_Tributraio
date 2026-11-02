@@ -12,9 +12,12 @@ Liquidacion en vivo -- Etapa 1 (configuracion y acceso).
   datos de un periodo (ver jobs_liquidacion.py) y ve el avance y lo guardado.
 - Bloque 2: el estimado del IGV y la Renta del periodo (calculo_liquidacion.py)
   en el tablero de la empresa y en el panel de las empresas activadas.
+- Fase 4: estado del mes, "Requiere atencion", la marca "Revisado" (un
+  LiquidacionEvento "revisado" con el periodo) y "Actualizar todas" del panel.
 Cada cambio queda en LiquidacionEvento.
 """
-from datetime import date, datetime, timezone
+import math
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
@@ -25,7 +28,9 @@ from app.calculo_liquidacion import calcular_periodo, serie_diaria
 from app.database import get_db
 from app.deps import get_usuario_actual
 from app.hora_peru import hoy_peru
-from app.jobs_liquidacion import FUENTES, crear_lecturas, encolar_lecturas, lecturas_en_curso, rango_fuente
+from app.jobs_liquidacion import (
+    ESPACIADO_AUTOMATICO_SEG, FUENTES, crear_lecturas, encolar_lecturas, lecturas_en_curso, rango_fuente,
+)
 from app.models import (
     CredencialSol, DeclaracionSunat, Empresa, LiquidacionComprobante, LiquidacionCuentaControl, LiquidacionDeclaracion,
     LiquidacionEmpresa, LiquidacionEvento, LiquidacionLectura, LiquidacionRetencionPercepcion, SireEstadoPeriodo, Tenant,
@@ -35,7 +40,7 @@ from app.schemas import (
     REGIMENES_LIQUIDACION, LiquidacionActivarRequest, LiquidacionApiRequest, LiquidacionDetalleResponse,
     LiquidacionCalculoResponse, LiquidacionEmpresaItem, LiquidacionEventoItem, LiquidacionLecturaRequest,
     LiquidacionLecturasResponse, LiquidacionListaResponse, LiquidacionPanelResponse, LiquidacionRegimenRequest,
-    LiquidacionSerieResponse,
+    LiquidacionSerieResponse, LiquidacionActualizarResponse, LiquidacionPeriodoRequest, LiquidacionRevisadoItem,
 )
 from app.security import cifrar_clave_sol, descifrar_clave_sol
 from app.sire_api import ErrorApiSire, probar_conexion
@@ -410,6 +415,36 @@ def pedir_lecturas(
 
 PATRON_PERIODO = r"^\d{4}-(0[1-9]|1[0-2])$"
 
+# "Requiere atencion" (4.6) por la configuracion: sin API del SIRE no hay estimado al dia.
+MOTIVOS_CONFIG = {
+    "falta_responsable": "Falta asignar un responsable",
+    "falta_api": "Falta configurar la API del SIRE",
+    "sin_probar": "Falta probar la API del SIRE",
+    "api_error": "La API del SIRE dio error en la última prueba",
+    "no_afiliada": "No afiliada al SIRE",
+}
+
+
+def _revisiones(db: Session, empresa_ids: list[str], periodo: str) -> dict[str, dict]:
+    """La ultima marca "Revisado" (4.9) del periodo de cada empresa."""
+    filas = (
+        db.query(LiquidacionEvento, Usuario)
+        .outerjoin(Usuario, Usuario.id == LiquidacionEvento.usuario_id)
+        .filter(
+            LiquidacionEvento.empresa_id.in_(empresa_ids or [""]),
+            LiquidacionEvento.accion == "revisado",
+            LiquidacionEvento.detalle == periodo,
+        )
+        .order_by(LiquidacionEvento.creado_en)
+        .all()
+    )
+    return {ev.empresa_id: {"usuario_nombre": _nombre(u), "fecha": ev.creado_en} for ev, u in filas}
+
+
+def _estado_config(db: Session, empresa: Empresa) -> str:
+    config = db.get(LiquidacionEmpresa, empresa.id)
+    return _estado(empresa, config, _sire_periodos(db, config, empresa.id))
+
 
 @router.get("/empresas/{empresa_id}/liquidacion/calculo", response_model=LiquidacionCalculoResponse)
 def ver_calculo(
@@ -419,7 +454,30 @@ def ver_calculo(
     usuario: Usuario = Depends(get_usuario_actual),
 ):
     empresa = obtener_empresa_visible(empresa_id, usuario, db)
-    return calcular_periodo(db, empresa, periodo)
+    calculo = calcular_periodo(db, empresa, periodo)
+    motivo = MOTIVOS_CONFIG.get(_estado_config(db, empresa))
+    return {
+        **calculo,
+        "atencion": ([motivo] if motivo else []) + calculo["atencion"],
+        "revisado": _revisiones(db, [empresa.id], periodo).get(empresa.id),
+        "puede_revisar": _puede_leer(empresa, usuario),
+    }
+
+
+@router.post("/empresas/{empresa_id}/liquidacion/revisado", response_model=LiquidacionRevisadoItem)
+def marcar_revisado(
+    empresa_id: str,
+    datos: LiquidacionPeriodoRequest,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_actual),
+):
+    """Marca "Revisado" (4.9): el responsable o un admin; se puede marcar varias veces y vale la ultima."""
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
+    if not _puede_leer(empresa, usuario):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo el responsable asignado o un administrador puede marcarla como revisada.")
+    _evento(db, empresa.id, usuario, "revisado", datos.periodo)
+    db.commit()
+    return _revisiones(db, [empresa.id], datos.periodo)[empresa.id]
 
 
 @router.get("/empresas/{empresa_id}/liquidacion/serie", response_model=LiquidacionSerieResponse)
@@ -440,17 +498,16 @@ def panel_liquidacion(
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_actual),
 ):
-    """El estimado del periodo de cada empresa activada que el usuario ve, por vencimiento."""
-    empresas = (
-        filtrar_empresas_visibles(db.query(Empresa), usuario)
-        .join(LiquidacionEmpresa, LiquidacionEmpresa.empresa_id == Empresa.id)
-        .filter(Empresa.activo.is_(True), LiquidacionEmpresa.activa.is_(True))
-        .all()
-    )
+    """El estimado del periodo de cada empresa activada que el usuario ve, por vencimiento (columnas de 4.7)."""
+    empresas = _empresas_del_panel(db, usuario)
+    revisiones = _revisiones(db, [e.id for e in empresas], periodo)
+    hoy = hoy_peru()
     filas = []
     for empresa in empresas:
-        calculo = calcular_periodo(db, empresa, periodo)
+        calculo = calcular_periodo(db, empresa, periodo, hoy)
         lineas = {l["casilla"]: l for l in calculo["lineas_igv"] + calculo["lineas_renta"] if l["casilla"]}
+        estado_config = _estado_config(db, empresa)
+        motivo = MOTIVOS_CONFIG.get(estado_config)
         filas.append({
             "empresa_id": empresa.id,
             "ruc": empresa.ruc,
@@ -460,13 +517,61 @@ def panel_liquidacion(
             "vence": calculo["vence"],
             "hay_datos": calculo["hay_datos"],
             "datos_al": calculo["datos_al"],
+            "lectura_sire": calculo["fechas"].get("sire"),
             "igv_por_pagar": calculo["igv_por_pagar"],
             "saldo_a_favor": calculo["saldo_a_favor"],
+            "igv_681": calculo["casillas"]["681"],
+            "igv_anio_anterior": calculo["comparacion"][0]["igv"],
             "renta_por_pagar": calculo["renta_por_pagar"],
             "avisos": len(calculo["avisos"]),
             "declarado": calculo["declarado"] is not None,
             "igv_declarado": lineas["681"]["declarado"],
             "renta_declarada": lineas["312"]["declarado"],
+            "estado_config": estado_config,
+            "estado_mes": calculo["estado_mes"],
+            "atencion": ([motivo] if motivo else []) + calculo["atencion"],
+            "revisado": revisiones.get(empresa.id),
         })
     filas.sort(key=lambda f: (f["vence"] is None, f["vence"] or date.max, f["razon_social"]))
     return {"periodo": periodo, "empresas": filas}
+
+
+def _empresas_del_panel(db: Session, usuario: Usuario) -> list[Empresa]:
+    return (
+        filtrar_empresas_visibles(db.query(Empresa), usuario)
+        .join(LiquidacionEmpresa, LiquidacionEmpresa.empresa_id == Empresa.id)
+        .filter(Empresa.activo.is_(True), LiquidacionEmpresa.activa.is_(True))
+        .all()
+    )
+
+
+@router.post("/liquidacion/panel/actualizar", response_model=LiquidacionActualizarResponse)
+def actualizar_panel(
+    datos: LiquidacionPeriodoRequest,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_actual),
+):
+    """
+    "Actualizar todas" del boceto (solo admin): el SIRE y Aduanas del periodo
+    de cada empresa activada, espaciadas como la lectura de madrugada. El Menu
+    SOL no: entra con la clave de cada empresa y ya tiene sus dias programados.
+    """
+    if not es_admin(usuario):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo un administrador puede actualizar todas las empresas.")
+    if datos.periodo > hoy_peru().strftime("%Y-%m"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ese periodo todavía no empieza.")
+    con_clave = {eid for (eid,) in db.query(CredencialSol.empresa_id)}
+    encoladas = saltadas = 0
+    for empresa in sorted(_empresas_del_panel(db, usuario), key=lambda e: e.razon_social):
+        if empresa.id not in con_clave or lecturas_en_curso(db, empresa.id, datetime.now(timezone.utc)):
+            saltadas += 1
+            continue
+        config = db.get(LiquidacionEmpresa, empresa.id)
+        fuentes = {"aduanas": (datos.periodo, datos.periodo)}
+        if config.api_client_id and config.api_secret_cifrado:
+            fuentes["sire"] = (datos.periodo, datos.periodo)
+        lecturas = crear_lecturas(db, empresa.id, usuario.id, datos.periodo, list(fuentes), rangos=fuentes)
+        db.commit()
+        encolar_lecturas(lecturas, espera=timedelta(seconds=encoladas * ESPACIADO_AUTOMATICO_SEG))
+        encoladas += 1
+    return {"encoladas": encoladas, "saltadas": saltadas, "minutos": math.ceil(encoladas * ESPACIADO_AUTOMATICO_SEG / 60)}

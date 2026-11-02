@@ -22,6 +22,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from sqlalchemy.orm import Session
 
 from app.cronograma_sunat import grupo_para_empresa
+from app.hora_peru import ZONA_PERU, hoy_peru
 from app.jobs_liquidacion import sumar_meses
 from app.models import (
     CronogramaVencimiento, DeclaracionSunat, Empresa, LiquidacionCalculo, LiquidacionComprobante,
@@ -48,6 +49,10 @@ MESES_ENCADENADOS = 3
 # del doble de las ventas declaradas (p. ej. quien vende por cuenta de otros y
 # declara solo su comision), el estimado usa esa misma proporcion.
 PROPORCION_RENTA_NORMAL = (0.5, 2.0)
+# Conciliacion con el 0621 presentado (7.1): una casilla difiere si se aleja mas que esto.
+UMBRAL_DIFERENCIA = 10
+# "Requiere atencion" (4.6): el IGV sube esto o mas frente al mes anterior o al mismo mes del ano anterior.
+ALZA_DE_ATENCION = 0.15
 
 MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "setiembre", "octubre",
          "noviembre", "diciembre")
@@ -503,6 +508,48 @@ def _comparacion(datos: _Datos, periodo: str) -> list[dict]:
     ]
 
 
+def _estado_mes(declarado: dict | None, lineas: list[dict], hay_datos: bool) -> tuple[str, int]:
+    """
+    Estado del mes (4.8): en_curso hasta que aparece el 0621; despues
+    conciliado o con_diferencias segun las casillas (7.1), o solo declarado
+    si no hay estimado con que comparar. Devuelve tambien cuantas difieren.
+    """
+    if not declarado:
+        return "en_curso", 0
+    if not hay_datos:
+        return "declarado", 0
+    diferencias = sum(
+        1 for l in lineas
+        if l["declarado"] is not None and l["monto"] is not None and abs(l["monto"] - l["declarado"]) > UMBRAL_DIFERENCIA
+    )
+    return ("con_diferencias" if diferencias else "conciliado"), diferencias
+
+
+def _atencion(c: dict, comparacion: list[dict], declarado: dict | None, diferencias: int, lectura_sire, hoy: date) -> list[str]:
+    """
+    Motivos de "Requiere atencion" (4.6) que ya se pueden revisar: alza del
+    IGV frente al mes anterior o al mismo mes del ano anterior, diferencias
+    con el 0621 presentado y datos del SIRE de mas de un dia. (El credito en
+    riesgo llega con la Fase 5; la API del SIRE la revisa el panel.)
+    """
+    motivos = []
+    if not declarado:
+        for item in comparacion[:2]:
+            if item["igv"]:
+                alza = (c["681"] - item["igv"]) / item["igv"]
+                if alza >= ALZA_DE_ATENCION:
+                    motivos.append(
+                        f"IGV {round(alza * 100)} % más alto que {item['concepto'].split(' (')[0]} (S/ {item['igv']:,})"
+                    )
+        if lectura_sire is not None:
+            leido = (lectura_sire if lectura_sire.tzinfo else lectura_sire.replace(tzinfo=timezone.utc)).astimezone(ZONA_PERU).date()
+            if leido < hoy - timedelta(days=1):
+                motivos.append(f"Los datos del SIRE son del {leido:%d/%m}: no se han vuelto a leer")
+    if diferencias:
+        motivos.append(f"{diferencias} casilla(s) difieren en más de S/ {UMBRAL_DIFERENCIA} del 0621 presentado")
+    return motivos
+
+
 def serie_diaria(db: Session, empresa: Empresa, periodo: str, hoy: date) -> list[dict]:
     """
     Cada dia del periodo, hasta hoy, rehecho con lo emitido hasta ese dia: IGV
@@ -539,7 +586,7 @@ def vencimiento(db: Session, empresa: Empresa, periodo: str):
     return (f.astimezone(timezone.utc) if f.tzinfo else f).date()
 
 
-def calcular_periodo(db: Session, empresa: Empresa, periodo: str) -> dict:
+def calcular_periodo(db: Session, empresa: Empresa, periodo: str, hoy: date | None = None) -> dict:
     """El estimado del periodo con sus lineas de "como se llega al monto", y lo declarado si ya hay 0621."""
     config = db.get(LiquidacionEmpresa, empresa.id)
     regimen = config.regimen if config else None
@@ -578,10 +625,14 @@ def calcular_periodo(db: Session, empresa: Empresa, periodo: str) -> dict:
         _linea("317", "Pagos ya hechos del periodo", c["317"], fuente="Boletas 1662 (tributos " + ", ".join(TRIBUTOS_RENTA) + ")", declarado=declarado, signo=-1),
     ]
     fechas = [f for f in r["fechas"].values() if f is not None]
+    comparacion = _comparacion(datos, periodo)
+    estado_mes, diferencias = _estado_mes(declarado, lineas_igv + siguiente + lineas_renta, r["fechas"].get("sire") is not None)
     return {
         "periodo": periodo,
         "regimen": regimen,
         "vence": vencimiento(db, empresa, periodo),
+        "estado_mes": estado_mes,
+        "atencion": _atencion(c, comparacion, declarado, diferencias, r["fechas"].get("sire"), hoy or hoy_peru()),
         "hay_datos": r["fechas"].get("sire") is not None,
         "datos_al": min(fechas) if fechas else None,
         "fechas": r["fechas"],
@@ -592,7 +643,7 @@ def calcular_periodo(db: Session, empresa: Empresa, periodo: str) -> dict:
         "renta_por_pagar": r["renta_por_pagar"],
         "casillas": c,
         "lineas_monto": _lineas_monto(c, r),
-        "comparacion": _comparacion(datos, periodo),
+        "comparacion": comparacion,
         "lineas_igv": lineas_igv,
         "lineas_siguiente": siguiente,
         "lineas_renta": lineas_renta,

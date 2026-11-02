@@ -61,6 +61,15 @@ export const ACCIONES_EVENTO = {
   conexion_probada: "Probó la conexión",
   regimen_cambiado: "Cambió el régimen",
   lectura_solicitada: "Pidió leer los datos de SUNAT del periodo",
+  revisado: "Marcó como revisada la liquidación de",
+};
+
+// Estado del mes de cada empresa (parametro 4.8; backend: calculo_liquidacion._estado_mes).
+export const ESTADOS_MES = {
+  en_curso: { texto: "En curso", chip: "bg-slate-100 text-slate-600" },
+  declarado: { texto: "Declarado", chip: "bg-accent-light text-accent" },
+  conciliado: { texto: "Conciliado", chip: "bg-emerald-50 text-emerald-700" },
+  con_diferencias: { texto: "Con diferencias", chip: "bg-amber-50 text-amber-800" },
 };
 
 // Fuentes que lee el Bloque 1 (backend/app/jobs_liquidacion.py), en el orden en que se leen.

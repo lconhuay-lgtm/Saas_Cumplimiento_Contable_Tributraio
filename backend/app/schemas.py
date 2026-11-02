@@ -1036,6 +1036,22 @@ class LiquidacionLecturaRequest(BaseModel):
     fuentes: list[str] | None = None  # None: todas (el SIRE solo si hay credenciales de la API)
 
 
+class LiquidacionPeriodoRequest(BaseModel):
+    """Marcar "Revisado" (4.9) o "Actualizar todas" del panel."""
+    periodo: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+class LiquidacionRevisadoItem(BaseModel):
+    usuario_nombre: str | None
+    fecha: datetime
+
+
+class LiquidacionActualizarResponse(BaseModel):
+    encoladas: int
+    saltadas: int  # sin clave SOL o con una lectura en curso
+    minutos: int  # cuanto tarda, aprox., en leerse la ultima
+
+
 class LiquidacionLecturaItem(BaseModel):
     fuente: str
     estado: str  # pendiente | en_progreso | completado | error
@@ -1096,6 +1112,10 @@ class LiquidacionCalculoResponse(BaseModel):
     periodo: str
     regimen: str | None
     vence: date | None
+    estado_mes: str  # en_curso | declarado | conciliado | con_diferencias (4.8)
+    atencion: list[str]  # motivos de "Requiere atencion" (4.6)
+    revisado: LiquidacionRevisadoItem | None = None  # ultima marca "Revisado" del periodo (4.9)
+    puede_revisar: bool = False
     hay_datos: bool  # False: falta leer el SIRE del periodo
     datos_al: datetime | None  # la lectura mas antigua de las que se usaron
     fechas: dict[str, datetime | None]  # ultima lectura de cada fuente
@@ -1135,13 +1155,20 @@ class LiquidacionPanelItem(BaseModel):
     vence: date | None
     hay_datos: bool
     datos_al: datetime | None
+    lectura_sire: datetime | None
     igv_por_pagar: int
     saldo_a_favor: int
+    igv_681: int  # IGV a pagar antes de los pagos ya hechos, para comparar con otros 0621
+    igv_anio_anterior: int | None  # 681 del 0621 del mismo mes del ano anterior
     renta_por_pagar: int | None
     avisos: int
     declarado: bool
     igv_declarado: int | None  # 681 del 0621 presentado
     renta_declarada: int | None  # 312
+    estado_config: str  # lista | falta_api | api_error | ... (ver _estado)
+    estado_mes: str
+    atencion: list[str]
+    revisado: LiquidacionRevisadoItem | None
 
 
 class LiquidacionPanelResponse(BaseModel):

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, Loader2, RefreshCw } from "lucide-react";
 import { api } from "../../../../lib/api";
 import { fechaHoraPeru, fechaPeru, hoyPeru, hoyPeruIso } from "../../../../lib/fechas";
-import { textoPeriodo, textoRegimen, textoSoles } from "../../../../lib/liquidacion";
+import { ESTADOS_MES, textoPeriodo, textoRegimen, textoSoles } from "../../../../lib/liquidacion";
 import DatosSunatLiquidacion from "./DatosSunatLiquidacion";
 import GraficoDiario, { COLOR_REFERENCIA, SERIES } from "./GraficoDiario";
 
@@ -102,18 +102,18 @@ function ComoSeLlega({ lineas, casillas }) {
   );
 }
 
-function Alertas({ alertas }) {
-  const hay = alertas.length > 0;
+// Arriba lo que "Requiere atencion" (4.6, rojo); debajo los avisos del calculo (datos que faltan, reglas aplicadas).
+function Alertas({ atencion, avisos }) {
   return (
-    <div className={`rounded-xl border bg-white p-5 ${hay ? "border-red-200" : "border-slate-200"}`}>
+    <div className={`rounded-xl border bg-white p-5 ${atencion.length ? "border-red-200" : "border-slate-200"}`}>
       <h3 className="font-heading text-lg font-bold text-ink">Alertas</h3>
-      {!hay && <p className="mt-2 text-sm text-slate-500">Sin alertas para este periodo.</p>}
+      {!atencion.length && !avisos.length && <p className="mt-2 text-sm text-slate-500">Sin alertas para este periodo.</p>}
       <ul className="mt-3 space-y-2">
-        {alertas.map((a) => (
-          <li key={a.texto} className={`rounded-lg px-3 py-2.5 ${a.fuerte ? "bg-red-50" : "bg-slate-50"}`}>
-            {a.titulo && <div className="font-semibold text-red-700">{a.titulo}</div>}
-            <div className={`text-sm ${a.fuerte ? "text-red-700" : "text-slate-700"}`}>{a.texto}</div>
-          </li>
+        {atencion.map((a) => (
+          <li key={a} className="rounded-lg bg-red-50 px-3 py-2.5 text-sm font-semibold text-red-700">{a}</li>
+        ))}
+        {avisos.map((a) => (
+          <li key={a} className="rounded-lg bg-slate-50 px-3 py-2.5 text-sm text-slate-700">{a}</li>
         ))}
       </ul>
       <p className="mt-3 flex items-center gap-2 text-xs text-slate-500">
@@ -244,6 +244,19 @@ export default function TableroLiquidacion({ empresaId, periodo, periodos, onPer
   const [calculo, setCalculo] = useState(null);
   const [serie, setSerie] = useState(null);
   const [error, setError] = useState("");
+  const [revisando, setRevisando] = useState(false);
+
+  async function marcarRevisado() {
+    setRevisando(true);
+    try {
+      const revisado = await api.marcarRevisadoLiquidacion(empresaId, periodo);
+      setCalculo((actual) => ({ ...actual, revisado }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRevisando(false);
+    }
+  }
 
   useEffect(() => {
     let vigente = true;
@@ -290,6 +303,19 @@ export default function TableroLiquidacion({ empresaId, periodo, periodos, onPer
           {leyendo ? "Leyendo SUNAT..." : "Actualizar ahora"}
         </button>
       )}
+      {calculo?.puede_revisar && (
+        <button onClick={marcarRevisado} disabled={revisando}
+          className={`${BOTON} border border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50 disabled:opacity-60`}>
+          {revisando ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+          Marcar como revisado
+        </button>
+      )}
+      {calculo?.revisado && (
+        <span className="self-center text-xs text-slate-500">
+          Revisado{calculo.revisado.usuario_nombre ? ` por ${calculo.revisado.usuario_nombre}` : ""} el{" "}
+          {fechaHoraPeru(calculo.revisado.fecha, { day: "2-digit", month: "2-digit", hour: "numeric", minute: "2-digit" })}
+        </span>
+      )}
     </div>
   );
 
@@ -316,16 +342,9 @@ export default function TableroLiquidacion({ empresaId, periodo, periodos, onPer
   const requiereAtencion = alza !== null && alza >= ALZA_DE_ATENCION;
   const lecturaSire = calculo.fechas.sire;
 
-  const alertas = [];
-  if (requiereAtencion) {
-    alertas.push({
-      fuerte: true,
-      titulo: `El IGV supera en ${Math.round(alza * 100)} % a ${textoMismoMes}`,
-      texto: `${mayuscula(textoPeriodo(periodo))}: ${textoSoles(c["681"])} · ${mayuscula(textoMismoMes)}: ${textoSoles(mismoMes.igv)}.`,
-    });
-  }
-  calculo.avisos.forEach((a) => alertas.push({ texto: a }));
   const vence = calculo.vence;
+  const estadoMes = ESTADOS_MES[calculo.estado_mes] || ESTADOS_MES.en_curso;
+  const tonoEstado = { conciliado: "verde", con_diferencias: "ambar", declarado: "azul" }[calculo.estado_mes];
 
   return (
     <div className="mt-4 space-y-5">
@@ -335,9 +354,9 @@ export default function TableroLiquidacion({ empresaId, periodo, periodos, onPer
           {lecturaSire ? `Actualizado ${textoActualizado(lecturaSire)}` : "Falta leer el SIRE del mes"}
         </Etiqueta>
         {calculo.declarado ? (
-          <Etiqueta tono="verde">
+          <Etiqueta tono={tonoEstado || "azul"}>
             <CheckCircle2 size={13} />
-            Declarado
+            {estadoMes.texto} · 0621 presentado
             {calculo.declarado.fecha_presentacion ? ` el ${fechaPeru(calculo.declarado.fecha_presentacion, { timeZone: "UTC" })}` : ""}
             {` (orden ${calculo.declarado.num_orden})`}
           </Etiqueta>
@@ -436,7 +455,7 @@ export default function TableroLiquidacion({ empresaId, periodo, periodos, onPer
       <div className="grid gap-5 lg:grid-cols-[1.4fr_1fr]">
         <ComoSeLlega lineas={calculo.lineas_monto} casillas={c} />
         <div className="space-y-5">
-          <Alertas alertas={alertas} />
+          <Alertas atencion={calculo.atencion} avisos={calculo.avisos} />
           <Comparacion filas={calculo.comparacion} />
         </div>
       </div>

@@ -104,7 +104,7 @@ export default function PanelLiquidacion() {
       </div>
 
       {vista === "mes" ? (
-        <LiquidacionDelMes />
+        <LiquidacionDelMes esAdmin={datos?.es_admin} activas={datos?.activas} incluidas={datos?.incluidas} />
       ) : (
         <>
           {error && <div className="mt-4 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>}

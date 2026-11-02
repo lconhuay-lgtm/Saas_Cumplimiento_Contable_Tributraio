@@ -362,6 +362,10 @@ export const api = {
   verPanelLiquidacion: (periodo) => apiFetch(`/liquidacion/panel?periodo=${periodo}`),
   verSerieLiquidacion: (empresaId, periodo) =>
     apiFetch(`/empresas/${empresaId}/liquidacion/serie?periodo=${periodo}`),
+  marcarRevisadoLiquidacion: (empresaId, periodo) =>
+    apiFetch(`/empresas/${empresaId}/liquidacion/revisado`, { method: "POST", body: JSON.stringify({ periodo }) }),
+  actualizarPanelLiquidacion: (periodo) =>
+    apiFetch("/liquidacion/panel/actualizar", { method: "POST", body: JSON.stringify({ periodo }) }),
 
   importarEmpresas: (archivo) => {
     const formData = new FormData();

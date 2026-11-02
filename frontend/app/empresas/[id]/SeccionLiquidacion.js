@@ -4,7 +4,7 @@ import Link from "next/link";
 import { BookOpen, Calculator, CheckCircle2, KeyRound, Loader2, PlugZap, Trash2 } from "lucide-react";
 import { api } from "../../../lib/api";
 import { fechaHoraPeru } from "../../../lib/fechas";
-import { ACCIONES_EVENTO, ESTADOS_LIQUIDACION, REGIMENES, textoRegimen } from "../../../lib/liquidacion";
+import { ACCIONES_EVENTO, ESTADOS_LIQUIDACION, REGIMENES, textoPeriodo, textoRegimen } from "../../../lib/liquidacion";
 import ConfirmDialog from "../../../components/ConfirmDialog";
 
 // Pestana "Liquidacion en vivo" de cada empresa: la configuracion (Etapa 1):
@@ -271,7 +271,15 @@ export default function SeccionLiquidacion({ empresaId }) {
             {datos.eventos.map((ev, i) => (
               <li key={i} className="text-sm">
                 <div className="font-semibold text-ink">{ACCIONES_EVENTO[ev.accion] || ev.accion}</div>
-                {ev.detalle && <div className="text-slate-600">{ev.accion === "regimen_cambiado" ? textoRegimen(ev.detalle) : ev.detalle}</div>}
+                {ev.detalle && (
+                  <div className="text-slate-600">
+                    {ev.accion === "regimen_cambiado"
+                      ? textoRegimen(ev.detalle)
+                      : ev.accion === "revisado" || ev.accion === "lectura_solicitada"
+                        ? textoPeriodo(ev.detalle)
+                        : ev.detalle}
+                  </div>
+                )}
                 <div className="text-xs text-slate-400">
                   {ev.usuario_nombre || "Sistema"} · {fechaHoraPeru(ev.creado_en)}
                 </div>

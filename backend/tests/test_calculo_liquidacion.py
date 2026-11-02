@@ -257,3 +257,63 @@ def test_serie_dia_a_dia(client, db_session):
     assert len(r["puntos"]) == 31 and r["puntos"][-1] == {"fecha": "2026-10-31", "ventas": 540, "credito": 108, "por_pagar": 432}
     # Sin SIRE leido no hay serie.
     assert client.get(f"/empresas/{emp}/liquidacion/serie?periodo=2026-09", headers=ctx["headers_miembro"]).json()["puntos"] == []
+
+
+def test_estado_del_mes_y_motivos_de_atencion():
+    from app.calculo_liquidacion import _atencion, _estado_mes
+
+    def linea(monto, declarado):
+        return {"monto": monto, "declarado": declarado}
+
+    assert _estado_mes(None, [], True) == ("en_curso", 0)
+    assert _estado_mes({"131": 1.0}, [linea(100, 100)], False) == ("declarado", 0)
+    assert _estado_mes({"131": 1.0}, [linea(100, 105), linea(50, None)], True) == ("conciliado", 0)
+    assert _estado_mes({"131": 1.0}, [linea(100, 111), linea(50, 20)], True) == ("con_diferencias", 2)
+
+    comparacion = [{"concepto": "Octubre 2025 (mismo mes)", "igv": 1000}, {"concepto": "Setiembre 2026 (mes anterior)", "igv": 1100}]
+    leido = datetime(2026, 11, 2, 14, 0, tzinfo=timezone.utc)  # 9:00 a.m. en Lima
+    # Sube 15 % frente al ano anterior (no frente al mes anterior); los datos son de ayer: todavia sirven.
+    assert _atencion({"681": 1150}, comparacion, None, 0, leido, date(2026, 11, 3)) == [
+        "IGV 15 % más alto que Octubre 2025 (S/ 1,000)"]
+    assert _atencion({"681": 1100}, comparacion, None, 0, leido, date(2026, 11, 4)) == [
+        "Los datos del SIRE son del 02/11: no se han vuelto a leer"]
+    # Ya declarado: solo cuentan las diferencias con el 0621.
+    assert _atencion({"681": 5000}, comparacion, {"131": 1.0}, 3, leido, date(2026, 11, 20)) == [
+        "3 casilla(s) difieren en más de S/ 10 del 0621 presentado"]
+
+
+def test_conciliacion_revisado_y_actualizar_todas(client, db_session, monkeypatch):
+    import app.routers.liquidacion as liquidacion
+
+    ctx, emp = _empresa_con_octubre(client, db_session)
+    url = f"/empresas/{emp}/liquidacion"
+    octubre = client.get(f"{url}/calculo?periodo=2026-10", headers=ctx["headers_miembro"]).json()
+    assert octubre["estado_mes"] == "en_curso"
+    assert octubre["atencion"][0] == "Falta configurar la API del SIRE"  # la empresa no tiene API
+    assert octubre["revisado"] is None and octubre["puede_revisar"] is True
+
+    # Aparece el 0621 de octubre: con el credito declarado distinto queda "con diferencias".
+    db_session.add(LiquidacionDeclaracion(empresa_id=emp, periodo="2026-10", num_orden="1000", fecha_presentacion=date(2026, 11, 16),
+                                          casillas={"131": 1584.0, "178": 600.0}))
+    db_session.commit()
+    octubre = client.get(f"{url}/calculo?periodo=2026-10", headers=ctx["headers_miembro"]).json()
+    assert octubre["estado_mes"] == "con_diferencias"
+    assert "1 casilla(s) difieren en más de S/ 10 del 0621 presentado" in octubre["atencion"]
+
+    # "Revisado": el responsable lo marca; el panel y el tablero muestran la ultima marca.
+    r = client.post(f"{url}/revisado", json={"periodo": "2026-10"}, headers=ctx["headers_miembro"])
+    assert r.status_code == 200 and r.json()["usuario_nombre"]
+    assert client.post(f"/empresas/{ctx['empresa_ajena_id']}/liquidacion/revisado", json={"periodo": "2026-10"},
+                       headers=ctx["headers_miembro"]).status_code == 404
+    assert client.get(f"{url}/calculo?periodo=2026-10", headers=ctx["headers_miembro"]).json()["revisado"] == r.json()
+    (fila,) = client.get("/liquidacion/panel?periodo=2026-10", headers=ctx["headers_admin"]).json()["empresas"]
+    assert (fila["estado_mes"], fila["estado_config"], fila["revisado"]["fecha"], fila["igv_681"]) == (
+        "con_diferencias", "falta_api", r.json()["fecha"], 0)
+
+    # "Actualizar todas": solo admin; el SIRE (si hay API) y Aduanas, y no repite una lectura en curso.
+    encoladas = []
+    monkeypatch.setattr(liquidacion, "encolar_lecturas", lambda lecturas, espera=None: encoladas.append([l.fuente for l in lecturas]))
+    assert client.post("/liquidacion/panel/actualizar", json={"periodo": "2026-10"}, headers=ctx["headers_miembro"]).status_code == 403
+    r = client.post("/liquidacion/panel/actualizar", json={"periodo": "2026-10"}, headers=ctx["headers_admin"])
+    assert r.json() == {"encoladas": 1, "saltadas": 0, "minutos": 2} and encoladas == [["aduanas"]]
+    assert client.post("/liquidacion/panel/actualizar", json={"periodo": "2026-10"}, headers=ctx["headers_admin"]).json()["saltadas"] == 1
