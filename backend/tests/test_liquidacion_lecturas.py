@@ -347,27 +347,34 @@ def test_lectura_automatica_de_madrugada(client, db_session, monkeypatch):
         for l in db_session.query(LiquidacionLectura).filter(LiquidacionLectura.estado == "pendiente"):
             l.estado, l.finalizado_en = "completado", datetime.now(timezone.utc)
         db_session.commit()
-        return r, {e: fuentes for e, _, fuentes in encoladas}
+        # Un trabajo por empresa y mes (el ultimo periodo que lee).
+        return r, {(e, max(hasta for _, hasta in fuentes.values())): fuentes for e, _, fuentes in encoladas}
 
-    octubre = ("2026-10", "2026-10")
-    # Martes 3/11: solo SIRE y Aduanas de octubre (vence en 10 dias habiles). La otra empresa no tiene API del SIRE.
+    octubre, noviembre = ("2026-10", "2026-10"), ("2026-11", "2026-11")
+    # Martes 3/11: solo SIRE y Aduanas de octubre (vence en 10 dias habiles) y, para la proyeccion, los de
+    # noviembre en otro trabajo. La otra empresa no tiene API del SIRE.
     r, plan = correr(date(2026, 11, 3))
-    assert r["empresas_encoladas"] == 2
-    assert sorted(s for _, s, _ in encoladas) == [0, jobs_liquidacion.ESPACIADO_AUTOMATICO_SEG]
-    assert plan == {emp: {"aduanas": octubre, "sire": octubre}, otra: {"aduanas": octubre}}
+    assert (r["empresas_encoladas"], r["trabajos"]) == (2, 4)
+    assert sorted(s for _, s, _ in encoladas) == [n * jobs_liquidacion.ESPACIADO_AUTOMATICO_SEG for n in range(4)]
+    assert plan == {
+        (emp, "2026-10"): {"aduanas": octubre, "sire": octubre}, (emp, "2026-11"): {"aduanas": noviembre, "sire": noviembre},
+        (otra, "2026-10"): {"aduanas": octubre}, (otra, "2026-11"): {"aduanas": noviembre},
+    }
 
     # Jueves 5/11: ademas el Menu SOL, el 0621 (falta el de octubre) y la cuenta de control (nunca leida).
+    # Noviembre sigue sin Menu SOL: no se abre otra sesion con la clave.
     _, plan = correr(date(2026, 11, 5))
-    assert plan[emp] == {
+    assert plan[(emp, "2026-10")] == {
         "aduanas": octubre, "sire": octubre, "retenciones": octubre, "percepciones": octubre,
         "declaraciones": ("2026-08", "2026-10"), "cuenta_control": ("2025-10", "2026-09"),
     }
+    assert plan[(emp, "2026-11")] == {"aduanas": noviembre, "sire": noviembre}
 
     # Viernes 13/11: faltan 2 dias habiles -> Menu SOL a diario; la cuenta de control ya es de esta semana.
     # La otra empresa no tiene vencimiento cargado y no es lunes ni jueves: solo Aduanas.
     _, plan = correr(date(2026, 11, 13))
-    assert set(plan[emp]) == {"aduanas", "sire", "retenciones", "percepciones", "declaraciones"}
-    assert set(plan[otra]) == {"aduanas"}
+    assert set(plan[(emp, "2026-10")]) == {"aduanas", "sire", "retenciones", "percepciones", "declaraciones"}
+    assert set(plan[(otra, "2026-10")]) == {"aduanas"}
 
     # Aparece el 0621 de octubre: el lunes 16/11 ya sigue noviembre y no vuelve a leer el 0621.
     # La otra empresa tiene una lectura en curso (pedida a mano): no se le encola otra.
@@ -377,9 +384,8 @@ def test_lectura_automatica_de_madrugada(client, db_session, monkeypatch):
     jobs_liquidacion.crear_lecturas(db_session, otra, None, "2026-11", ["aduanas"])
     db_session.commit()
     r, plan = correr(date(2026, 11, 16))
-    noviembre = ("2026-11", "2026-11")
-    assert r["saltadas"] == 1 and set(plan) == {emp}
-    assert plan[emp] == {
+    assert r["saltadas"] == 1 and set(plan) == {(emp, "2026-11")}
+    assert plan[(emp, "2026-11")] == {
         "aduanas": noviembre, "sire": noviembre, "retenciones": noviembre, "percepciones": noviembre,
         "cuenta_control": ("2025-11", "2026-10"),
     }

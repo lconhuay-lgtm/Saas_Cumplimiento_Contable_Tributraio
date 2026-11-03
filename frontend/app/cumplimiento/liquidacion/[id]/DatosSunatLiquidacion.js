@@ -44,9 +44,10 @@ export default function DatosSunatLiquidacion({ periodo, lecturas }) {
         {datos?.en_curso && <Loader2 size={15} className="animate-spin text-accent" />}
       </h3>
       <p className="mt-2 text-sm text-slate-600">
-        Se leen solos cada madrugada a las 3:00 a.m.: el SIRE y Aduanas todos los días; las retenciones, percepciones y el
-        0621, los lunes y jueves y a diario desde 5 días hábiles antes del vencimiento. «Actualizar ahora» lee todo en el
-        momento (unos 10 minutos; puedes salir de la página).
+        Se leen solos cada madrugada desde la 1:30 a.m.: el SIRE y Aduanas todos los días (mientras falta el 0621 del mes
+        pasado, también los del mes en curso); las retenciones, percepciones y el 0621, los lunes y jueves y a diario desde
+        5 días hábiles antes del vencimiento. «Actualizar ahora» lee todo en el momento (unos 5 a 10 minutos; puedes salir
+        de la página).
       </p>
 
       {error && <div className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">{error}</div>}

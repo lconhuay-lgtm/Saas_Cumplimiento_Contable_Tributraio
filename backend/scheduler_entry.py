@@ -101,11 +101,12 @@ SIRE_MINUTO_UTC = int(os.environ.get("SIRE_MINUTO_UTC", "30"))
 #                                   con el cronograma mensual)
 DECLARACIONES_HORA_UTC = int(os.environ.get("DECLARACIONES_HORA_UTC", "16"))
 DECLARACIONES_MINUTO_UTC = int(os.environ.get("DECLARACIONES_MINUTO_UTC", "30"))
-#   LIQUIDACION_HORA_UTC=8:00 -> 3:00 a.m. hora Peru (Liquidacion en vivo, ver
+#   LIQUIDACION_HORA_UTC=6:30 -> 1:30 a.m. hora Peru (Liquidacion en vivo, ver
 #                                app.jobs_liquidacion.encolar_liquidacion_automatica);
+#                                con el mes en curso son ~90 trabajos a 2 min cada uno:
 #                                termina antes de la consulta masiva de las 6:00 a.m.
-LIQUIDACION_HORA_UTC = int(os.environ.get("LIQUIDACION_HORA_UTC", "8"))
-LIQUIDACION_MINUTO_UTC = int(os.environ.get("LIQUIDACION_MINUTO_UTC", "0"))
+LIQUIDACION_HORA_UTC = int(os.environ.get("LIQUIDACION_HORA_UTC", "6"))
+LIQUIDACION_MINUTO_UTC = int(os.environ.get("LIQUIDACION_MINUTO_UTC", "30"))
 
 
 def job_chequeo(etiqueta: str):
