@@ -4,8 +4,9 @@ import { textoSoles } from "../../../../lib/liquidacion";
 
 // "Como va el mes, dia a dia" del boceto: IGV de ventas, credito fiscal e IGV
 // a pagar acumulados de cada dia del periodo (backend: serie_diaria), con el
-// IGV declarado del mismo mes del ano anterior como referencia. SVG a mano:
-// para tres lineas no hace falta una libreria de graficos.
+// IGV declarado del mismo mes del ano anterior como referencia y, en el mes
+// en curso, la proyeccion al cierre en punteado (Fase 6). SVG a mano: para
+// tres lineas no hace falta una libreria de graficos.
 const ANCHO = 1000;
 const ALTO = 300;
 const IZQ = 52;
@@ -32,13 +33,15 @@ function textoEje(v) {
   return v >= 1000 ? `${+(v / 1000).toFixed(1)}k` : String(v);
 }
 
-export default function GraficoDiario({ puntos, diasDelMes, referencia, hoy }) {
+export default function GraficoDiario({ puntos, diasDelMes, referencia, hoy, proyeccion }) {
   const [activo, setActivo] = useState(null);
   if (!puntos.length) {
     return <p className="mt-6 text-sm text-slate-500">Falta leer el SIRE de este periodo para armar el gráfico.</p>;
   }
 
-  const tope = topeDelEje(Math.max(...puntos.flatMap((p) => SERIES.map((s) => p[s.clave])), referencia?.monto || 0));
+  const valores = puntos.flatMap((p) => SERIES.map((s) => p[s.clave]));
+  if (proyeccion) valores.push(...SERIES.map((s) => proyeccion[s.clave]));
+  const tope = topeDelEje(Math.max(...valores, referencia?.monto || 0));
   const x = (dia) => IZQ + ((dia - 1) / Math.max(diasDelMes - 1, 1)) * (ANCHO - IZQ - DER);
   const y = (v) => ARRIBA + (1 - Math.max(v, 0) / tope) * (ALTO - ARRIBA - ABAJO);
   const dia = (p) => Number(p.fecha.slice(8, 10));
@@ -84,6 +87,19 @@ export default function GraficoDiario({ puntos, diasDelMes, referencia, hoy }) {
           <polyline key={s.clave} fill="none" stroke={s.color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"
             points={puntos.map((p) => `${x(dia(p))},${y(p[s.clave])}`).join(" ")} />
         ))}
+
+        {proyeccion && dia(puntos.at(-1)) < diasDelMes && (
+          <g>
+            {SERIES.map((s) => (
+              <line key={s.clave} x1={x(dia(puntos.at(-1)))} y1={y(puntos.at(-1)[s.clave])} x2={x(diasDelMes)} y2={y(proyeccion[s.clave])}
+                stroke={s.color} strokeWidth="2" strokeDasharray="6 5" opacity="0.7" />
+            ))}
+            <text x={x(diasDelMes)} y={y(proyeccion.por_pagar) - 8} textAnchor="end" fontSize="12" fontWeight="700" fill="#0f172a"
+              stroke="white" strokeWidth="4" paintOrder="stroke">
+              {textoSoles(proyeccion.por_pagar)}
+            </text>
+          </g>
+        )}
 
         {punto && (
           <g>

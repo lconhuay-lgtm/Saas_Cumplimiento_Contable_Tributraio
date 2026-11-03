@@ -53,6 +53,16 @@ PROPORCION_RENTA_NORMAL = (0.5, 2.0)
 UMBRAL_DIFERENCIA = 10
 # "Requiere atencion" (4.6): el IGV sube esto o mas frente al mes anterior o al mismo mes del ano anterior.
 ALZA_DE_ATENCION = 0.15
+# Proyeccion al cierre (Fase 6). Cuanto pesa lo que va del mes frente al
+# historial segun la parte del mes (en dias habiles) que ya paso: 6.5 propone
+# en linea recta; app/prueba_proyeccion.py mide cada opcion con meses cerrados.
+PESOS_DEL_MES = {
+    "lineal": lambda f: f,
+    "cuadratico": lambda f: f * f,
+}
+PESO_DEL_MES = "lineal"
+# Hasta este dia la proyeccion dice "basado en el historial" (parametros de la Fase 6).
+DIAS_SOLO_HISTORIAL = 8
 
 MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "setiembre", "octubre",
          "noviembre", "diciembre")
@@ -525,18 +535,19 @@ def _estado_mes(declarado: dict | None, lineas: list[dict], hay_datos: bool) -> 
     return ("con_diferencias" if diferencias else "conciliado"), diferencias
 
 
-def _atencion(c: dict, comparacion: list[dict], declarado: dict | None, diferencias: int, lectura_sire, hoy: date) -> list[str]:
+def _atencion(igv: int, comparacion: list[dict], declarado: dict | None, diferencias: int, lectura_sire, hoy: date) -> list[str]:
     """
     Motivos de "Requiere atencion" (4.6) que ya se pueden revisar: alza del
-    IGV frente al mes anterior o al mismo mes del ano anterior, diferencias
-    con el 0621 presentado y datos del SIRE de mas de un dia. (El credito en
-    riesgo llega con la Fase 5; la API del SIRE la revisa el panel.)
+    IGV (el proyectado al cierre en el mes en curso; si no, el 681) frente al
+    mes anterior o al mismo mes del ano anterior, diferencias con el 0621
+    presentado y datos del SIRE de mas de un dia. (El credito en riesgo llega
+    con la Fase 5; la API del SIRE la revisa el panel.)
     """
     motivos = []
     if not declarado:
         for item in comparacion[:2]:
             if item["igv"]:
-                alza = (c["681"] - item["igv"]) / item["igv"]
+                alza = (igv - item["igv"]) / item["igv"]
                 if alza >= ALZA_DE_ATENCION:
                     motivos.append(
                         f"IGV {round(alza * 100)} % más alto que {item['concepto'].split(' (')[0]} (S/ {item['igv']:,})"
@@ -548,6 +559,86 @@ def _atencion(c: dict, comparacion: list[dict], declarado: dict | None, diferenc
     if diferencias:
         motivos.append(f"{diferencias} casilla(s) difieren en más de S/ {UMBRAL_DIFERENCIA} del 0621 presentado")
     return motivos
+
+
+def _limites_del_mes(periodo: str) -> tuple[date, date]:
+    inicio = date(int(periodo[:4]), int(periodo[5:7]), 1)
+    return inicio, (inicio + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+
+
+def dias_habiles(desde: date, hasta: date) -> int:
+    """Dias de lunes a viernes entre las dos fechas, ambas incluidas."""
+    return sum(1 for n in range((hasta - desde).days + 1) if (desde + timedelta(days=n)).weekday() < 5)
+
+
+def _historial(datos: _Datos, periodo: str, casilla: str) -> dict[str, float | None]:
+    """6.6: el mismo mes del ano anterior y el promedio de los ultimos 3 meses declarados; el historial, 50 % de cada uno."""
+    def declarada(p):
+        # Si el 0621 trae el IGV, una casilla que no aparece es 0 (algunos no traen la 178 sin compras).
+        return _num(datos.declarado(p).get(casilla)) if _igv_declarado(datos, p) is not None else None
+
+    mismo_mes = declarada(sumar_meses(periodo, -12))
+    ultimos = [v for v in (declarada(sumar_meses(periodo, -n)) for n in (1, 2, 3)) if v is not None]
+    promedio = sum(ultimos) / len(ultimos) if ultimos else None
+    if mismo_mes is not None and promedio is not None:
+        historial = (mismo_mes + promedio) / 2
+    else:
+        historial = mismo_mes if mismo_mes is not None else promedio
+    return {"mismo_mes": mismo_mes, "promedio_3": promedio, "historial": historial}
+
+
+def proyectar(datos: _Datos, periodo: str, regimen: str | None, hoy: date, casillas: dict, peso: str = PESO_DEL_MES) -> dict | None:
+    """
+    IGV al cierre del mes en curso (Fase 6). Para las ventas (131) y el
+    credito (178): el ritmo del mes por dias habiles (lo emitido en el mes
+    entre la parte del mes que paso; las compras de meses anteriores que se
+    registran en este cuentan una sola vez) mezclado con el historial (6.6),
+    con mas peso para el ritmo a medida que avanza el mes (6.5). El IGV sale
+    de las casillas proyectadas con el mismo orden del 0621. El rango (6.7) va
+    del menor al mayor entre el ritmo, el mismo mes del ano anterior y el
+    promedio de 3 meses; hasta el dia 8 el ritmo todavia no dice nada y el
+    rango sale solo del historial. None si el periodo no es el mes de `hoy`.
+    """
+    inicio, fin = _limites_del_mes(periodo)
+    if not inicio <= hoy <= fin:
+        return None
+    parte = dias_habiles(inicio, hoy) / dias_habiles(inicio, fin)
+    w = PESOS_DEL_MES[peso](parte)
+    solo_historial = hoy.day <= DIAS_SOLO_HISTORIAL
+    antes = _calcular(_DatosAl(datos, periodo, inicio - timedelta(days=1)), periodo, regimen)["casillas"]
+    ritmo, proyectado, escenarios = {}, {}, {"ritmo": {}, "mismo_mes": {}, "promedio_3": {}}
+    sin_historial = True
+    for k in ("131", "178"):
+        ritmo[k] = antes[k] + (casillas[k] - antes[k]) / parte if parte else casillas[k]
+        h = _historial(datos, periodo, k)
+        sin_historial = sin_historial and h["historial"] is None
+        valor = ritmo[k] if h["historial"] is None else w * ritmo[k] + (1 - w) * h["historial"]
+        # Lo ya emitido no se des-emite: la proyeccion no baja de lo que va del mes.
+        proyectado[k] = max(soles(valor), casillas[k])
+        if not solo_historial or h["historial"] is None:
+            escenarios["ritmo"][k] = max(soles(ritmo[k]), casillas[k])
+        for nombre in ("mismo_mes", "promedio_3"):
+            if h[nombre] is not None:
+                escenarios[nombre][k] = max(soles(h[nombre]), casillas[k])
+
+    def resultado(v: dict) -> dict:
+        r = determinar_igv({**casillas, "131": v["131"], "178": v["178"]})
+        return {"igv": max(r["681"] - casillas["185"], 0), "saldo_a_favor": max(-r["184"], 0)}
+
+    final = resultado(proyectado)
+    montos = [final["igv"]] + [resultado(v)["igv"] for v in escenarios.values() if len(v) == 2]
+    return {
+        **final,
+        "ventas": proyectado["131"],
+        "credito": proyectado["178"],
+        "por_pagar": determinar_igv({**casillas, "131": proyectado["131"], "178": proyectado["178"]})["681"],
+        "minimo": min(montos),
+        "maximo": max(montos),
+        "solo_historial": solo_historial,
+        # Sin 0621 de los meses que usa el historial ni ventas o compras este mes: no hay con que proyectar.
+        "sin_base": sin_historial and not casillas["131"] and not casillas["178"],
+        "peso_del_mes": round(w, 2),
+    }
 
 
 def serie_diaria(db: Session, empresa: Empresa, periodo: str, hoy: date) -> list[dict]:
@@ -625,14 +716,20 @@ def calcular_periodo(db: Session, empresa: Empresa, periodo: str, hoy: date | No
         _linea("317", "Pagos ya hechos del periodo", c["317"], fuente="Boletas 1662 (tributos " + ", ".join(TRIBUTOS_RENTA) + ")", declarado=declarado, signo=-1),
     ]
     fechas = [f for f in r["fechas"].values() if f is not None]
+    hoy = hoy or hoy_peru()
     comparacion = _comparacion(datos, periodo)
+    proyeccion = None if declarado else proyectar(datos, periodo, regimen, hoy, c)
     estado_mes, diferencias = _estado_mes(declarado, lineas_igv + siguiente + lineas_renta, r["fechas"].get("sire") is not None)
     return {
         "periodo": periodo,
         "regimen": regimen,
         "vence": vencimiento(db, empresa, periodo),
         "estado_mes": estado_mes,
-        "atencion": _atencion(c, comparacion, declarado, diferencias, r["fechas"].get("sire"), hoy or hoy_peru()),
+        "atencion": _atencion(
+            proyeccion["por_pagar"] if proyeccion and not proyeccion["sin_base"] else c["681"],
+            comparacion, declarado, diferencias, r["fechas"].get("sire"), hoy,
+        ),
+        "proyeccion": proyeccion,
         "hay_datos": r["fechas"].get("sire") is not None,
         "datos_al": min(fechas) if fechas else None,
         "fechas": r["fechas"],
@@ -666,4 +763,6 @@ def guardar_foto(db: Session, empresa_id: str, periodo: str, calculo: dict, fech
         "fechas": {k: v.isoformat() if v else None for k, v in calculo["fechas"].items()},
         "renta_porcentaje": calculo["renta_porcentaje"],
         "avisos": calculo["avisos"],
+        # Lo que se proyecto ese dia: al cerrar el mes se mide cuanto acerto (Fase 6).
+        "proyeccion": calculo.get("proyeccion"),
     }

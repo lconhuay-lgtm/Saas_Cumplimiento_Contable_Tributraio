@@ -1103,6 +1103,20 @@ class LiquidacionComparacionItem(BaseModel):
     igv: int | None  # 681 del 0621 presentado; None si no hay
 
 
+class LiquidacionProyeccionItem(BaseModel):
+    """Proyeccion al cierre del mes en curso (Fase 6)."""
+    igv: int  # IGV por pagar al cierre (despues de los pagos ya hechos)
+    saldo_a_favor: int
+    ventas: int  # 131 al cierre
+    credito: int  # 178 al cierre
+    por_pagar: int  # 681 al cierre, para el grafico
+    minimo: int  # rango (6.7)
+    maximo: int
+    solo_historial: bool  # hasta el dia 8: "basado en el historial"
+    sin_base: bool  # sin historial ni datos del mes: no se puede proyectar
+    peso_del_mes: float  # cuanto pesa lo que va del mes frente al historial (0 a 1)
+
+
 class LiquidacionDeclaradoItem(BaseModel):
     num_orden: str
     fecha_presentacion: date | None
@@ -1114,6 +1128,7 @@ class LiquidacionCalculoResponse(BaseModel):
     vence: date | None
     estado_mes: str  # en_curso | declarado | conciliado | con_diferencias (4.8)
     atencion: list[str]  # motivos de "Requiere atencion" (4.6)
+    proyeccion: LiquidacionProyeccionItem | None  # solo el mes en curso sin 0621
     revisado: LiquidacionRevisadoItem | None = None  # ultima marca "Revisado" del periodo (4.9)
     puede_revisar: bool = False
     hay_datos: bool  # False: falta leer el SIRE del periodo
@@ -1160,6 +1175,7 @@ class LiquidacionPanelItem(BaseModel):
     saldo_a_favor: int
     igv_681: int  # IGV a pagar antes de los pagos ya hechos, para comparar con otros 0621
     igv_anio_anterior: int | None  # 681 del 0621 del mismo mes del ano anterior
+    proyeccion: LiquidacionProyeccionItem | None
     renta_por_pagar: int | None
     avisos: int
     declarado: bool

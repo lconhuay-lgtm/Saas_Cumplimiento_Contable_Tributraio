@@ -522,6 +522,7 @@ def panel_liquidacion(
             "saldo_a_favor": calculo["saldo_a_favor"],
             "igv_681": calculo["casillas"]["681"],
             "igv_anio_anterior": calculo["comparacion"][0]["igv"],
+            "proyeccion": calculo["proyeccion"],
             "renta_por_pagar": calculo["renta_por_pagar"],
             "avisos": len(calculo["avisos"]),
             "declarado": calculo["declarado"] is not None,

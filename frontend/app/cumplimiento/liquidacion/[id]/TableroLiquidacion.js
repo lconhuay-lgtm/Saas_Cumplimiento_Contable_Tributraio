@@ -10,9 +10,9 @@ import GraficoDiario, { COLOR_REFERENCIA, SERIES } from "./GraficoDiario";
 // Tablero de la Liquidacion en vivo de una empresa con el orden del boceto
 // (Liquidación en vivo.html): fuente, hora de los datos y vencimiento; IGV,
 // proyeccion y Renta; el mes dia a dia; "como se llega al monto" en lenguaje
-// simple; alertas y comparacion con los 0621 anteriores. Lo que llega en
-// fases futuras (proyeccion, compras y detracciones, PDF y Excel) se muestra
-// marcado. Al final, plegado, el detalle por casilla del 0621 para comparar
+// simple; alertas y comparacion con los 0621 anteriores; en el mes en curso,
+// la proyeccion al cierre con su rango (Fase 6). Lo que llega en fases
+// futuras (compras y detracciones, PDF y Excel) se muestra marcado. Al final, plegado, el detalle por casilla del 0621 para comparar
 // con lo declarado (diferencias de mas de S/ 10, parametro 7.1).
 const UMBRAL_DIFERENCIA = 10;
 // Parametro 4.6: "Requiere atencion" si el IGV sube 15 % o mas frente al mismo mes del ano anterior.
@@ -338,7 +338,9 @@ export default function TableroLiquidacion({ empresaId, periodo, periodos, onPer
   const declaradoIgv = calculo.lineas_igv.find((l) => l.casilla === "681")?.declarado;
   const [mismoMes, , promedio] = calculo.comparacion;
   const textoMismoMes = mismoMes.periodo ? textoPeriodo(mismoMes.periodo) : "";
-  const alza = mismoMes.igv ? (c["681"] - mismoMes.igv) / mismoMes.igv : null;
+  // Proyeccion al cierre (Fase 6): solo el mes en curso sin 0621 y con historial o datos del mes.
+  const proy = calculo.proyeccion && !calculo.proyeccion.sin_base ? calculo.proyeccion : null;
+  const alza = mismoMes.igv ? ((proy ? proy.por_pagar : c["681"]) - mismoMes.igv) / mismoMes.igv : null;
   const requiereAtencion = alza !== null && alza >= ALZA_DE_ATENCION;
   const lecturaSire = calculo.fechas.sire;
 
@@ -392,14 +394,29 @@ export default function TableroLiquidacion({ empresaId, periodo, periodos, onPer
           )}
         </Tarjeta>
         <Tarjeta
-          titulo="IGV proyectado al cierre"
-          valor={enCurso ? "—" : textoSoles(montoMes)}
-          tonoValor={enCurso ? "text-slate-300" : requiereAtencion ? "text-red-700" : "text-ink"}
+          titulo={proy?.saldo_a_favor ? "Saldo a favor proyectado al cierre" : "IGV proyectado al cierre"}
+          valor={!enCurso ? textoSoles(montoMes) : proy ? textoSoles(proy.saldo_a_favor || proy.igv) : "—"}
+          tonoValor={
+            enCurso && !proy ? "text-slate-300" : proy?.saldo_a_favor ? "text-emerald-700" : requiereAtencion ? "text-red-700" : "text-ink"
+          }
           borde={requiereAtencion ? "border-red-200" : "border-slate-200"}
         >
-          <div className="flex items-center gap-2">
-            {enCurso ? <>La proyección al ritmo del mes llega pronto <Pronto fase="Fase 6" /></> : "El mes ya cerró: es el monto final"}
+          <div>
+            {!enCurso
+              ? "El mes ya cerró: es el monto final"
+              : !proy
+                ? "Sin historial ni datos del mes para proyectar"
+                : proy.solo_historial
+                  ? "Basado en el historial (los primeros días del mes)"
+                  : `Al ritmo del mes (pesa ${Math.round(proy.peso_del_mes * 100)} %) y el historial`}
           </div>
+          {proy && (
+            <div>
+              {proy.maximo > 0
+                ? `Rango: ${textoSoles(proy.minimo)} a ${textoSoles(proy.maximo)}`
+                : "En todos los escenarios queda saldo a favor"}
+            </div>
+          )}
           {alza !== null && (
             <div className={`font-semibold ${requiereAtencion ? "text-red-700" : "text-slate-700"}`}>
               {alza >= 0 ? "+" : ""}
@@ -434,6 +451,12 @@ export default function TableroLiquidacion({ empresaId, periodo, periodos, onPer
                 Declarado {textoMismoMes}
               </span>
             )}
+            {proy && (
+              <span className="flex items-center gap-1.5">
+                <span className="w-4 border-t-2 border-dashed border-slate-400" />
+                Proyección
+              </span>
+            )}
           </div>
         </div>
         {serie === null ? (
@@ -444,11 +467,12 @@ export default function TableroLiquidacion({ empresaId, periodo, periodos, onPer
             diasDelMes={diasDelMes}
             referencia={mismoMes.igv ? { texto: `Declarado ${textoMismoMes}`, monto: mismoMes.igv } : null}
             hoy={enCurso ? hoy.dia : null}
+            proyeccion={proy}
           />
         )}
-        <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-          Cada día se rehace con la fecha de emisión de los comprobantes de la propuesta del SIRE. La línea de proyección
-          llega con la Fase 6.
+        <p className="mt-2 text-xs text-slate-500">
+          Cada día se rehace con la fecha de emisión de los comprobantes de la propuesta del SIRE.
+          {proy ? " En punteado, la proyección al cierre." : ""}
         </p>
       </div>
 

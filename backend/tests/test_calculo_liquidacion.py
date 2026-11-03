@@ -273,12 +273,12 @@ def test_estado_del_mes_y_motivos_de_atencion():
     comparacion = [{"concepto": "Octubre 2025 (mismo mes)", "igv": 1000}, {"concepto": "Setiembre 2026 (mes anterior)", "igv": 1100}]
     leido = datetime(2026, 11, 2, 14, 0, tzinfo=timezone.utc)  # 9:00 a.m. en Lima
     # Sube 15 % frente al ano anterior (no frente al mes anterior); los datos son de ayer: todavia sirven.
-    assert _atencion({"681": 1150}, comparacion, None, 0, leido, date(2026, 11, 3)) == [
+    assert _atencion(1150, comparacion, None, 0, leido, date(2026, 11, 3)) == [
         "IGV 15 % más alto que Octubre 2025 (S/ 1,000)"]
-    assert _atencion({"681": 1100}, comparacion, None, 0, leido, date(2026, 11, 4)) == [
+    assert _atencion(1100, comparacion, None, 0, leido, date(2026, 11, 4)) == [
         "Los datos del SIRE son del 02/11: no se han vuelto a leer"]
     # Ya declarado: solo cuentan las diferencias con el 0621.
-    assert _atencion({"681": 5000}, comparacion, {"131": 1.0}, 3, leido, date(2026, 11, 20)) == [
+    assert _atencion(5000, comparacion, {"131": 1.0}, 3, leido, date(2026, 11, 20)) == [
         "3 casilla(s) difieren en más de S/ 10 del 0621 presentado"]
 
 
@@ -317,3 +317,44 @@ def test_conciliacion_revisado_y_actualizar_todas(client, db_session, monkeypatc
     r = client.post("/liquidacion/panel/actualizar", json={"periodo": "2026-10"}, headers=ctx["headers_admin"])
     assert r.json() == {"encoladas": 1, "saltadas": 0, "minutos": 2} and encoladas == [["aduanas"]]
     assert client.post("/liquidacion/panel/actualizar", json={"periodo": "2026-10"}, headers=ctx["headers_admin"]).json()["saltadas"] == 1
+
+
+def test_proyeccion_al_cierre(client, db_session):
+    from app.calculo_liquidacion import calcular_periodo, dias_habiles
+    from app.models import Empresa
+
+    assert dias_habiles(date(2026, 11, 1), date(2026, 11, 30)) == 21
+    ctx = _armar_tenant_con_miembro(client, db_session)
+    emp = ctx["empresa_asignada_id"]
+    client.post(f"/liquidacion/empresas/{emp}/activar", json={"activa": True}, headers=ctx["headers_admin"])
+
+    def declarada(periodo, ventas, credito):
+        return LiquidacionDeclaracion(empresa_id=emp, periodo=periodo, num_orden=periodo, fecha_presentacion=date(2026, 1, 1),
+                                      casillas={"131": ventas, "178": credito})
+
+    def comprobante(libro, n, igv, fecha):
+        c = _comprobante(emp, libro, n, "01", base=igv / 0.18, igv=igv, periodo="2026-11")
+        c.fecha_emision = fecha
+        return c
+
+    db_session.add_all([
+        declarada("2025-11", 2000.0, 1000.0),
+        *(declarada(p, 1000.0, 500.0) for p in ("2026-08", "2026-09", "2026-10")),
+        comprobante("RVIE", 1, 900.0, date(2026, 11, 10)),
+        comprobante("RCE", 1, 180.0, date(2026, 10, 28)),  # de octubre, registrada en noviembre: no se proyecta
+        comprobante("RCE", 2, 270.0, date(2026, 11, 5)),
+        _lectura(emp, "sire", "2026-11", "2026-11"),
+    ])
+    db_session.commit()
+    empresa = db_session.get(Empresa, emp)
+
+    # Lunes 16/11: pasaron 11 de 21 dias habiles. Ritmo: ventas 900 / 0.524 = 1,718; credito 180 + 270 / 0.524 = 695.
+    # Historial (6.6): ventas (2,000 + 1,000) / 2 = 1,500; credito (1,000 + 500) / 2 = 750. Mezcla con peso 0.52 (6.5).
+    p = calcular_periodo(db_session, empresa, "2026-11", hoy=date(2026, 11, 16))["proyeccion"]
+    assert (p["ventas"], p["credito"], p["igv"], p["saldo_a_favor"], p["peso_del_mes"]) == (1614, 721, 893, 0, 0.52)
+    # Rango (6.7): promedio de 3 meses 1,000 - 500 = 500; ritmo 1,718 - 695 = 1,023.
+    assert (p["minimo"], p["maximo"], p["solo_historial"], p["sin_base"]) == (500, 1023, False, False)
+
+    assert calcular_periodo(db_session, empresa, "2026-11", hoy=date(2026, 11, 5))["proyeccion"]["solo_historial"] is True
+    # Un mes que ya cerro no se proyecta.
+    assert calcular_periodo(db_session, empresa, "2026-10", hoy=date(2026, 11, 16))["proyeccion"] is None

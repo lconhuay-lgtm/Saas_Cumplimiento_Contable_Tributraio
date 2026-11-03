@@ -31,9 +31,16 @@ function anioAnterior(periodo) {
   return `${Number(periodo.slice(0, 4)) - 1}${periodo.slice(4)}`;
 }
 
+// Proyeccion al cierre (Fase 6): solo el mes en curso sin 0621 y con historial o datos del mes.
+function proyeccionDe(e) {
+  return e.proyeccion && !e.proyeccion.sin_base ? e.proyeccion : null;
+}
+
+// Frente al mismo mes del ano anterior; en el mes en curso, con lo proyectado al cierre (4.6).
 function variacion(e) {
-  if (!e.hay_datos || !e.igv_anio_anterior) return null;
-  return (e.igv_681 - e.igv_anio_anterior) / e.igv_anio_anterior;
+  const p = proyeccionDe(e);
+  if ((!e.hay_datos && !p) || !e.igv_anio_anterior) return null;
+  return ((p ? p.por_pagar : e.igv_681) - e.igv_anio_anterior) / e.igv_anio_anterior;
 }
 
 function textoVariacion(v) {
@@ -105,15 +112,21 @@ export default function LiquidacionDelMes({ esAdmin, activas, incluidas }) {
   }, [datos, busqueda, digitos]);
 
   const totales = useMemo(() => {
-    const t = { igv: 0, sinDeclarar: 0, actual: 0, anterior: 0, vencen: [], alertas: 0, conAlertas: 0 };
+    const t = { igv: 0, sinDeclarar: 0, actual: 0, anterior: 0, proyectado: 0, conProyeccion: 0, vencen: [], alertas: 0, conAlertas: 0 };
     visibles.forEach((e) => {
+      const p = proyeccionDe(e);
       if (e.hay_datos && !e.declarado) {
         t.igv += e.igv_por_pagar;
         t.sinDeclarar += 1;
-        if (e.igv_anio_anterior !== null) {
-          t.actual += e.igv_681;
-          t.anterior += e.igv_anio_anterior;
-        }
+      }
+      if (p) {
+        t.proyectado += p.igv;
+        t.conProyeccion += 1;
+      }
+      // Comparacion con el ano anterior: lo proyectado en el mes en curso; lo estimado en un mes cerrado.
+      if (!e.declarado && e.igv_anio_anterior !== null && (p || e.hay_datos)) {
+        t.actual += p ? p.por_pagar : e.igv_681;
+        t.anterior += e.igv_anio_anterior;
       }
       if (!e.declarado && e.vence && diasHasta(e.vence) >= 0 && diasHasta(e.vence) <= DIAS_VENCE_PRONTO) t.vencen.push(e.ruc.slice(-1));
       t.alertas += e.atencion.length;
@@ -164,10 +177,10 @@ export default function LiquidacionDelMes({ esAdmin, activas, incluidas }) {
           />
           <Tarjeta
             titulo="Proyección al cierre del mes"
-            valor={enCurso ? "—" : textoSoles(totales.igv)}
+            valor={!enCurso ? textoSoles(totales.igv) : totales.conProyeccion ? textoSoles(totales.proyectado) : "—"}
             nota={
               <>
-                {enCurso ? "La proyección llega con la Fase 6" : "El mes ya cerró: es el monto final"}
+                {enCurso ? `suma de ${totales.conProyeccion} empresa(s) con historial o datos` : "El mes ya cerró: es el monto final"}
                 {variacionTotal !== null && (
                   <span className={`block font-semibold ${variacionTotal >= ALZA_DE_ATENCION ? "text-red-700" : ""}`}>
                     {textoVariacion(variacionTotal)} frente a {textoPeriodo(anioAnterior(periodo))}
@@ -211,7 +224,7 @@ export default function LiquidacionDelMes({ esAdmin, activas, incluidas }) {
               <th className="px-4 py-3">Vence</th>
               <th className="px-4 py-3">Fuente</th>
               <th className="px-4 py-3 text-right">IGV hoy</th>
-              <th className="px-4 py-3 text-right" title={enCurso ? "Llega con la Fase 6" : undefined}>Proyección cierre</th>
+              <th className="px-4 py-3 text-right">Proyección cierre</th>
               <th className="px-4 py-3 text-right">vs. {corto}</th>
               <th className="px-4 py-3 text-right">Renta</th>
               <th className="px-4 py-3">Situación</th>
@@ -233,6 +246,7 @@ export default function LiquidacionDelMes({ esAdmin, activas, incluidas }) {
             {visibles.map((e) => {
               const dias = e.vence ? diasHasta(e.vence) : null;
               const v = variacion(e);
+              const p = proyeccionDe(e);
               const config = e.estado_config !== "lista" ? ESTADOS_LIQUIDACION[e.estado_config] : null;
               const estado = ESTADOS_MES[e.estado_mes] || ESTADOS_MES.en_curso;
               const montoIgv = e.saldo_a_favor ? textoSoles(e.saldo_a_favor) : textoSoles(e.igv_por_pagar);
@@ -278,9 +292,24 @@ export default function LiquidacionDelMes({ esAdmin, activas, incluidas }) {
                       </>
                     )}
                   </td>
-                  <td className={`whitespace-nowrap px-4 py-3 text-right tabular-nums ${e.saldo_a_favor ? "text-emerald-700" : "text-slate-600"}`}>
-                    {!e.hay_datos || enCurso ? <span className="text-slate-400">—</span> : montoIgv}
-                  </td>
+                  {enCurso ? (
+                    <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">
+                      {!p ? (
+                        <span className="text-slate-400">—</span>
+                      ) : (
+                        <>
+                          <div className={p.saldo_a_favor ? "text-emerald-700" : "text-ink"}>{textoSoles(p.saldo_a_favor || p.igv)}</div>
+                          <div className="text-xs text-slate-400">
+                            {p.saldo_a_favor ? "saldo a favor" : p.maximo > p.minimo ? `${textoSoles(p.minimo)} a ${textoSoles(p.maximo)}` : ""}
+                          </div>
+                        </>
+                      )}
+                    </td>
+                  ) : (
+                    <td className={`whitespace-nowrap px-4 py-3 text-right tabular-nums ${e.saldo_a_favor ? "text-emerald-700" : "text-slate-600"}`}>
+                      {!e.hay_datos ? <span className="text-slate-400">—</span> : montoIgv}
+                    </td>
+                  )}
                   <td className={`whitespace-nowrap px-4 py-3 text-right tabular-nums ${v !== null && v >= ALZA_DE_ATENCION ? "font-bold text-red-700" : "text-slate-600"}`}>
                     {v === null ? <span className="font-normal text-slate-400">—</span> : textoVariacion(v)}
                   </td>
