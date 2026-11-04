@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -79,6 +79,7 @@ export default function DetalleEmpresaPage() {
   const [pagina, setPagina] = useState(1);
   const [seleccionado, setSeleccionado] = useState(null); // mensaje completo
   const [pdfUrl, setPdfUrl] = useState(null);
+  const pdfPedido = useRef(null); // el ultimo mensaje abierto: un PDF que llega tarde de otro se descarta
   const [cargandoPdf, setCargandoPdf] = useState(false);
   const [errorPdf, setErrorPdf] = useState("");
   // Cartera: usuarios del tenant, para el selector "Asignado a" (editable
@@ -223,17 +224,24 @@ export default function DetalleEmpresaPage() {
   }
 
   async function verPdf(mensaje) {
+    pdfPedido.current = mensaje.id;
     setSeleccionado(mensaje);
     setErrorPdf("");
     setPdfUrl(null);
     setCargandoPdf(true);
     try {
       const url = await api.obtenerDocumentoUrl(id, mensaje.id);
+      // Si mientras tanto se abrio otro mensaje, este PDF ya no va: no debe
+      // aparecer debajo del asunto del otro.
+      if (pdfPedido.current !== mensaje.id) {
+        URL.revokeObjectURL(url);
+        return;
+      }
       setPdfUrl(url);
     } catch (err) {
-      setErrorPdf(err.message);
+      if (pdfPedido.current === mensaje.id) setErrorPdf(err.message);
     } finally {
-      setCargandoPdf(false);
+      if (pdfPedido.current === mensaje.id) setCargandoPdf(false);
     }
     marcarLeidoAlAbrir(mensaje);
   }
@@ -243,6 +251,7 @@ export default function DetalleEmpresaPage() {
   // MensajeBuzonResponse.contenido_texto) -- no hace falta ningun fetch
   // aparte, solo mostrarlo en el panel derecho en vez del visor de PDF.
   function verMensaje(mensaje) {
+    pdfPedido.current = mensaje.id;
     setSeleccionado(mensaje);
     setErrorPdf("");
     setPdfUrl(null);
@@ -546,17 +555,15 @@ export default function DetalleEmpresaPage() {
                     <div
                       key={m.id}
                       onClick={() => {
+                        // Sin PDF (con o sin contenido_texto) tambien se selecciona: el
+                        // visor muestra el texto o el aviso de que no hay documento, y
+                        // el mensaje queda leido. Antes, sin PDF ni texto solo se
+                        // marcaba leido y el visor seguia con el PDF del mensaje
+                        // anterior, como si fuera de este.
                         if (m.tiene_documento) verPdf(m);
-                        else if (m.contenido_texto) verMensaje(m);
-                        // Sin PDF y sin contenido_texto no hay nada que abrir --
-                        // SUNAT no genero documento para este mensaje. El clic en
-                        // la fila no hacia nada en ese caso (solo quedaba el
-                        // boton pequeno de "marcar leido", poco visible), asi que
-                        // el mensaje se quedaba "atascado" como no leido para
-                        // siempre. Ahora el clic marca/desmarca leido directo.
-                        else toggleLeido(m);
+                        else verMensaje(m);
                       }}
-                      title={!esClickeable ? "SUNAT no genero documento para este mensaje -- clic para marcar como leido" : undefined}
+                      title={!esClickeable ? "SUNAT no generó documento para este mensaje" : undefined}
                       className={`cursor-pointer px-4 py-3.5 transition-colors duration-300 ease-out ${
                         seleccionado?.id === m.id ? "bg-accent-light" : m.leido ? "" : "bg-accent-light/30"
                       } hover:bg-accent-light/60`}
@@ -684,9 +691,11 @@ export default function DetalleEmpresaPage() {
                       </div>
                     ) : !seleccionado.tiene_documento ? (
                       <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">
-                        <MessageSquare size={28} strokeWidth={1.2} className="text-slate-300" />
-                        <p className="text-sm text-slate-500">
-                          No se pudo capturar el contenido de este mensaje -- revisalo directo en SUNAT.
+                        <FileText size={32} strokeWidth={1.2} className="text-slate-300" />
+                        <p className="font-semibold text-ink">Este mensaje no tiene PDF ni archivo adjunto</p>
+                        <p className="max-w-md text-sm text-slate-500">
+                          SUNAT no generó un documento para esta notificación o no se pudo descargar. Si necesitas el
+                          detalle, revísalo directo en SUNAT con «Ir a SUNAT».
                         </p>
                       </div>
                     ) : cargandoPdf ? (

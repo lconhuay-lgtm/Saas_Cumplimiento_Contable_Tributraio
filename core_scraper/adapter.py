@@ -801,6 +801,14 @@ def _descargar_documentos_nuevos(navegador, ids_conocidos: set, limite: int) -> 
     # "nuevo" si por cualquier motivo el nombre coincide. Comparar siempre
     # contra este set acumulado evita ese caso.
     archivos_vistos = set(os.listdir(navegador.download_dir))
+    # Contenido (sha256) de cada PDF ya asignado en esta corrida. Si al abrir
+    # un mensaje SUNAT todavia muestra el anterior, se vuelve a bajar ese mismo
+    # documento (Chrome lo guarda como "nombre (1).pdf") y quedaba pegado al
+    # mensaje equivocado: 13 casos en produccion, siempre el mensaje mas antiguo
+    # de dos consecutivos con el PDF del mas nuevo (revisado el 04/11/2026). Un
+    # PDF identico a uno ya asignado no se asigna: el mensaje queda sin PDF
+    # (o con su texto de respaldo) y se reintenta en la proxima consulta.
+    contenidos_asignados = {}
 
     while descargas_exitosas < MAX_DESCARGAS_POR_CORRIDA:
         mensajes = _escanear_mensajes(navegador, limite)
@@ -839,9 +847,18 @@ def _descargar_documentos_nuevos(navegador, ids_conocidos: set, limite: int) -> 
                 archivos_vistos = archivos_ahora
                 if nuevos_pdf:
                     ruta = os.path.join(navegador.download_dir, nuevos_pdf[0])
-                    descargados[mid] = ruta
-                    descargas_exitosas += 1
-                    logger.info(f"Documento descargado: {ruta}")
+                    with open(ruta, "rb") as f:
+                        huella = hashlib.sha256(f.read()).hexdigest()
+                    if huella in contenidos_asignados:
+                        logger.warning(
+                            f"El PDF de '{msg['asunto']}' es el mismo que ya se bajo para otro mensaje "
+                            f"(la pagina seguia mostrando el anterior): no se asigna"
+                        )
+                    else:
+                        contenidos_asignados[huella] = mid
+                        descargados[mid] = ruta
+                        descargas_exitosas += 1
+                        logger.info(f"Documento descargado: {ruta}")
                 else:
                     logger.warning(
                         f"La descarga se reporto exitosa pero no se encontro un PDF nuevo para '{msg['asunto']}'"
