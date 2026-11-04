@@ -411,6 +411,11 @@ export default function TableroLiquidacion({ empresaId, periodo, periodos, onPer
                   : `Al ritmo del mes (pesa ${Math.round(proy.peso_del_mes * 100)} %) y el historial`}
           </div>
           {proy && (
+            <div className="text-slate-400">
+              Orientativa: se aleja si las ventas o compras se concentran a fin de mes
+            </div>
+          )}
+          {proy && (
             <div>
               {proy.maximo > 0
                 ? `Rango: ${textoSoles(proy.minimo)} a ${textoSoles(proy.maximo)}`

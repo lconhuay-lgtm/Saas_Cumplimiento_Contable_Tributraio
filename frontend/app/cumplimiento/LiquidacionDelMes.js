@@ -180,7 +180,9 @@ export default function LiquidacionDelMes({ esAdmin, activas, incluidas }) {
             valor={!enCurso ? textoSoles(totales.igv) : totales.conProyeccion ? textoSoles(totales.proyectado) : "—"}
             nota={
               <>
-                {enCurso ? `suma de ${totales.conProyeccion} empresa(s) con historial o datos` : "El mes ya cerró: es el monto final"}
+                {enCurso
+                  ? `orientativa · suma de ${totales.conProyeccion} empresa(s) con historial o datos`
+                  : "El mes ya cerró: es el monto final"}
                 {variacionTotal !== null && (
                   <span className={`block font-semibold ${variacionTotal >= ALZA_DE_ATENCION ? "text-red-700" : ""}`}>
                     {textoVariacion(variacionTotal)} frente a {textoPeriodo(anioAnterior(periodo))}
