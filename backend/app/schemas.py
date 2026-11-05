@@ -1090,6 +1090,12 @@ class LiquidacionPeriodoRequest(BaseModel):
     periodo: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
+class LiquidacionVentasRequest(BaseModel):
+    """Ventas netas del mes en curso que escribe el responsable para la proyeccion; None vuelve a la calculada."""
+    periodo: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    monto: int | None = Field(default=None, ge=0, le=100_000_000_000)
+
+
 class LiquidacionRevisadoItem(BaseModel):
     usuario_nombre: str | None
     fecha: datetime
@@ -1152,6 +1158,12 @@ class LiquidacionComparacionItem(BaseModel):
     igv: int | None  # 681 del 0621 presentado; None si no hay
 
 
+class LiquidacionVentasEscritasItem(BaseModel):
+    monto: int
+    usuario_nombre: str | None
+    fecha: datetime
+
+
 class LiquidacionProyeccionItem(BaseModel):
     """Proyeccion al cierre del mes en curso (Fase 6)."""
     igv: int  # IGV por pagar al cierre (despues de los pagos ya hechos)
@@ -1164,6 +1176,13 @@ class LiquidacionProyeccionItem(BaseModel):
     solo_historial: bool  # hasta el dia 8: "basado en el historial"
     sin_base: bool  # sin historial ni datos del mes: no se puede proyectar
     peso_del_mes: float  # cuanto pesa lo que va del mes frente al historial (0 a 1)
+    # Ventas netas al cierre: el dato que mueve la proyeccion (la escrita por el responsable, si hay).
+    ventas_netas: int = 0
+    ventas_calculadas: int = 0  # las que proyecta el sistema
+    ventas_al_dia: int = 0  # lo emitido en lo que va del mes
+    ventas_mismo_mes: int | None = None  # declaradas el mismo mes del ano anterior
+    ventas_escritas: LiquidacionVentasEscritasItem | None = None
+    renta: int | None = None  # pago a cuenta de Renta por pagar al cierre
 
 
 class LiquidacionDeclaradoItem(BaseModel):

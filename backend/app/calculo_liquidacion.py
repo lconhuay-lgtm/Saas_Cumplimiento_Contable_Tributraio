@@ -26,7 +26,8 @@ from app.hora_peru import ZONA_PERU, hoy_peru
 from app.jobs_liquidacion import sumar_meses
 from app.models import (
     CronogramaVencimiento, DeclaracionSunat, Empresa, LiquidacionCalculo, LiquidacionComprobante,
-    LiquidacionDeclaracion, LiquidacionEmpresa, LiquidacionLectura, LiquidacionRetencionPercepcion,
+    LiquidacionDeclaracion, LiquidacionEmpresa, LiquidacionEvento, LiquidacionLectura, LiquidacionRetencionPercepcion,
+    Usuario,
 )
 
 # Pago a cuenta de Renta (parametro 6.1): General y MYPE sobre el tope pagan
@@ -63,6 +64,10 @@ PESOS_DEL_MES = {
 PESO_DEL_MES = "lineal"
 # Hasta este dia la proyeccion dice "basado en el historial" (parametros de la Fase 6).
 DIAS_SOLO_HISTORIAL = 8
+# Ventas del mes que escribe el responsable para la proyeccion (LiquidacionEvento).
+ACCION_VENTAS_ESCRITAS = "ventas_proyectadas"
+# IGV de ventas de una cifra escrita cuando no hay ventas con que medir la proporcion.
+TASA_IGV = 0.18
 
 MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "setiembre", "octubre",
          "noviembre", "diciembre")
@@ -116,6 +121,11 @@ def casillas_declaradas(declaraciones: list) -> dict[str, float]:
             resultado = {k: v for k, v in resultado.items() if _seccion(k) != seccion}
         resultado.update(numericas)
     return resultado
+
+
+def ventas_netas_declaradas(dec: dict) -> float:
+    """Ventas netas de un 0621: gravadas, exoneradas, exportacion, inafectas y otras, menos descuentos y notas de credito."""
+    return sum(_num(dec.get(k)) for k in ("100", "105", "106", "109", "112")) - _num(dec.get("102"))
 
 
 def arrastre_de(casillas: dict) -> dict[str, int]:
@@ -342,7 +352,7 @@ def _calcular(datos: _Datos, periodo: str, regimen: str | None, nivel: int = 0) 
             porcentaje_ultimo = max(_num(dec.get("380")), _num(dec.get("315")) / 100)
         if prorrata is None and "173" in dec:
             prorrata = _num(dec.get("173"))
-        ventas_declaradas = sum(_num(dec.get(k)) for k in ("100", "105", "106", "109", "112")) - _num(dec.get("102"))
+        ventas_declaradas = ventas_netas_declaradas(dec)
         if base_renta is None and ventas_declaradas > 0 and _num(dec.get("301")) > 0:
             base_renta = (p, _num(dec.get("301")), ventas_declaradas)
 
@@ -409,11 +419,13 @@ def _calcular(datos: _Datos, periodo: str, regimen: str | None, nivel: int = 0) 
 
     # Renta
     base_regla = "Ventas netas: gravadas, no gravadas y exportación, menos notas de crédito"
+    proporcion_renta = 1.0
     if base_renta:
         p, ingresos, ventas_declaradas = base_renta
         proporcion = ingresos / ventas_declaradas
         if not PROPORCION_RENTA_NORMAL[0] <= proporcion <= PROPORCION_RENTA_NORMAL[1]:
             c["301"] = soles(sire["301"] * proporcion)
+            proporcion_renta = proporcion
             base_regla = f"{proporcion * 100:.1f} % de las ventas netas, la proporción del 0621 de {texto_periodo(p)}"
             avisos.append(
                 f"En el 0621 de {texto_periodo(p)} los ingresos de la Renta (S/ {soles(ingresos):,}) fueron el "
@@ -443,6 +455,9 @@ def _calcular(datos: _Datos, periodo: str, regimen: str | None, nivel: int = 0) 
         "renta_regla": regla,
         "renta_por_pagar": max(c["312"] - c["317"], 0) if porcentaje is not None else None,
         "ventas": len(ventas),
+        # Ventas netas del mes (sin la proporcion de la Renta): lo que proyecta la Fase 6.
+        "ventas_netas": soles(sire["301"]),
+        "proporcion_renta": proporcion_renta,  # parte de las ventas netas que es base de la Renta (301)
         "compras": len(compras),
         "credito_regla": credito_regla,
         "credito_nota": credito_nota,
@@ -572,10 +587,17 @@ def dias_habiles(desde: date, hasta: date) -> int:
 
 
 def _historial(datos: _Datos, periodo: str, casilla: str) -> dict[str, float | None]:
-    """6.6: el mismo mes del ano anterior y el promedio de los ultimos 3 meses declarados; el historial, 50 % de cada uno."""
+    """
+    6.6: el mismo mes del ano anterior y el promedio de los ultimos 3 meses
+    declarados; el historial, 50 % de cada uno. casilla "ventas": las ventas
+    netas declaradas (ventas_netas_declaradas).
+    """
     def declarada(p):
         # Si el 0621 trae el IGV, una casilla que no aparece es 0 (algunos no traen la 178 sin compras).
-        return _num(datos.declarado(p).get(casilla)) if _igv_declarado(datos, p) is not None else None
+        if _igv_declarado(datos, p) is None:
+            return None
+        dec = datos.declarado(p)
+        return ventas_netas_declaradas(dec) if casilla == "ventas" else _num(dec.get(casilla))
 
     mismo_mes = declarada(sumar_meses(periodo, -12))
     ultimos = [v for v in (declarada(sumar_meses(periodo, -n)) for n in (1, 2, 3)) if v is not None]
@@ -587,7 +609,35 @@ def _historial(datos: _Datos, periodo: str, casilla: str) -> dict[str, float | N
     return {"mismo_mes": mismo_mes, "promedio_3": promedio, "historial": historial}
 
 
-def proyectar(datos: _Datos, periodo: str, regimen: str | None, hoy: date, casillas: dict, peso: str = PESO_DEL_MES) -> dict | None:
+def ventas_escritas(db: Session, empresa_id: str, periodo: str) -> dict | None:
+    """
+    La ultima cifra de ventas del mes que escribio el responsable para la
+    proyeccion: un LiquidacionEvento con detalle "periodo:monto" (sin monto:
+    volvio a la calculada). Asi queda tambien quien la cambio y cuando.
+    """
+    fila = (
+        db.query(LiquidacionEvento, Usuario)
+        .outerjoin(Usuario, Usuario.id == LiquidacionEvento.usuario_id)
+        .filter(
+            LiquidacionEvento.empresa_id == empresa_id,
+            LiquidacionEvento.accion == ACCION_VENTAS_ESCRITAS,
+            LiquidacionEvento.detalle.like(f"{periodo}:%"),
+        )
+        .order_by(LiquidacionEvento.creado_en.desc())
+        .first()
+    )
+    if fila is None or not fila[0].detalle.split(":", 1)[1]:
+        return None
+    evento, usuario = fila
+    nombre = (" ".join(p for p in (usuario.nombre, usuario.apellidos) if p) or usuario.email) if usuario else None
+    return {"monto": int(evento.detalle.split(":", 1)[1]), "usuario_nombre": nombre, "fecha": evento.creado_en}
+
+
+def proyectar(
+    datos: _Datos, periodo: str, regimen: str | None, hoy: date, casillas: dict, peso: str = PESO_DEL_MES,
+    ventas_netas: int = 0, renta_porcentaje: float | None = None, proporcion_renta: float = 1.0,
+    escritas: dict | None = None,
+) -> dict | None:
     """
     IGV al cierre del mes en curso (Fase 6). Para las ventas (131) y el
     credito (178): el ritmo del mes por dias habiles (lo emitido en el mes
@@ -598,6 +648,15 @@ def proyectar(datos: _Datos, periodo: str, regimen: str | None, hoy: date, casil
     del menor al mayor entre el ritmo, el mismo mes del ano anterior y el
     promedio de 3 meses; hasta el dia 8 el ritmo todavia no dice nada y el
     rango sale solo del historial. None si el periodo no es el mes de `hoy`.
+
+    Las ventas netas del mes se proyectan igual y son el dato que mueve el
+    resto: si el responsable escribio su cifra (`escritas`, de
+    ventas_escritas) el IGV de ventas sale de ella con la misma proporcion
+    IGV/ventas de la proyeccion (18 % si no hay con que medirla), y el pago a
+    cuenta de Renta con el porcentaje y la proporcion de la base del mes
+    (`renta_porcentaje`, `proporcion_renta`; no se recalcula si con esas
+    ventas una MYPE pasara el tope de 300 UIT). La cifra escrita no baja de
+    lo ya emitido.
     """
     inicio, fin = _limites_del_mes(periodo)
     if not inicio <= hoy <= fin:
@@ -605,28 +664,41 @@ def proyectar(datos: _Datos, periodo: str, regimen: str | None, hoy: date, casil
     parte = dias_habiles(inicio, hoy) / dias_habiles(inicio, fin)
     w = PESOS_DEL_MES[peso](parte)
     solo_historial = hoy.day <= DIAS_SOLO_HISTORIAL
-    antes = _calcular(_DatosAl(datos, periodo, inicio - timedelta(days=1)), periodo, regimen)["casillas"]
-    ritmo, proyectado, escenarios = {}, {}, {"ritmo": {}, "mismo_mes": {}, "promedio_3": {}}
-    sin_historial = True
-    for k in ("131", "178"):
-        ritmo[k] = antes[k] + (casillas[k] - antes[k]) / parte if parte else casillas[k]
-        h = _historial(datos, periodo, k)
-        sin_historial = sin_historial and h["historial"] is None
+    antes_del_mes = _calcular(_DatosAl(datos, periodo, inicio - timedelta(days=1)), periodo, regimen)
+    antes = {**antes_del_mes["casillas"], "ventas": antes_del_mes["ventas_netas"]}
+    actual = {**casillas, "ventas": ventas_netas}
+    ritmo, proyectado, historial = {}, {}, {}
+    escenarios = {"ritmo": {}, "mismo_mes": {}, "promedio_3": {}}
+    for k in ("131", "178", "ventas"):
+        ritmo[k] = antes[k] + (actual[k] - antes[k]) / parte if parte else actual[k]
+        h = historial[k] = _historial(datos, periodo, k)
         valor = ritmo[k] if h["historial"] is None else w * ritmo[k] + (1 - w) * h["historial"]
         # Lo ya emitido no se des-emite: la proyeccion no baja de lo que va del mes.
-        proyectado[k] = max(soles(valor), casillas[k])
+        proyectado[k] = max(soles(valor), actual[k])
         if not solo_historial or h["historial"] is None:
-            escenarios["ritmo"][k] = max(soles(ritmo[k]), casillas[k])
+            escenarios["ritmo"][k] = max(soles(ritmo[k]), actual[k])
         for nombre in ("mismo_mes", "promedio_3"):
             if h[nombre] is not None:
-                escenarios[nombre][k] = max(soles(h[nombre]), casillas[k])
+                escenarios[nombre][k] = max(soles(h[nombre]), actual[k])
+    sin_historial = historial["131"]["historial"] is None and historial["178"]["historial"] is None
+
+    calculadas = proyectado["ventas"]
+    if escritas is not None:
+        proyectado["ventas"] = max(escritas["monto"], ventas_netas)
+        tasa = proyectado["131"] / calculadas if calculadas > 0 else TASA_IGV
+        proyectado["131"] = max(soles(proyectado["ventas"] * tasa), casillas["131"])
+    renta = (
+        max(soles(soles(proyectado["ventas"] * proporcion_renta) * renta_porcentaje) - casillas["317"], 0)
+        if renta_porcentaje is not None else None
+    )
 
     def resultado(v: dict) -> dict:
         r = determinar_igv({**casillas, "131": v["131"], "178": v["178"]})
         return {"igv": max(r["681"] - casillas["185"], 0), "saldo_a_favor": max(-r["184"], 0)}
 
     final = resultado(proyectado)
-    montos = [final["igv"]] + [resultado(v)["igv"] for v in escenarios.values() if len(v) == 2]
+    montos = [final["igv"]] + [resultado(v)["igv"] for v in escenarios.values() if v]
+    mismo_mes = historial["ventas"]["mismo_mes"]
     return {
         **final,
         "ventas": proyectado["131"],
@@ -636,8 +708,14 @@ def proyectar(datos: _Datos, periodo: str, regimen: str | None, hoy: date, casil
         "maximo": max(montos),
         "solo_historial": solo_historial,
         # Sin 0621 de los meses que usa el historial ni ventas o compras este mes: no hay con que proyectar.
-        "sin_base": sin_historial and not casillas["131"] and not casillas["178"],
+        "sin_base": sin_historial and not casillas["131"] and not casillas["178"] and escritas is None,
         "peso_del_mes": round(w, 2),
+        "ventas_netas": proyectado["ventas"],
+        "ventas_calculadas": calculadas,
+        "ventas_al_dia": ventas_netas,
+        "ventas_mismo_mes": soles(mismo_mes) if mismo_mes is not None else None,
+        "ventas_escritas": escritas,
+        "renta": renta,
     }
 
 
@@ -718,7 +796,10 @@ def calcular_periodo(db: Session, empresa: Empresa, periodo: str, hoy: date | No
     fechas = [f for f in r["fechas"].values() if f is not None]
     hoy = hoy or hoy_peru()
     comparacion = _comparacion(datos, periodo)
-    proyeccion = None if declarado else proyectar(datos, periodo, regimen, hoy, c)
+    proyeccion = None if declarado else proyectar(
+        datos, periodo, regimen, hoy, c, ventas_netas=r["ventas_netas"], renta_porcentaje=r["renta_porcentaje"],
+        proporcion_renta=r["proporcion_renta"], escritas=ventas_escritas(db, empresa.id, periodo),
+    )
     estado_mes, diferencias = _estado_mes(declarado, lineas_igv + siguiente + lineas_renta, r["fechas"].get("sire") is not None)
     return {
         "periodo": periodo,
@@ -759,10 +840,14 @@ def guardar_foto(db: Session, empresa_id: str, periodo: str, calculo: dict, fech
         foto = LiquidacionCalculo(empresa_id=empresa_id, periodo=periodo, fecha=fecha)
         db.add(foto)
     foto.casillas = calculo["casillas"]
+    proyeccion = calculo.get("proyeccion")
+    if proyeccion and proyeccion.get("ventas_escritas"):
+        escritas = proyeccion["ventas_escritas"]
+        proyeccion = {**proyeccion, "ventas_escritas": {**escritas, "fecha": escritas["fecha"].isoformat()}}
     foto.fuentes = {
         "fechas": {k: v.isoformat() if v else None for k, v in calculo["fechas"].items()},
         "renta_porcentaje": calculo["renta_porcentaje"],
         "avisos": calculo["avisos"],
         # Lo que se proyecto ese dia: al cerrar el mes se mide cuanto acerto (Fase 6).
-        "proyeccion": calculo.get("proyeccion"),
+        "proyeccion": proyeccion,
     }

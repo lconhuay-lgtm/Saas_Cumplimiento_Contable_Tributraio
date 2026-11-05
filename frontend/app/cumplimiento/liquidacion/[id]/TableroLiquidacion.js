@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { CheckCircle2, Loader2, RefreshCw } from "lucide-react";
+import { CheckCircle2, Loader2, Pencil, RefreshCw } from "lucide-react";
 import { api } from "../../../../lib/api";
 import { fechaHoraPeru, fechaPeru, hoyPeru, hoyPeruIso } from "../../../../lib/fechas";
 import { ESTADOS_MES, textoPeriodo, textoRegimen, textoSoles } from "../../../../lib/liquidacion";
@@ -58,6 +58,114 @@ function Tarjeta({ titulo, valor, tonoValor = "text-ink", borde = "border-slate-
       <div className="text-sm text-slate-600">{titulo}</div>
       <div className={`mt-1 font-heading text-4xl font-bold tabular-nums ${tonoValor}`}>{valor}</div>
       <div className="mt-2 space-y-0.5 text-xs text-slate-600">{children}</div>
+    </div>
+  );
+}
+
+// Ventas netas del mes al cierre: el dato que mueve la proyeccion del IGV y de
+// la Renta. El responsable puede escribir la cifra que espera (por ejemplo lo
+// que avisa el cliente); sin ella se usan las que calcula el sistema.
+function VentasProyectadas({ proyeccion, sinBase, textoMismoMes, puedeEscribir, onGuardar }) {
+  const [editando, setEditando] = useState(false);
+  const [texto, setTexto] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState("");
+  const escritas = proyeccion.ventas_escritas;
+  const usaEmitido = escritas && escritas.monto < proyeccion.ventas_al_dia;
+
+  async function guardar(monto) {
+    setGuardando(true);
+    setError("");
+    try {
+      await onGuardar(monto);
+      setEditando(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  function enviar(e) {
+    e.preventDefault();
+    const limpio = texto.replace(/[S/\s,]/g, "");
+    if (!/^\d+(\.\d+)?$/.test(limpio)) {
+      setError("Escribe un monto en soles, por ejemplo 250000.");
+      return;
+    }
+    guardar(Math.round(Number(limpio)));
+  }
+
+  return (
+    <div className={CAJA}>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-sm text-slate-600">Ventas proyectadas al cierre</div>
+          <div className="mt-1 font-heading text-3xl font-bold tabular-nums text-ink">
+            {sinBase && !escritas ? "—" : textoSoles(proyeccion.ventas_netas)}
+          </div>
+          <div className="mt-1 text-xs text-slate-600">
+            {escritas
+              ? `Escritas${escritas.usuario_nombre ? ` por ${escritas.usuario_nombre}` : ""} el ${diaMes(escritas.fecha)}` +
+                (usaEmitido ? "; ya se emitió más, se usa lo emitido" : "")
+              : sinBase
+                ? "Sin historial para calcularlas: escribe las que espera la empresa"
+                : "Calculadas con el ritmo del mes y el historial"}
+          </div>
+        </div>
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-slate-600 sm:grid-cols-3">
+          <div>
+            <dt>Lo que va del mes</dt>
+            <dd className="font-semibold tabular-nums text-ink">{textoSoles(proyeccion.ventas_al_dia)}</dd>
+          </div>
+          {escritas && !sinBase && (
+            <div>
+              <dt>Calculadas por el sistema</dt>
+              <dd className="font-semibold tabular-nums text-ink">{textoSoles(proyeccion.ventas_calculadas)}</dd>
+            </div>
+          )}
+          {proyeccion.ventas_mismo_mes !== null && (
+            <div>
+              <dt>Declaradas {textoMismoMes}</dt>
+              <dd className="font-semibold tabular-nums text-ink">{textoSoles(proyeccion.ventas_mismo_mes)}</dd>
+            </div>
+          )}
+        </dl>
+      </div>
+      <p className="mt-3 text-xs text-slate-500">
+        Ventas netas: gravadas, no gravadas y exportación, menos notas de crédito. Con ellas salen el IGV y el pago a
+        cuenta de Renta proyectados.
+      </p>
+      {puedeEscribir && !editando && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button onClick={() => (setTexto(escritas ? String(escritas.monto) : ""), setError(""), setEditando(true))}
+            className={`${BOTON} border border-slate-200 bg-white text-ink hover:bg-slate-50`}>
+            <Pencil size={14} />
+            {escritas ? "Cambiar la cifra" : "Escribir las ventas que espera la empresa"}
+          </button>
+          {escritas && (
+            <button onClick={() => guardar(null)} disabled={guardando}
+              className={`${BOTON} text-slate-600 hover:bg-slate-50 disabled:opacity-60`}>
+              {guardando && <Loader2 size={14} className="animate-spin" />}
+              Volver a las calculadas
+            </button>
+          )}
+        </div>
+      )}
+      {editando && (
+        <form onSubmit={enviar} className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="text-sm text-slate-600">S/</span>
+          <input autoFocus inputMode="numeric" value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="250000"
+            aria-label="Ventas netas que espera la empresa este mes"
+            className="w-40 rounded-lg border border-slate-200 px-3 py-2 text-sm tabular-nums focus:border-accent focus:outline-none" />
+          <button type="submit" disabled={guardando} className={`${BOTON} bg-accent font-bold text-white hover:opacity-90 disabled:opacity-60`}>
+            {guardando && <Loader2 size={14} className="animate-spin" />}
+            Guardar
+          </button>
+          <button type="button" onClick={() => setEditando(false)} className={`${BOTON} text-slate-600 hover:bg-slate-50`}>Cancelar</button>
+        </form>
+      )}
+      {error && <div className="mt-2 text-xs text-red-600">{error}</div>}
     </div>
   );
 }
@@ -246,6 +354,11 @@ export default function TableroLiquidacion({ empresaId, periodo, periodos, onPer
   const [error, setError] = useState("");
   const [revisando, setRevisando] = useState(false);
 
+  async function escribirVentas(monto) {
+    const data = await api.escribirVentasProyectadas(empresaId, periodo, monto);
+    setCalculo(data);
+  }
+
   async function marcarRevisado() {
     setRevisando(true);
     try {
@@ -406,7 +519,9 @@ export default function TableroLiquidacion({ empresaId, periodo, periodos, onPer
               ? "El mes ya cerró: es el monto final"
               : !proy
                 ? "Sin historial ni datos del mes para proyectar"
-                : proy.solo_historial
+                : proy.ventas_escritas
+                  ? `Con las ventas escritas (${textoSoles(proy.ventas_netas)})`
+                  : proy.solo_historial
                   ? "Basado en el historial (los primeros días del mes)"
                   : `Al ritmo del mes (pesa ${Math.round(proy.peso_del_mes * 100)} %) y el historial`}
           </div>
@@ -437,8 +552,21 @@ export default function TableroLiquidacion({ empresaId, periodo, periodos, onPer
               : `${porcentaje(calculo.renta_porcentaje)} de ingresos netos ${textoSoles(c["301"])} (${textoRegimen(calculo.regimen)})`}
           </div>
           {c["317"] > 0 && <div>menos pagos ya hechos {textoSoles(c["317"])}</div>}
+          {enCurso && proy && proy.renta !== null && (
+            <div className="font-semibold text-slate-700">Proyectado al cierre: {textoSoles(proy.renta)}</div>
+          )}
         </Tarjeta>
       </div>
+
+      {enCurso && calculo.proyeccion && (
+        <VentasProyectadas
+          proyeccion={calculo.proyeccion}
+          sinBase={calculo.proyeccion.sin_base}
+          textoMismoMes={textoMismoMes}
+          puedeEscribir={calculo.puede_revisar}
+          onGuardar={escribirVentas}
+        />
+      )}
 
       <div className={CAJA}>
         <div className="flex flex-wrap items-center justify-between gap-3">

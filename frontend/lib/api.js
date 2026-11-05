@@ -373,6 +373,8 @@ export const api = {
   verPanelLiquidacion: (periodo) => apiFetch(`/liquidacion/panel?periodo=${periodo}`),
   verSerieLiquidacion: (empresaId, periodo) =>
     apiFetch(`/empresas/${empresaId}/liquidacion/serie?periodo=${periodo}`),
+  escribirVentasProyectadas: (empresaId, periodo, monto) =>
+    apiFetch(`/empresas/${empresaId}/liquidacion/ventas-proyectadas`, { method: "PUT", body: JSON.stringify({ periodo, monto }) }),
   marcarRevisadoLiquidacion: (empresaId, periodo) =>
     apiFetch(`/empresas/${empresaId}/liquidacion/revisado`, { method: "POST", body: JSON.stringify({ periodo }) }),
   actualizarPanelLiquidacion: (periodo) =>

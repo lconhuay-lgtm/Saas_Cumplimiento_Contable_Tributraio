@@ -212,6 +212,11 @@ def test_base_de_renta_con_la_proporcion_del_ultimo_0621(client, db_session):
     calculo = client.get(f"/empresas/{emp}/liquidacion/calculo?periodo=2026-10", headers=ctx["headers_admin"]).json()
     assert (calculo["casillas"]["105"], calculo["casillas"]["301"], calculo["casillas"]["312"]) == (500000, 5000, 75)
     assert any("se usa la misma proporción" in a for a in calculo["avisos"])
+    # La Renta proyectada usa la misma proporcion de las ventas.
+    from app.calculo_liquidacion import calcular_periodo
+    from app.models import Empresa
+    p = calcular_periodo(db_session, db_session.get(Empresa, emp), "2026-10", hoy=date(2026, 10, 20))["proyeccion"]
+    assert p["ventas_netas"] >= 500000 and p["renta"] == soles(soles(p["ventas_netas"] * 0.01) * 0.015)
 
 
 def test_panel_por_vencimiento(client, db_session):
@@ -358,3 +363,66 @@ def test_proyeccion_al_cierre(client, db_session):
     assert calcular_periodo(db_session, empresa, "2026-11", hoy=date(2026, 11, 5))["proyeccion"]["solo_historial"] is True
     # Un mes que ya cerro no se proyecta.
     assert calcular_periodo(db_session, empresa, "2026-10", hoy=date(2026, 11, 16))["proyeccion"] is None
+
+
+def test_ventas_proyectadas_mueven_la_proyeccion(client, db_session, monkeypatch):
+    from app import calculo_liquidacion
+    from app.calculo_liquidacion import calcular_periodo, guardar_foto
+    from app.models import Empresa, LiquidacionCalculo
+    from app.routers import liquidacion
+
+    ctx = _armar_tenant_con_miembro(client, db_session)
+    emp = ctx["empresa_asignada_id"]
+    client.post(f"/liquidacion/empresas/{emp}/activar", json={"activa": True}, headers=ctx["headers_admin"])
+    db_session.get(LiquidacionEmpresa, emp).regimen = "mype"
+
+    def declarada(periodo, ventas, igv, credito):
+        return LiquidacionDeclaracion(empresa_id=emp, periodo=periodo, num_orden=periodo, fecha_presentacion=date(2026, 1, 1),
+                                      casillas={"100": ventas, "131": igv, "178": credito})
+
+    def comprobante(libro, n, base, fecha):
+        c = _comprobante(emp, libro, n, "01", base=base, igv=base * 0.18, periodo="2026-11")
+        c.fecha_emision = fecha
+        return c
+
+    db_session.add_all([
+        declarada("2025-11", 12000.0, 2160.0, 1000.0),
+        *(declarada(p, 6000.0, 1080.0, 500.0) for p in ("2026-08", "2026-09", "2026-10")),
+        comprobante("RVIE", 1, 5000.0, date(2026, 11, 10)),
+        comprobante("RCE", 1, 1500.0, date(2026, 11, 5)),
+        _lectura(emp, "sire", "2026-11", "2026-11"),
+    ])
+    db_session.commit()
+    empresa = db_session.get(Empresa, emp)
+    hoy = date(2026, 11, 16)
+    monkeypatch.setattr(calculo_liquidacion, "hoy_peru", lambda: hoy)
+    monkeypatch.setattr(liquidacion, "hoy_peru", lambda: hoy)
+
+    # Calculadas: ritmo 5,000 / 0.524 = 9,545 mezclado con el historial (12,000 + 6,000) / 2 = 9,000 con peso 0.52.
+    p = calcular_periodo(db_session, empresa, "2026-11", hoy=hoy)["proyeccion"]
+    assert (p["ventas_al_dia"], p["ventas_mismo_mes"], p["ventas_calculadas"], p["ventas_escritas"]) == (5000, 12000, 9286, None)
+    assert p["ventas_netas"] == 9286 and p["renta"] == 93  # MYPE 1 %
+    igv_ventas = p["ventas"]
+
+    # El responsable escribe 20,000: el IGV de ventas sale con la misma proporcion de la proyeccion y la Renta con el 1 %.
+    url = f"/empresas/{emp}/liquidacion/ventas-proyectadas"
+    r = client.put(url, json={"periodo": "2026-11", "monto": 20000}, headers=ctx["headers_miembro"])
+    assert r.status_code == 200, r.text
+    p = r.json()["proyeccion"]
+    assert (p["ventas_netas"], p["ventas_calculadas"], p["ventas_escritas"]["monto"]) == (20000, 9286, 20000)
+    assert p["ventas_escritas"]["usuario_nombre"]
+    assert (p["ventas"], p["renta"], p["igv"]) == (soles(20000 * igv_ventas / 9286), 200, p["ventas"] - p["credito"])
+    # Queda en la foto del dia.
+    guardar_foto(db_session, emp, "2026-11", calcular_periodo(db_session, empresa, "2026-11", hoy=hoy), hoy)
+    db_session.commit()
+    foto = db_session.query(LiquidacionCalculo).filter_by(empresa_id=emp, periodo="2026-11").one()
+    assert foto.fuentes["proyeccion"]["ventas_escritas"]["monto"] == 20000
+
+    # Una cifra menor que lo ya emitido no baja de lo emitido.
+    p = client.put(url, json={"periodo": "2026-11", "monto": 1000}, headers=ctx["headers_miembro"]).json()["proyeccion"]
+    assert p["ventas_netas"] == 5000 and p["ventas"] == 900
+    # Sin monto vuelve a la calculada.
+    p = client.put(url, json={"periodo": "2026-11", "monto": None}, headers=ctx["headers_miembro"]).json()["proyeccion"]
+    assert (p["ventas_netas"], p["ventas_escritas"]) == (9286, None)
+    # Solo el mes en curso.
+    assert client.put(url, json={"periodo": "2026-10", "monto": 1}, headers=ctx["headers_miembro"]).status_code == 400

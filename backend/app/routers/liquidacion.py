@@ -24,7 +24,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.acceso import es_admin, filtrar_empresas_visibles, obtener_empresa_visible
-from app.calculo_liquidacion import calcular_periodo, serie_diaria
+from app.calculo_liquidacion import ACCION_VENTAS_ESCRITAS, calcular_periodo, serie_diaria
 from app.database import get_db
 from app.deps import get_usuario_actual
 from app.hora_peru import hoy_peru
@@ -41,6 +41,7 @@ from app.schemas import (
     LiquidacionCalculoResponse, LiquidacionEmpresaItem, LiquidacionEventoItem, LiquidacionLecturaRequest,
     LiquidacionLecturasResponse, LiquidacionListaResponse, LiquidacionPanelResponse, LiquidacionRegimenRequest,
     LiquidacionSerieResponse, LiquidacionActualizarResponse, LiquidacionPeriodoRequest, LiquidacionRevisadoItem,
+    LiquidacionVentasRequest,
 )
 from app.security import cifrar_clave_sol, descifrar_clave_sol
 from app.sire_api import ErrorApiSire, probar_conexion
@@ -478,6 +479,29 @@ def marcar_revisado(
     _evento(db, empresa.id, usuario, "revisado", datos.periodo)
     db.commit()
     return _revisiones(db, [empresa.id], datos.periodo)[empresa.id]
+
+
+@router.put("/empresas/{empresa_id}/liquidacion/ventas-proyectadas", response_model=LiquidacionCalculoResponse)
+def escribir_ventas_proyectadas(
+    empresa_id: str,
+    datos: LiquidacionVentasRequest,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_actual),
+):
+    """
+    Ventas netas del mes en curso que espera el responsable (p. ej. lo que
+    avisa el cliente): la proyeccion del IGV y de la Renta sale de ellas.
+    Sin monto vuelve a las calculadas. Devuelve el calculo ya rehecho.
+    """
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
+    if not _puede_leer(empresa, usuario):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo el responsable asignado o un administrador puede escribir las ventas proyectadas.")
+    if datos.periodo != hoy_peru().strftime("%Y-%m"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Las ventas proyectadas son solo del mes en curso.")
+    monto = "" if datos.monto is None else str(datos.monto)
+    _evento(db, empresa.id, usuario, ACCION_VENTAS_ESCRITAS, f"{datos.periodo}:{monto}")
+    db.commit()
+    return ver_calculo(empresa_id, datos.periodo, db, usuario)
 
 
 @router.get("/empresas/{empresa_id}/liquidacion/serie", response_model=LiquidacionSerieResponse)
