@@ -15,8 +15,8 @@ branch_labels = None
 depends_on = None
 
 
-def _uuid(nombre, **kw):
-    return sa.Column(nombre, postgresql.UUID(as_uuid=False), **kw)
+def _uuid(nombre, *args, **kw):
+    return sa.Column(nombre, postgresql.UUID(as_uuid=False), *args, **kw)
 
 
 def upgrade() -> None:
