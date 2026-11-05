@@ -54,7 +54,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.scheduler_job import (
     encolar_chequeo_nocturno, enviar_resumenes_diarios, ejecutar_chequeo_canario, enviar_recordatorios_vencimiento,
     encolar_deudas_diario, encolar_sire_programado, encolar_declaraciones_programado, encolar_detracciones_semanal,
-    encolar_detracciones_carga_inicial, encolar_rxh_semanal,
+    encolar_detracciones_carga_inicial, encolar_rxh_semanal, encolar_detracciones_diaria,
 )
 from app.jobs_liquidacion import encolar_liquidacion_automatica
 from app.huerfanos import marcar_jobs_huerfanos
@@ -229,6 +229,13 @@ def job_detracciones_semanal():
         logger.info(f"Lectura semanal de detracciones encolada: {encolar_detracciones_semanal()}")
     except Exception:
         logger.exception("Fallo la lectura semanal de detracciones")
+
+
+def job_detracciones_diaria():
+    try:
+        logger.info(f"Lectura diaria de detracciones (primeros dias habiles del mes): {encolar_detracciones_diaria()}")
+    except Exception:
+        logger.exception("Fallo la lectura diaria de detracciones")
 
 
 def job_rxh_semanal():
@@ -421,6 +428,12 @@ if __name__ == "__main__":
         job_detracciones_semanal,
         CronTrigger(day_of_week="mon", hour=17, minute=0),
         id="detracciones_semanal",
+    )
+    # Martes a viernes a la misma hora: solo los primeros 7 dias habiles del mes (parametro 5.7).
+    scheduler.add_job(
+        job_detracciones_diaria,
+        CronTrigger(day_of_week="tue-fri", hour=17, minute=0),
+        id="detracciones_diaria",
     )
     # 11:00 p.m. de Peru (04:00 UTC): historial de detracciones desde 2022, unas
     # empresas por noche, lejos de las consultas masivas del buzon.

@@ -572,13 +572,17 @@ def ejecutar_lecturas_liquidacion(lectura_ids: list[str]) -> None:
                     config.api_client_id, descifrar_clave_sol(config.api_secret_cifrado, config.api_dek_cifrada),
                     empresa.ruc, credencial.usuario_sol, clave,
                 )
-                for libro, etapa in (("RVIE", "leyendo_ventas"), ("RCE", "leyendo_compras")):
-                    _reportero(lectura.id)("esperando_turno_sire")
-                    _esperar_turno_sire()
-                    _reportero(lectura.id)(etapa)
-                    filas = descargar_propuesta(token, libro, lectura.periodo_desde)
-                    leidos += aplicar_comprobantes(db, empresa.id, libro, lectura.periodo_desde, filas, datetime.now(timezone.utc))
-                    db.commit()
+                # Varios meses: el historial de compras de la revision de compras (Fase 5), un mes a la vez.
+                periodo = lectura.periodo_desde
+                while periodo <= lectura.periodo_hasta:
+                    for libro, etapa in (("RVIE", "leyendo_ventas"), ("RCE", "leyendo_compras")):
+                        _reportero(lectura.id)("esperando_turno_sire")
+                        _esperar_turno_sire()
+                        _reportero(lectura.id)(etapa)
+                        filas = descargar_propuesta(token, libro, periodo)
+                        leidos += aplicar_comprobantes(db, empresa.id, libro, periodo, filas, datetime.now(timezone.utc))
+                        db.commit()
+                    periodo = sumar_meses(periodo, 1)
                 _terminar(lectura, leidos)
             except ErrorApiSire as e:
                 _fallar(lectura, str(e), leidos)

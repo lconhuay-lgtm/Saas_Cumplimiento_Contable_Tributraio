@@ -215,6 +215,8 @@ class Empresa(Base):
     liquidacion_cuenta_control: Mapped[list["LiquidacionCuentaControl"]] = relationship(cascade="all, delete-orphan")
     liquidacion_calculos: Mapped[list["LiquidacionCalculo"]] = relationship(cascade="all, delete-orphan")
     liquidacion_conciliaciones: Mapped[list["LiquidacionConciliacion"]] = relationship(cascade="all, delete-orphan")
+    liquidacion_compras_decisiones: Mapped[list["LiquidacionCompraDecision"]] = relationship(cascade="all, delete-orphan")
+    liquidacion_reglas_proveedor: Mapped[list["LiquidacionReglaProveedor"]] = relationship(cascade="all, delete-orphan")
     vistas_clave_sol: Mapped[list["VistaClaveSol"]] = relationship(cascade="all, delete-orphan")
 
 
@@ -1298,3 +1300,47 @@ class LiquidacionConciliacion(Base):
     explicada_por_usuario_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
     explicada_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class LiquidacionCompraDecision(Base):
+    """
+    Decision del responsable sobre una compra del SIRE (Fase 5, parametro 5.9):
+    si lleva detraccion y si su IGV entra al credito. Cada cambio es una fila
+    nueva (queda quien, cuando y el motivo); manda la ultima. No modifica el
+    registro en SUNAT.
+    """
+    __tablename__ = "liquidacion_compras_decisiones"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    car_sunat: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    periodo: Mapped[str] = mapped_column(String(7), nullable=False)
+    lleva: Mapped[str] = mapped_column(String(10), nullable=False, default="auto")  # auto | si | no
+    credito: Mapped[str] = mapped_column(String(10), nullable=False, default="auto")  # auto | incluir | excluir
+    motivo: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    comentario: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    constancia: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    usuario_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class LiquidacionReglaProveedor(Base):
+    """
+    Regla del responsable para un proveedor (5.10): "lleva_detraccion" (siempre
+    factura con detraccion) o "excluir" (sus compras no van al credito). Rige
+    desde `desde_periodo`; al quitarla queda inactiva con quien y cuando.
+    """
+    __tablename__ = "liquidacion_reglas_proveedor"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    ruc_proveedor: Mapped[str] = mapped_column(String(15), nullable=False)
+    nombre_proveedor: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    regla: Mapped[str] = mapped_column(String(20), nullable=False)
+    desde_periodo: Mapped[str] = mapped_column(String(7), nullable=False)
+    motivo: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    activa: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    usuario_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    quitada_por_usuario_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
+    quitada_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

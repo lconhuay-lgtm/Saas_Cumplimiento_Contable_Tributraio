@@ -25,23 +25,24 @@ from sqlalchemy.orm import Session
 
 from app.acceso import es_admin, filtrar_empresas_visibles, obtener_empresa_visible
 from app.calculo_liquidacion import ACCION_VENTAS_ESCRITAS, calcular_periodo, serie_diaria
+from app.credito_compras import MESES_ATRAS, MOTIVOS as MOTIVOS_COMPRA, RevisionCompras
 from app.database import get_db
 from app.deps import get_usuario_actual
 from app.hora_peru import hoy_peru
 from app.jobs_liquidacion import (
-    ESPACIADO_AUTOMATICO_SEG, FUENTES, crear_lecturas, encolar_lecturas, lecturas_en_curso, rango_fuente,
+    ESPACIADO_AUTOMATICO_SEG, FUENTES, crear_lecturas, encolar_lecturas, lecturas_en_curso, rango_fuente, sumar_meses,
 )
 from app.models import (
-    CredencialSol, DeclaracionSunat, Empresa, LiquidacionComprobante, LiquidacionCuentaControl, LiquidacionDeclaracion,
-    LiquidacionEmpresa, LiquidacionEvento, LiquidacionLectura, LiquidacionRetencionPercepcion, SireEstadoPeriodo, Tenant,
-    Usuario,
+    CredencialSol, DeclaracionSunat, Empresa, LiquidacionComprobante, LiquidacionCompraDecision, LiquidacionCuentaControl,
+    LiquidacionDeclaracion, LiquidacionEmpresa, LiquidacionEvento, LiquidacionLectura, LiquidacionReglaProveedor,
+    LiquidacionRetencionPercepcion, SireEstadoPeriodo, Tenant, Usuario,
 )
 from app.schemas import (
     REGIMENES_LIQUIDACION, LiquidacionActivarRequest, LiquidacionApiRequest, LiquidacionDetalleResponse,
     LiquidacionCalculoResponse, LiquidacionEmpresaItem, LiquidacionEventoItem, LiquidacionLecturaRequest,
     LiquidacionLecturasResponse, LiquidacionListaResponse, LiquidacionPanelResponse, LiquidacionRegimenRequest,
     LiquidacionSerieResponse, LiquidacionActualizarResponse, LiquidacionPeriodoRequest, LiquidacionRevisadoItem,
-    LiquidacionVentasRequest,
+    LiquidacionVentasRequest, LiquidacionComprasResponse, LiquidacionCompraDecisionRequest,
 )
 from app.security import cifrar_clave_sol, descifrar_clave_sol
 from app.sire_api import ErrorApiSire, probar_conexion
@@ -600,3 +601,156 @@ def actualizar_panel(
         encolar_lecturas(lecturas, espera=timedelta(seconds=encoladas * ESPACIADO_AUTOMATICO_SEG))
         encoladas += 1
     return {"encoladas": encoladas, "saltadas": saltadas, "minutos": math.ceil(encoladas * ESPACIADO_AUTOMATICO_SEG / 60)}
+
+
+# --- Fase 5: revision de compras y credito fiscal (app/credito_compras.py) ---
+
+
+def _compras(db: Session, empresa: Empresa, usuario: Usuario, periodo: str) -> dict:
+    C = LiquidacionComprobante
+    compras = db.query(C).filter(
+        C.empresa_id == empresa.id, C.libro == "RCE", C.fuente == "propuesta", C.periodo == periodo,
+    ).all()
+    revision = RevisionCompras(db, empresa.id, empresa.ruc, hoy_peru()).del_periodo(periodo, compras)
+    reglas = (
+        db.query(LiquidacionReglaProveedor, Usuario)
+        .outerjoin(Usuario, Usuario.id == LiquidacionReglaProveedor.usuario_id)
+        .filter(LiquidacionReglaProveedor.empresa_id == empresa.id, LiquidacionReglaProveedor.activa.is_(True))
+        .order_by(LiquidacionReglaProveedor.creado_en.desc())
+    )
+    leida = db.query(LiquidacionLectura.id).filter(
+        LiquidacionLectura.empresa_id == empresa.id, LiquidacionLectura.fuente == "sire",
+        LiquidacionLectura.estado == "completado", LiquidacionLectura.periodo_desde <= periodo,
+        LiquidacionLectura.periodo_hasta >= periodo,
+    ).first()
+    return {
+        "periodo": periodo,
+        "razon_social": empresa.razon_social,
+        "hay_compras": leida is not None,
+        "resumen": {**revision["resumen"], "detracciones_al": revision["detracciones_al"]},
+        "grupos": revision["grupos"],
+        "filas": revision["filas"],
+        "reglas": [
+            {
+                "id": r.id, "ruc_proveedor": r.ruc_proveedor, "nombre_proveedor": r.nombre_proveedor, "regla": r.regla,
+                "desde_periodo": r.desde_periodo, "motivo": r.motivo, "usuario_nombre": _nombre(u) or "", "creado_en": r.creado_en,
+            }
+            for r, u in reglas
+        ],
+        "motivos": list(MOTIVOS_COMPRA),
+        "puede_decidir": _puede_leer(empresa, usuario),
+    }
+
+
+@router.get("/empresas/{empresa_id}/liquidacion/compras", response_model=LiquidacionComprasResponse)
+def ver_compras(
+    empresa_id: str,
+    periodo: str = Query(pattern=PATRON_PERIODO),
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_actual),
+):
+    """Pantalla 3 del boceto: cada compra del registro cruzada con sus depositos de detraccion."""
+    return _compras(db, obtener_empresa_visible(empresa_id, usuario, db), usuario, periodo)
+
+
+@router.put("/empresas/{empresa_id}/liquidacion/compras/{car}", response_model=LiquidacionComprasResponse)
+def decidir_compra(
+    empresa_id: str,
+    car: str,
+    datos: LiquidacionCompraDecisionRequest,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_actual),
+):
+    """
+    Lo que decide el responsable sobre una compra (5.9): si lleva detraccion y
+    si su IGV entra al credito, con motivo. "siempre" y "excluir_siempre" crean
+    ademas la regla del proveedor (5.10), desde el periodo de la compra. No
+    cambia el registro en SUNAT.
+    """
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
+    if not _puede_leer(empresa, usuario):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo el responsable asignado o un administrador puede decidir sobre las compras.")
+    compra = db.query(LiquidacionComprobante).filter(
+        LiquidacionComprobante.empresa_id == empresa.id, LiquidacionComprobante.libro == "RCE",
+        LiquidacionComprobante.car_sunat == car,
+    ).first()
+    if compra is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No se encontró esa compra.")
+    if datos.credito != "auto" and not datos.motivo:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Elige un motivo para incluir o excluir la compra.")
+    if datos.motivo and datos.motivo not in MOTIVOS_COMPRA:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ese motivo no está en la lista.")
+    if datos.motivo == "Otro" and not datos.comentario.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Con el motivo «Otro» escribe un comentario.")
+    ruc = (compra.doc_contraparte or "").strip()
+    for pedido, regla in (("siempre", "lleva_detraccion"), ("excluir_siempre", "excluir")):
+        if pedido in (datos.lleva, datos.credito) and not db.query(LiquidacionReglaProveedor.id).filter(
+            LiquidacionReglaProveedor.empresa_id == empresa.id, LiquidacionReglaProveedor.ruc_proveedor == ruc,
+            LiquidacionReglaProveedor.regla == regla, LiquidacionReglaProveedor.activa.is_(True),
+        ).first():
+            db.add(LiquidacionReglaProveedor(
+                empresa_id=empresa.id, ruc_proveedor=ruc, nombre_proveedor=(compra.nombre_contraparte or "")[:200], regla=regla,
+                desde_periodo=compra.periodo, motivo=" · ".join(x for x in (datos.motivo, datos.comentario.strip()) if x)[:500],
+                usuario_id=usuario.id,
+            ))
+            _evento(db, empresa.id, usuario, "regla_proveedor", f"{regla}:{ruc}")
+    db.add(LiquidacionCompraDecision(
+        empresa_id=empresa.id, car_sunat=car, periodo=compra.periodo,
+        lleva="si" if datos.lleva == "siempre" else datos.lleva,
+        credito="excluir" if datos.credito == "excluir_siempre" else datos.credito,
+        motivo=datos.motivo, comentario=datos.comentario.strip(), constancia=datos.constancia.strip(), usuario_id=usuario.id,
+    ))
+    _evento(db, empresa.id, usuario, "decision_compra", f"{compra.periodo}:{car}:{datos.lleva}:{datos.credito}")
+    db.commit()
+    return _compras(db, empresa, usuario, datos.periodo)
+
+
+@router.delete("/empresas/{empresa_id}/liquidacion/reglas-proveedor/{regla_id}", response_model=LiquidacionComprasResponse)
+def quitar_regla_proveedor(
+    empresa_id: str,
+    regla_id: str,
+    periodo: str = Query(pattern=PATRON_PERIODO),
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_actual),
+):
+    """Deshace una regla del proveedor (5.10): queda inactiva, con quien y cuando."""
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
+    if not _puede_leer(empresa, usuario):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo el responsable asignado o un administrador puede quitar reglas.")
+    regla = db.get(LiquidacionReglaProveedor, regla_id)
+    if regla is None or regla.empresa_id != empresa.id or not regla.activa:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No se encontró esa regla.")
+    regla.activa = False
+    regla.quitada_por_usuario_id = usuario.id
+    regla.quitada_en = datetime.now(timezone.utc)
+    _evento(db, empresa.id, usuario, "regla_proveedor_quitada", f"{regla.regla}:{regla.ruc_proveedor}")
+    db.commit()
+    return _compras(db, empresa, usuario, periodo)
+
+
+@router.post("/empresas/{empresa_id}/liquidacion/compras/historial", status_code=status.HTTP_202_ACCEPTED)
+def leer_historial_compras(
+    empresa_id: str,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_actual),
+):
+    """
+    Lee del SIRE los 12 meses anteriores (ventas y compras, un pedido por
+    minuto): hacen falta para ver las detracciones depositadas tarde y las
+    suspendidas.
+    """
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
+    if not _puede_leer(empresa, usuario):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo el responsable asignado o un administrador puede pedir lecturas.")
+    config = db.get(LiquidacionEmpresa, empresa.id)
+    if config is None or not config.api_client_id or not config.api_secret_cifrado:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Falta configurar la API del SIRE de esta empresa.")
+    if lecturas_en_curso(db, empresa.id, datetime.now(timezone.utc)):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ya hay una lectura en curso para esta empresa.")
+    actual = hoy_peru().strftime("%Y-%m")
+    rango = (sumar_meses(actual, -MESES_ATRAS), sumar_meses(actual, -1))
+    lecturas = crear_lecturas(db, empresa.id, usuario.id, rango[1], ["sire"], rangos={"sire": rango})
+    _evento(db, empresa.id, usuario, "historial_compras", f"{rango[0]}:{rango[1]}")
+    db.commit()
+    encolar_lecturas(lecturas)
+    return {"desde": rango[0], "hasta": rango[1]}

@@ -111,14 +111,14 @@ export function textoPeriodo(periodo) {
   return `${MESES[mes - 1]} ${anio}`;
 }
 
-/** Los ultimos 3 periodos y el que se muestra primero: hasta el dia 20 lo que se esta por declarar es el mes pasado. */
+/** Los ultimos 3 periodos; siempre se abre en el mes en curso (el mes por declarar se elige en la lista). */
 export function periodosElegibles() {
-  const { anio, mes, dia } = hoyPeru();
+  const { anio, mes } = hoyPeru();
   const lista = [0, 1, 2].map((atras) => {
     const total = anio * 12 + mes - 1 - atras;
     return `${Math.floor(total / 12)}-${String((total % 12) + 1).padStart(2, "0")}`;
   });
-  return { lista, porDefecto: dia <= 20 ? lista[1] : lista[0] };
+  return { lista, porDefecto: lista[0] };
 }
 
 const FORMATO_SOLES = new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN", maximumFractionDigits: 0 });

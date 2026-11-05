@@ -379,6 +379,15 @@ export const api = {
     apiFetch(`/empresas/${empresaId}/liquidacion/revisado`, { method: "POST", body: JSON.stringify({ periodo }) }),
   actualizarPanelLiquidacion: (periodo) =>
     apiFetch("/liquidacion/panel/actualizar", { method: "POST", body: JSON.stringify({ periodo }) }),
+  // Fase 5: revision de compras y credito fiscal.
+  verComprasLiquidacion: (empresaId, periodo) =>
+    apiFetch(`/empresas/${empresaId}/liquidacion/compras?periodo=${periodo}`),
+  decidirCompraLiquidacion: (empresaId, car, decision) =>
+    apiFetch(`/empresas/${empresaId}/liquidacion/compras/${encodeURIComponent(car)}`, { method: "PUT", body: JSON.stringify(decision) }),
+  quitarReglaProveedor: (empresaId, reglaId, periodo) =>
+    apiFetch(`/empresas/${empresaId}/liquidacion/reglas-proveedor/${reglaId}?periodo=${periodo}`, { method: "DELETE" }),
+  leerHistorialCompras: (empresaId) =>
+    apiFetch(`/empresas/${empresaId}/liquidacion/compras/historial`, { method: "POST" }),
 
   importarEmpresas: (archivo) => {
     const formData = new FormData();

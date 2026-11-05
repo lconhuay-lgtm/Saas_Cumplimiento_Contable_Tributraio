@@ -287,12 +287,45 @@ def encolar_rxh_semanal(hoy=None) -> dict:
         db.close()
 
 
-def encolar_detracciones_semanal() -> dict:
-    """Cada semana: lo nuevo desde la marca de avance de cada empresa con la carga inicial terminada."""
+# Parametro 5.7: los primeros 7 dias habiles del mes (cuando vencen los depositos
+# de las compras del mes anterior) se leen a diario las empresas con la
+# Liquidacion en vivo activada, para avisar 5, 3 y 1 dias antes con datos frescos.
+DIAS_HABILES_DIARIOS_DETRACCIONES = 7
+
+
+def dia_habil_del_mes(hoy: date) -> int:
+    """Que dia habil del mes es hoy (1, 2...); 0 si hoy no es habil."""
+    from app.detracciones_spot import es_habil
+
+    if not es_habil(hoy):
+        return 0
+    return sum(1 for d in range(1, hoy.day + 1) if es_habil(hoy.replace(day=d)))
+
+
+def encolar_detracciones_diaria(hoy: date | None = None) -> dict:
+    """Los primeros 7 dias habiles del mes (menos el lunes, que ya va la semanal): las empresas de la Liquidacion en vivo."""
+    hoy = hoy or hoy_peru()
+    habil = dia_habil_del_mes(hoy)
+    if not 1 <= habil <= DIAS_HABILES_DIARIOS_DETRACCIONES or hoy.weekday() == 0:
+        return {"empresas_encoladas": 0, "dia_habil": habil}
+    from app.models import LiquidacionEmpresa
+
     db = SessionLocal()
     try:
-        hoy = hoy_peru()
-        revision_mensual = hoy.day <= 7
+        activas = {eid for (eid,) in db.query(LiquidacionEmpresa.empresa_id).filter(LiquidacionEmpresa.activa.is_(True))}
+        return encolar_detracciones_semanal(hoy=hoy, solo=activas, db=db)
+    finally:
+        db.close()
+
+
+def encolar_detracciones_semanal(hoy: date | None = None, solo: set[str] | None = None, db=None) -> dict:
+    """Cada semana: lo nuevo desde la marca de avance de cada empresa con la carga inicial terminada."""
+    propia = db is None
+    db = db or SessionLocal()
+    try:
+        hoy = hoy or hoy_peru()
+        # La diaria (solo) repasa solo la ultima semana: la revision mensual ya la hace la semanal.
+        revision_mensual = hoy.day <= 7 and solo is None
         coberturas = {
             c.empresa_id: c
             for c in db.query(DetraccionCobertura).filter(DetraccionCobertura.carga_completa.is_(True))
@@ -302,7 +335,7 @@ def encolar_detracciones_semanal() -> dict:
             cuentas_usadas.setdefault(eid, set()).add(cuenta)
         empresas = [
             e for e in _empresas_activas_con_clave(db)
-            if e.id in coberturas and (e.id in cuentas_usadas or revision_mensual)
+            if e.id in coberturas and (e.id in cuentas_usadas or revision_mensual) and (solo is None or e.id in solo)
         ]
 
         def criterios(empresa):
@@ -322,10 +355,11 @@ def encolar_detracciones_semanal() -> dict:
         resultado = encolar_lecturas(
             db, empresas, ConsultaDetraccionesJob, ejecutar_consulta_detracciones, datos_job=criterios, job_timeout="20m",
         )
-        logger.info(f"Lectura semanal de detracciones: {resultado}")
+        logger.info(f"Lectura {'diaria' if solo is not None else 'semanal'} de detracciones: {resultado}")
         return resultado
     finally:
-        db.close()
+        if propia:
+            db.close()
 
 
 def enviar_resumenes_diarios(horas_atras: int = 24) -> dict:

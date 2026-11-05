@@ -1190,6 +1190,21 @@ class LiquidacionDeclaradoItem(BaseModel):
     fecha_presentacion: date | None
 
 
+class LiquidacionComprasResumenItem(BaseModel):
+    """Las tarjetas de la revision de compras (Fase 5), en soles enteros de IGV."""
+    credito_cuenta: int  # credito que cuenta en el mes (sin lo que esta en riesgo)
+    credito_viene: int  # parte que viene de meses anteriores (detraccion depositada tarde)
+    en_riesgo: int  # compras del mes con la detraccion aun en plazo y sin depositar
+    en_riesgo_cantidad: int
+    en_riesgo_plazo: date | None
+    suspendido: int  # detraccion vencida sin depositar (de este mes o anteriores)
+    suspendido_cantidad: int
+    por_verificar: int  # cantidad
+    excluido: int
+    registro: int  # IGV de compras del registro (propuesta) del mes
+    detracciones_al: date | None  # hasta donde se leyeron los depositos de detraccion
+
+
 class LiquidacionCalculoResponse(BaseModel):
     periodo: str
     regimen: str | None
@@ -1215,6 +1230,102 @@ class LiquidacionCalculoResponse(BaseModel):
     lineas_renta: list[LiquidacionLineaItem]
     avisos: list[str]
     declarado: LiquidacionDeclaradoItem | None
+    compras: LiquidacionComprasResumenItem | None = None
+
+
+class LiquidacionDepositoItem(BaseModel):
+    constancia: str
+    fecha: date | None
+    monto: float
+
+
+class LiquidacionCompraDecisionItem(BaseModel):
+    lleva: str  # auto | si | no
+    credito: str  # auto | incluir | excluir
+    motivo: str
+    comentario: str
+    constancia: str
+    usuario_nombre: str
+    fecha: datetime
+
+
+class LiquidacionReglaItem(BaseModel):
+    id: str
+    regla: str  # lleva_detraccion | excluir
+    desde_periodo: str
+    usuario_nombre: str
+
+
+class LiquidacionCompraItem(BaseModel):
+    """Una compra del registro cruzada con sus depositos de detraccion (pantalla 3 del boceto)."""
+    car: str
+    periodo: str
+    fecha_emision: date | None
+    tipo_comprobante: str
+    serie: str
+    numero: str
+    ruc: str
+    proveedor: str
+    total: float
+    igv: float
+    marca_sire: bool
+    plazo: date
+    codigo: str | None
+    descripcion_codigo: str
+    tasa: float | None
+    esperado: int | None  # detraccion esperada en soles enteros
+    depositado: float | None
+    depositos: list[LiquidacionDepositoItem]
+    estado: str  # pagada | por_depositar | vencida | verificar | no_sujeta
+    grupo: str  # el filtro donde aparece (incluye "excluido")
+    lleva: str  # si | no | verificar
+    detraccion_texto: str
+    detraccion_nota: str
+    credito: str  # cuenta | pasa | por_confirmar | en_riesgo | suspendido | excluido
+    credito_texto: str
+    credito_nota: str
+    credito_automatico: str
+    credito_periodo: str | None
+    decision: LiquidacionCompraDecisionItem | None
+    regla: LiquidacionReglaItem | None
+
+
+class LiquidacionGrupoItem(BaseModel):
+    clave: str
+    nombre: str
+    cantidad: int
+
+
+class LiquidacionReglaProveedorItem(BaseModel):
+    id: str
+    ruc_proveedor: str
+    nombre_proveedor: str
+    regla: str
+    desde_periodo: str
+    motivo: str
+    usuario_nombre: str
+    creado_en: datetime
+
+
+class LiquidacionComprasResponse(BaseModel):
+    periodo: str
+    razon_social: str
+    hay_compras: bool  # False: falta leer el SIRE del periodo
+    resumen: LiquidacionComprasResumenItem
+    grupos: list[LiquidacionGrupoItem]
+    filas: list[LiquidacionCompraItem]
+    reglas: list[LiquidacionReglaProveedorItem]
+    motivos: list[str]
+    puede_decidir: bool
+
+
+class LiquidacionCompraDecisionRequest(BaseModel):
+    periodo: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    lleva: str = Field(pattern=r"^(auto|si|no|siempre)$")  # siempre: crea la regla del proveedor
+    credito: str = Field(pattern=r"^(auto|incluir|excluir|excluir_siempre)$")  # excluir_siempre: regla del proveedor
+    motivo: str = Field(default="", max_length=100)
+    comentario: str = Field(default="", max_length=500)
+    constancia: str = Field(default="", max_length=40)
 
 
 class LiquidacionPuntoItem(BaseModel):

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { CheckCircle2, Loader2, Pencil, RefreshCw } from "lucide-react";
 import { api } from "../../../../lib/api";
 import { fechaHoraPeru, fechaPeru, hoyPeru, hoyPeruIso } from "../../../../lib/fechas";
@@ -12,7 +13,7 @@ import GraficoDiario, { COLOR_REFERENCIA, SERIES } from "./GraficoDiario";
 // proyeccion y Renta; el mes dia a dia; "como se llega al monto" en lenguaje
 // simple; alertas y comparacion con los 0621 anteriores; en el mes en curso,
 // la proyeccion al cierre con su rango (Fase 6). Lo que llega en fases
-// futuras (compras y detracciones, PDF y Excel) se muestra marcado. Al final, plegado, el detalle por casilla del 0621 para comparar
+// futuras (PDF y Excel) se muestra marcado; compras y detracciones (Fase 5) tienen su pantalla. Al final, plegado, el detalle por casilla del 0621 para comparar
 // con lo declarado (diferencias de mas de S/ 10, parametro 7.1).
 const UMBRAL_DIFERENCIA = 10;
 // Parametro 4.6: "Requiere atencion" si el IGV sube 15 % o mas frente al mismo mes del ano anterior.
@@ -248,25 +249,37 @@ function Comparacion({ filas }) {
   );
 }
 
-function ComprasPronto({ compras }) {
-  const grupos = ["Detracción pagada", "Con plazo para depositar", "No depositada · vencida", "Por verificar", "Excluidos a mano"];
+function ComprasResumen({ empresaId, periodo, compras }) {
+  const mes = textoPeriodo(periodo).split(" ")[0];
+  const cifras = [
+    ["Crédito que cuenta este mes", textoSoles(compras.credito_cuenta), "text-ink",
+      compras.credito_viene ? `incluye ${textoSoles(compras.credito_viene)} de meses anteriores` : `registro: ${textoSoles(compras.registro)}`],
+    ["En riesgo: falta depositar", textoSoles(compras.en_riesgo), "text-amber-700",
+      compras.en_riesgo_cantidad ? `${compras.en_riesgo_cantidad} factura(s) · plazo ${diaMes(compras.en_riesgo_plazo, { timeZone: "UTC" })}` : "nada pendiente"],
+    ["Suspendido: no depositada", textoSoles(compras.suspendido), "text-red-700",
+      compras.suspendido_cantidad ? `${compras.suspendido_cantidad} factura(s) vencidas` : "ninguna"],
+    ["Por verificar", String(compras.por_verificar), "text-violet-700", "si llevan detracción"],
+    ["Excluido a mano", textoSoles(compras.excluido), "text-slate-700", "del crédito del mes"],
+  ];
   return (
-    <div className="rounded-xl border border-dashed border-slate-300 bg-white p-5">
+    <div className={CAJA}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="flex items-center gap-2 font-heading text-lg font-bold text-ink">
-          Compras, detracciones y crédito fiscal <Pronto fase="Fase 5 · enero" />
-        </h3>
-        <button disabled className={`${BOTON} bg-slate-100 text-slate-400`}>Revisar compras</button>
+        <h3 className="font-heading text-lg font-bold text-ink">Compras, detracciones y crédito fiscal</h3>
+        <Link href={`/cumplimiento/liquidacion/${empresaId}/compras?periodo=${periodo}`} className={`${BOTON} bg-accent text-white hover:bg-accent-dark`}>
+          Revisar compras
+        </Link>
       </div>
       <p className="mt-1 text-sm text-slate-600">
-        Aquí se cruzarán {compras !== null ? `las ${compras} compras del mes` : "las compras del mes"} con los depósitos de
-        detracción, y el responsable decidirá qué se incluye o excluye del crédito.
+        Las compras de {mes} cruzadas con los depósitos de detracción
+        {compras.detracciones_al ? ` (leídos hasta el ${diaMes(compras.detracciones_al, { timeZone: "UTC" })})` : " (aún no se leen)"}. El crédito
+        fiscal del cálculo ya descuenta lo suspendido y lo excluido.
       </p>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        {grupos.map((g) => (
-          <div key={g} className="rounded-lg bg-slate-50 p-3">
-            <div className="text-xs font-semibold text-slate-500">{g}</div>
-            <div className="mt-1 font-heading text-xl font-bold text-slate-300">—</div>
+        {cifras.map(([titulo, valor, tono, nota]) => (
+          <div key={titulo} className="rounded-lg bg-slate-50 p-3">
+            <div className="text-xs font-semibold text-slate-500">{titulo}</div>
+            <div className={`mt-1 font-heading text-xl font-bold tabular-nums ${tono}`}>{valor}</div>
+            <div className="text-xs text-slate-500">{nota}</div>
           </div>
         ))}
       </div>
@@ -617,7 +630,7 @@ export default function TableroLiquidacion({ empresaId, periodo, periodos, onPer
         </div>
       </div>
 
-      <ComprasPronto compras={lecturas.datos?.resumen?.compras?.cantidad ?? null} />
+      {calculo.compras && <ComprasResumen empresaId={empresaId} periodo={periodo} compras={calculo.compras} />}
 
       <DetalleCasillas calculo={calculo} />
 

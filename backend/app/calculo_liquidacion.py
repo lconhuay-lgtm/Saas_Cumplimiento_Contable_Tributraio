@@ -21,6 +21,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.orm import Session
 
+from app.credito_compras import RevisionCompras
 from app.cronograma_sunat import grupo_para_empresa
 from app.hora_peru import ZONA_PERU, hoy_peru
 from app.jobs_liquidacion import sumar_meses
@@ -233,9 +234,10 @@ def porcentaje_renta(
 class _Datos:
     """Lo guardado de una empresa que usa el calculo, leido una sola vez (cada consulta queda en memoria)."""
 
-    def __init__(self, db: Session, empresa_id: str):
+    def __init__(self, db: Session, empresa_id: str, hoy: date | None = None):
         self.db = db
         self.empresa_id = empresa_id
+        self.hoy = hoy or hoy_peru()
         por_periodo: dict[str, list] = {}
         for d in db.query(LiquidacionDeclaracion).filter(LiquidacionDeclaracion.empresa_id == empresa_id):
             por_periodo.setdefault(d.periodo, []).append(d)
@@ -281,6 +283,23 @@ class _Datos:
             LiquidacionRetencionPercepcion.periodo == periodo,
         ).all())
 
+    def revision_compras(self, periodo: str) -> dict:
+        """Las compras del periodo cruzadas con las detracciones (Fase 5, app/credito_compras.py)."""
+        def revisar():
+            if "_revision" not in self._consultas:
+                empresa = self.db.get(Empresa, self.empresa_id)
+                self._consultas["_revision"] = RevisionCompras(self.db, self.empresa_id, empresa.ruc, self.hoy)
+            return self._consultas["_revision"].del_periodo(periodo, _Datos.comprobantes(self, "RCE", periodo))
+        return self._una_vez(("revision", periodo), revisar)
+
+    def alertas_detraccion(self, periodo: str) -> list[str]:
+        revision = self.revision_compras(periodo)
+        return self._consultas["_revision"].alertas(revision)
+
+    def ajuste_credito(self, periodo: str) -> float:
+        """Cuanto cambia el IGV de compras del registro por las detracciones y las decisiones del responsable."""
+        return self.revision_compras(periodo)["ajuste"]
+
     def pagos(self, periodo: str, tributos: tuple[str, ...]) -> float:
         return self._una_vez(("pagos", periodo, tributos), lambda: sum(
             p.importe_pagado
@@ -314,6 +333,11 @@ class _DatosAl(_Datos):
 
     def retenciones_percepciones(self, periodo: str) -> list[LiquidacionRetencionPercepcion]:
         return self._hasta_el_corte(super().retenciones_percepciones(periodo), periodo)
+
+    def ajuste_credito(self, periodo: str) -> float:
+        if periodo != self._periodo:
+            return super().ajuste_credito(periodo)
+        return sum(m for fecha, m in super().revision_compras(periodo)["movimientos"] if fecha is None or fecha <= self._corte)
 
 
 def _linea(casilla: str | None, concepto: str, monto: int | None, tipo: str = "dato", fuente: str | None = None,
@@ -360,7 +384,10 @@ def _calcular(datos: _Datos, periodo: str, regimen: str | None, nivel: int = 0) 
     # destinadas a ventas gravadas; una empresa que solo vende exonerado o
     # inafecto las declara sin credito (casilla 113, MISKY SONKO 09/2026) y una
     # con ventas de los dos tipos aplica su prorrata (173).
-    igv_compras = sire["108"] + sire["111"] + sire["115"]
+    # La revision de compras (Fase 5) quita lo suspendido por detracciones no
+    # depositadas o excluido a mano y suma lo de meses anteriores depositado tarde.
+    ajuste = datos.ajuste_credito(periodo)
+    igv_compras = sire["108"] + sire["111"] + sire["115"] + ajuste
     credito_nota = None
     if c["100"] <= 0 and not c["106"] and c["105"] + c["109"] > 0 and igv_compras > 0:
         c["178"] = 0
@@ -377,8 +404,12 @@ def _calcular(datos: _Datos, periodo: str, regimen: str | None, nivel: int = 0) 
             f"Se aplica la prorrata del último 0621 ({prorrata:.4f}): crédito de S/ {c['178']:,} sobre S/ {soles(igv_compras):,} de IGV de compras."
         )
     else:
-        c["178"] = c["108"] + c["111"] + c["115"]
+        c["178"] = c["108"] + c["111"] + c["115"] + soles(ajuste)
         credito_regla = f"SIRE: {len(compras)} compras"
+    if soles(ajuste):
+        cambio = f"{'menos' if ajuste < 0 else 'más'} S/ {abs(soles(ajuste)):,} por la revisión de compras (detracciones y decisiones)"
+        credito_regla += f"; {cambio}"
+        credito_nota = f"{credito_nota}; {cambio}" if credito_nota else cambio.capitalize()
 
     # Percepciones y retenciones del mes
     retper = datos.retenciones_percepciones(periodo)
@@ -728,7 +759,7 @@ def serie_diaria(db: Session, empresa: Empresa, periodo: str, hoy: date) -> list
     """
     config = db.get(LiquidacionEmpresa, empresa.id)
     regimen = config.regimen if config else None
-    datos = _Datos(db, empresa.id)
+    datos = _Datos(db, empresa.id, hoy)
     if datos.ultima_lectura("sire", periodo) is None:
         return []
     inicio = date(int(periodo[:4]), int(periodo[5:7]), 1)
@@ -759,7 +790,8 @@ def calcular_periodo(db: Session, empresa: Empresa, periodo: str, hoy: date | No
     """El estimado del periodo con sus lineas de "como se llega al monto", y lo declarado si ya hay 0621."""
     config = db.get(LiquidacionEmpresa, empresa.id)
     regimen = config.regimen if config else None
-    datos = _Datos(db, empresa.id)
+    hoy = hoy or hoy_peru()
+    datos = _Datos(db, empresa.id, hoy)
     r = _calcular(datos, periodo, regimen)
     c = r["casillas"]
     declarado = datos.declarado(periodo) or None
@@ -794,7 +826,6 @@ def calcular_periodo(db: Session, empresa: Empresa, periodo: str, hoy: date | No
         _linea("317", "Pagos ya hechos del periodo", c["317"], fuente="Boletas 1662 (tributos " + ", ".join(TRIBUTOS_RENTA) + ")", declarado=declarado, signo=-1),
     ]
     fechas = [f for f in r["fechas"].values() if f is not None]
-    hoy = hoy or hoy_peru()
     comparacion = _comparacion(datos, periodo)
     proyeccion = None if declarado else proyectar(
         datos, periodo, regimen, hoy, c, ventas_netas=r["ventas_netas"], renta_porcentaje=r["renta_porcentaje"],
@@ -809,7 +840,8 @@ def calcular_periodo(db: Session, empresa: Empresa, periodo: str, hoy: date | No
         "atencion": _atencion(
             proyeccion["por_pagar"] if proyeccion and not proyeccion["sin_base"] else c["681"],
             comparacion, declarado, diferencias, r["fechas"].get("sire"), hoy,
-        ),
+        ) + (datos.alertas_detraccion(periodo) if not declarado else []),
+        "compras": {**datos.revision_compras(periodo)["resumen"], "detracciones_al": datos.revision_compras(periodo)["detracciones_al"]},
         "proyeccion": proyeccion,
         "hay_datos": r["fechas"].get("sire") is not None,
         "datos_al": min(fechas) if fechas else None,
