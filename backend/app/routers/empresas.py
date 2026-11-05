@@ -37,6 +37,7 @@ from app.deps import get_usuario_actual, get_admin_actual
 from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible, es_admin
 from app import tareas as tareas_logic
 from app.hora_peru import hoy_peru, inicio_de_hoy_peru
+from app.plame import plame_desde
 
 logger = logging.getLogger("app.routers.empresas")
 
@@ -121,9 +122,12 @@ def _con_estadisticas(empresas: list[Empresa], db: Session) -> list[EmpresaRespo
         if m.empresa_id not in ultimo_mensaje_por_empresa:
             ultimo_mensaje_por_empresa[m.empresa_id] = m
 
+    desde_plame = plame_desde(db, ids)
+
     resultado = []
     for e in empresas:
         r = EmpresaResponse.model_validate(e)
+        r.obligada_plame = desde_plame.get(e.id) is not None
         r.pendientes = pendientes_por_empresa.get(e.id, 0)
         r.total_mensajes = mensajes_por_empresa.get(e.id, 0)
         r.total_consultas = consultas_por_empresa.get(e.id, 0)

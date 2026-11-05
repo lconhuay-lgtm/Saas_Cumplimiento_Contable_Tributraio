@@ -24,11 +24,11 @@ from sqlalchemy import func
 from app.database import SessionLocal
 from app.models import Empresa, Tenant, CredencialSol, ConsultaJob, CanarioCheck, TareaObligacion
 from app.models import Usuario, ConsultaDeudasJob, ConsultaSireJob, ConsultaDeclaracionesJob, CronogramaVencimiento
-from app.models import ConsultaDetraccionesJob, DetraccionCobertura, DetraccionPago
+from app.models import ConsultaDetraccionesJob, DetraccionCobertura, DetraccionPago, ConsultaRxhJob
 from app.queue_conn import cola_consultas, redis_conn
 from app.jobs import (
     ejecutar_consulta_buzon, ejecutar_consulta_deudas, ejecutar_consulta_sire, ejecutar_consulta_declaraciones,
-    ejecutar_consulta_detracciones,
+    ejecutar_consulta_detracciones, ejecutar_consulta_rxh,
 )
 from app.cumplimiento import empresas_de_tenants_activos, encolar_lecturas, filtrar_activas_en_sunat
 from app.cronograma_sunat import grupo_para_empresa
@@ -259,6 +259,29 @@ def encolar_detracciones_carga_inicial() -> dict:
             job_timeout="40m",
         )
         logger.info(f"Carga inicial de detracciones: {resultado}")
+        return resultado
+    finally:
+        db.close()
+
+
+def encolar_rxh_semanal(hoy=None) -> dict:
+    """
+    Obligacion PLAME (ver app/plame.py): una vez por semana, los recibos por
+    honorarios RECIBIDOS en el periodo que vence este mes, solo de las
+    empresas que todavia no figuran como obligadas (en las demas no cambia
+    nada). Si aparece alguno, ejecutar_consulta_rxh le crea la obligacion.
+    """
+    from app.plame import periodo_rxh_a_revisar, plame_desde
+
+    db = SessionLocal()
+    try:
+        empresas = _empresas_activas_con_clave(db)
+        desde = plame_desde(db, [e.id for e in empresas])
+        sin_plame = [e for e in empresas if desde.get(e.id) is None]
+        periodo = periodo_rxh_a_revisar(hoy or hoy_peru())
+        resultado = encolar_lecturas(db, sin_plame, ConsultaRxhJob, ejecutar_consulta_rxh, datos_job={"periodo": periodo})
+        resultado["periodo"] = periodo
+        logger.info(f"Revision semanal de recibos por honorarios: {resultado}")
         return resultado
     finally:
         db.close()

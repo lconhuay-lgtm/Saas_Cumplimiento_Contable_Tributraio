@@ -9,6 +9,7 @@ import {
   FileText,
   KeyRound,
   Loader2,
+  Receipt,
   RefreshCw,
   Search,
   X,
@@ -159,6 +160,23 @@ export default function PanelDeclaraciones() {
     }
   }
 
+  async function revisarRecibosTodas() {
+    setEncolando(true);
+    setAviso("");
+    try {
+      const r = await api.consultarRxhTodas();
+      setAviso(
+        r.empresas_encoladas
+          ? `Se revisaran en SUNAT los recibos por honorarios de ${MESES_LARGOS[Number(r.periodo.slice(5)) - 1]} de ${r.empresas_encoladas} empresa(s) que hoy no figuran obligadas a la PLAME, una cada ${r.espaciado_seg} s. Si alguna tiene recibos, quedara obligada.`
+          : "No hay empresas por revisar: todas ya figuran obligadas a la PLAME, estan en curso o no tienen clave SOL."
+      );
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setEncolando(false);
+    }
+  }
+
   async function consultarUna(empresaId) {
     try {
       await api.consultarDeclaraciones(empresaId);
@@ -270,6 +288,15 @@ export default function PanelDeclaraciones() {
           >
             <Download size={15} strokeWidth={1.5} />
             Excel
+          </button>
+          <button
+            onClick={revisarRecibosTodas}
+            disabled={encolando}
+            title="Revisa en SUNAT si las empresas que hoy no presentan PLAME recibieron recibos por honorarios en el periodo que vence este mes (si recibieron, deben presentarla). Se hace sola cada sabado."
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition-all duration-300 ease-out hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Receipt size={15} strokeWidth={1.5} />
+            Recibos por honorarios
           </button>
           <button
             onClick={consultarTodas}
@@ -574,6 +601,13 @@ function PanelDetallePeriodo({ fila, periodo, periodoTexto, nombrePeriodo, ultim
                   >
                     {apagado ? "Volver a controlar" : "No esta obligada"}
                   </button>
+                  {codigo === "0601" && (
+                    <RecibosHonorarios
+                      fila={fila}
+                      periodoTexto={periodoTexto}
+                      presentoPlame={formularios.some((f) => f.formulario === "0601")}
+                    />
+                  )}
                   {codigo === "0601" && presentaPlame(fila) && (
                     <div className="mt-2.5 border-t border-slate-100 pt-2.5">
                       <BotonPlame onClick={onClavePlame} />
@@ -634,6 +668,76 @@ function PanelDetallePeriodo({ fila, periodo, periodoTexto, nombrePeriodo, ultim
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Recibos por honorarios que la empresa recibio en el periodo: si tiene,
+// debe presentar la PLAME (rentas de cuarta). Se leen de SUNAT cada sabado
+// (solo las empresas que no figuran obligadas) o con "Revisar en SUNAT".
+function RecibosHonorarios({ fila, periodoTexto, presentoPlame }) {
+  const resumen = fila.rxh?.[periodoTexto];
+  const [recibos, setRecibos] = useState(null);
+  const [mensaje, setMensaje] = useState("");
+  const [pidiendo, setPidiendo] = useState(false);
+
+  async function verDetalle() {
+    if (recibos) return setRecibos(null);
+    try {
+      setRecibos(await api.listarRxh(fila.empresa_id, periodoTexto));
+    } catch (err) {
+      setMensaje(err.message);
+    }
+  }
+
+  async function revisar() {
+    setPidiendo(true);
+    setMensaje("");
+    try {
+      await api.consultarRxh(fila.empresa_id, periodoTexto);
+      setMensaje("Se estan leyendo sus recibos en SUNAT; en unos minutos vuelve a abrir este mes.");
+    } catch (err) {
+      setMensaje(err.message);
+    } finally {
+      setPidiendo(false);
+    }
+  }
+
+  return (
+    <div className="mt-2.5 border-t border-slate-100 pt-2.5 text-[11px] text-slate-500">
+      {resumen ? (
+        <>
+          <p>
+            <strong className="text-ink">{resumen.cantidad} recibo(s) por honorarios</strong> recibidos ·{" "}
+            {soles.format(resumen.renta_bruta)}
+            {resumen.retencion > 0 && ` · retencion ${soles.format(resumen.retencion)}`}
+          </p>
+          {!presentoPlame && <p className="mt-0.5 text-accent">Con estos recibos debe presentar la PLAME de este mes.</p>}
+          <button type="button" onClick={verDetalle} className="mt-1 font-semibold text-accent hover:underline">
+            {recibos ? "Ocultar recibos" : "Ver recibos"}
+          </button>
+          {recibos && (
+            <ul className="mt-1.5 space-y-1">
+              {recibos.map((r) => (
+                <li key={`${r.doc_emisor}-${r.numero}`} className={r.estado === "NO ANULADO" ? "" : "text-slate-300 line-through"}>
+                  {fechaIso(r.fecha_emision)} · {r.numero} · {r.nombre_emisor} · {soles.format(r.renta_bruta)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      ) : (
+        <p>Sin recibos por honorarios recibidos registrados en este mes.</p>
+      )}
+      <button
+        type="button"
+        onClick={revisar}
+        disabled={pidiendo}
+        className="mt-1 block font-semibold text-slate-500 hover:text-accent disabled:opacity-50"
+      >
+        {pidiendo ? "Pidiendo..." : "Revisar recibos en SUNAT"}
+      </button>
+      {mensaje && <p className="mt-1 text-sky-700">{mensaje}</p>}
     </div>
   );
 }

@@ -134,6 +134,8 @@ class EmpresaResponse(BaseModel):
     # asignar). Ver Usuario.asignado_a_usuario_id en models.py -- es
     # informativo/filtrable, no restringe quien puede ver la empresa.
     asignado_a_usuario_id: str | None = None
+    # Debe presentar la PLAME (ver app/plame.py): muestra el boton para copiar su clave SOL.
+    obligada_plame: bool = False
 
     class Config:
         from_attributes = True
@@ -343,6 +345,49 @@ class CumplimientoDeudasResponse(BaseModel):
     filas: list[CumplimientoDeudasFila]
 
 
+class RxhResumenPeriodo(BaseModel):
+    cantidad: int
+    renta_bruta: float
+    retencion: float
+
+
+class ReciboHonorarioItem(BaseModel):
+    periodo: str
+    fecha_emision: date | None
+    tipo: str
+    numero: str
+    estado: str
+    doc_emisor: str
+    nombre_emisor: str
+    moneda: str
+    renta_bruta: float
+    retencion: float
+    renta_neta: float
+    pendiente_pago: float
+
+    class Config:
+        from_attributes = True
+
+
+class ConsultaRxhRequest(BaseModel):
+    periodo: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+
+
+class ConsultaRxhJobResponse(BaseModel):
+    id: str
+    empresa_id: str
+    periodo: str
+    estado: str
+    etapa: str | None = None
+    recibos_leidos: int
+    creado_en: datetime
+    finalizado_en: datetime | None
+    error: str | None
+
+    class Config:
+        from_attributes = True
+
+
 class ConsultaDeclaracionesJobResponse(BaseModel):
     id: str
     empresa_id: str
@@ -468,6 +513,9 @@ class CumplimientoDeclaracionesFila(BaseModel):
     formularios_no_controlados: list[str] = []
     actualizado_en: datetime | None
     consulta_en_curso: bool
+    # Recibos por honorarios vigentes que la empresa recibio, por periodo del
+    # anio (obligan a la PLAME, ver app/plame.py).
+    rxh: dict[str, RxhResumenPeriodo] = {}
     ultimo_error: str | None = None
 
 

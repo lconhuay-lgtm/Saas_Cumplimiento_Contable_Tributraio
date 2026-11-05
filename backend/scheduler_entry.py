@@ -54,7 +54,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.scheduler_job import (
     encolar_chequeo_nocturno, enviar_resumenes_diarios, ejecutar_chequeo_canario, enviar_recordatorios_vencimiento,
     encolar_deudas_diario, encolar_sire_programado, encolar_declaraciones_programado, encolar_detracciones_semanal,
-    encolar_detracciones_carga_inicial,
+    encolar_detracciones_carga_inicial, encolar_rxh_semanal,
 )
 from app.jobs_liquidacion import encolar_liquidacion_automatica
 from app.huerfanos import marcar_jobs_huerfanos
@@ -107,6 +107,11 @@ DECLARACIONES_MINUTO_UTC = int(os.environ.get("DECLARACIONES_MINUTO_UTC", "30"))
 #                                termina antes de la consulta masiva de las 6:00 a.m.
 LIQUIDACION_HORA_UTC = int(os.environ.get("LIQUIDACION_HORA_UTC", "6"))
 LIQUIDACION_MINUTO_UTC = int(os.environ.get("LIQUIDACION_MINUTO_UTC", "30"))
+# Revision semanal de recibos por honorarios recibidos (obligacion PLAME):
+# sabado 19:00 UTC = 2:00 p.m. de Peru.
+RXH_DIA = os.environ.get("RXH_DIA", "sat")
+RXH_HORA_UTC = int(os.environ.get("RXH_HORA_UTC", "19"))
+RXH_MINUTO_UTC = int(os.environ.get("RXH_MINUTO_UTC", "0"))
 
 
 def job_chequeo(etiqueta: str):
@@ -224,6 +229,14 @@ def job_detracciones_semanal():
         logger.info(f"Lectura semanal de detracciones encolada: {encolar_detracciones_semanal()}")
     except Exception:
         logger.exception("Fallo la lectura semanal de detracciones")
+
+
+def job_rxh_semanal():
+    logger.info("Encolando la revision semanal de recibos por honorarios (obligacion PLAME)...")
+    try:
+        logger.info(f"Revision semanal de recibos por honorarios encolada: {encolar_rxh_semanal()}")
+    except Exception:
+        logger.exception("Fallo la revision semanal de recibos por honorarios")
 
 
 def job_detracciones_carga_inicial():
@@ -397,6 +410,12 @@ if __name__ == "__main__":
         CronTrigger(hour=LIQUIDACION_HORA_UTC, minute=LIQUIDACION_MINUTO_UTC),
         id="liquidacion_automatica",
     )
+    # Sabado 2:00 p.m. de Peru: sin consultas masivas ni lecturas diarias cerca.
+    scheduler.add_job(
+        job_rxh_semanal,
+        CronTrigger(day_of_week=RXH_DIA, hour=RXH_HORA_UTC, minute=RXH_MINUTO_UTC),
+        id="rxh_semanal",
+    )
     # Lunes 12:00 p.m. de Peru (17:00 UTC), lejos de las consultas masivas del buzon.
     scheduler.add_job(
         job_detracciones_semanal,
@@ -427,6 +446,7 @@ if __name__ == "__main__":
         f"Declaraciones (las que lo necesitan) a las {DECLARACIONES_HORA_UTC:02d}:{DECLARACIONES_MINUTO_UTC:02d} UTC. "
         f"Liquidacion en vivo (empresas activadas) a las {LIQUIDACION_HORA_UTC:02d}:{LIQUIDACION_MINUTO_UTC:02d} UTC. "
         "Limpieza de jobs huerfanos cada 15 minutos. "
+        f"Recibos por honorarios (obligacion PLAME) los {RXH_DIA} a las {RXH_HORA_UTC:02d}:{RXH_MINUTO_UTC:02d} UTC. "
         "(para probar sin esperar, usa los endpoints /admin/chequeo-nocturno, "
         "/admin/enviar-resumenes, /admin/canario/ejecutar, /admin/limpieza-diagnosticos "
         "y POST /cronograma/sincronizar; para tareas, POST /tareas/generar)"

@@ -2293,3 +2293,168 @@ def consultar_detracciones(
         return {**resultado_vacio, "error": str(e)}
     finally:
         navegador.close_browser()
+
+
+# Recibos por honorarios RECIBIDOS por la empresa (Menu SOL > SEE-SOL >
+# Recibo por Honorarios Electronicos > Consulta Receptor, 11.5.1.1.14). Si la
+# empresa recibio recibos en un periodo debe presentar la PLAME (rentas de
+# cuarta categoria). Se consulta con el mismo POST de su boton Buscar (rango
+# maximo de 1 mes) y se pasa de pagina como su enlace "siguiente". Probado
+# con Bascat el 05/11/2026 (10 recibos de octubre).
+_MENU_CONSULTA_RXH_RECEPTOR = ("nivel1_11", "nivel2_11_5", "nivel3_11_5_1", "nivel4_11_5_1_1_14")
+_URL_CONSULTA_RXH = "/ol-ti-itreciboelectronico/cpelec001Alias"
+_URL_PAGINA_RXH = "/ol-ti-itreciboelectronico/listadobusquedarecep1.jsp"
+_MARCA_RESULTADO_RXH = "FECHA DESDE"
+_MAX_PAGINAS_RXH = 50
+
+
+def _importe_en(texto: str) -> float:
+    """'1,000.00' -> 1000.0 (miles con coma y decimales con punto, formato de esta pantalla)."""
+    try:
+        return round(float(texto.replace(",", "")), 2)
+    except ValueError:
+        return 0.0
+
+
+def extraer_rxh_recibidos(html_texto: str) -> dict | None:
+    """
+    Filas de la tabla del Receptor ("Fecha de emision | TD | Nro | Estado |
+    Tipo doc | Nro doc | Emisor | Tipo renta | Gratuito | Moneda | Renta bruta |
+    Impuesto | [aportes SNP/AFP] | Renta neta | Monto pendiente de pago"),
+    con el contador "X a Y de Z" y el numero de pagina del enlace siguiente.
+    None si la respuesta no es esa pantalla.
+    """
+    if _MARCA_RESULTADO_RXH not in html_texto:
+        return None
+    filas = []
+    for fila in re.findall(r"<tr[^>]*>(.*?)</tr>", html_texto, re.S | re.I):
+        celdas = [_texto_celda(c) for c in re.findall(r"<td[^>]*>(.*?)</td>", fila, re.S | re.I)]
+        if len(celdas) < 14 or not re.fullmatch(r"\d{2}/\d{2}/\d{4}", celdas[0]):
+            continue
+        filas.append({
+            "fecha_emision": _fecha_iso(celdas[0]),
+            "tipo": celdas[1],
+            "numero": celdas[2],
+            "estado": celdas[3],
+            "doc_emisor": celdas[5],
+            "nombre_emisor": celdas[6],
+            "moneda": celdas[9],
+            "renta_bruta": _importe_en(celdas[10]),
+            "retencion": _importe_en(celdas[11]),
+            "renta_neta": _importe_en(celdas[-2]),
+            "pendiente_pago": _importe_en(celdas[-1]),
+        })
+    contador = re.search(r"(\d+)\s+a\s+(\d+)\s+de\s+(\d+)", html_texto)
+    siguiente = re.search(r'name="NavigFormNext".*?name="currPage"\s+value="(\d+)"', html_texto, re.S)
+    return {
+        "filas": filas,
+        "hasta": int(contador.group(2)) if contador else len(filas),
+        "total": int(contador.group(3)) if contador else len(filas),
+        "pagina_siguiente": siguiente.group(1) if siguiente else None,
+    }
+
+
+def consultar_rxh_recibidos(
+    ruc: str,
+    usuario_sol: str,
+    clave_sol: str,
+    fecha_desde: date,
+    fecha_hasta: date,
+    razon_social: str = "",
+    headless: bool = True,
+    on_progreso=None,
+) -> dict:
+    """
+    SOLO LECTURA: recibos por honorarios (y sus notas de credito / otros
+    ingresos de 4ta) que la empresa recibio entre las dos fechas de emision
+    (maximo 1 mes, limite de SUNAT).
+
+    Returns:
+        {"ok": bool, "error": str | None, "recibos": [{"fecha_emision", "tipo", "numero",
+         "estado", "doc_emisor", "nombre_emisor", "moneda", "renta_bruta", "retencion",
+         "renta_neta", "pendiente_pago"}]}
+    """
+    def _reportar(etapa: str):
+        if on_progreso is None:
+            return
+        try:
+            on_progreso(etapa)
+        except Exception as e:
+            logger.warning(f"El callback de progreso fallo (no es grave, se sigue igual): {e}")
+
+    resultado_vacio = {"ok": False, "error": None, "recibos": []}
+    empresa = {"ruc": ruc, "usuario": usuario_sol, "clave": clave_sol, "razon_social": razon_social}
+    navegador = SunatWebNavigator(empresa=empresa, headless=headless)
+    try:
+        if not navegador.initialize_browser():
+            return {**resultado_vacio, "error": "No se pudo iniciar el navegador"}
+
+        _reportar("iniciando_sesion")
+        navegador.driver.get(config.URL_SUNAT)
+        time.sleep(3)
+
+        _reportar("autenticando")
+        if not navegador._hacer_clicks_sunat(empresa):
+            return {**resultado_vacio, "error": error_inicio_sesion(navegador), "credenciales_rechazadas": navegador.credenciales_rechazadas}
+
+        _reportar("abriendo_recibos")
+        error_menu = _abrir_opcion_menu_sol(
+            navegador, _MENU_CONSULTA_RXH_RECEPTOR, "11.5.1.1.14", "la Consulta de recibos por honorarios recibidos"
+        )
+        if error_menu:
+            return {**resultado_vacio, "error": error_menu}
+        driver = navegador.driver
+        try:
+            WebDriverWait(driver, 40).until(lambda d: d.find_elements(By.NAME, "fec_desde"))
+        except Exception:
+            navegador._guardar_captura_error("rxh_sin_formulario")
+            return {**resultado_vacio, "error": "La consulta de recibos por honorarios no termino de cargar"}
+
+        _reportar("leyendo_recibos")
+        driver.set_script_timeout(90)
+        pedido = {
+            "accion": "CapturaCriterioConsulatRec1", "tipocomprobante": "01;02;03;", "ruc_emisor": "",
+            "num_serie": "", "num_comprob": "", "fec_desde": fecha_desde.strftime("%d/%m/%Y"),
+            "fec_hasta": fecha_hasta.strftime("%d/%m/%Y"), "tipoestado": "00",
+        }
+        url = _URL_CONSULTA_RXH
+        recibos: dict[tuple, dict] = {}
+        for _ in range(_MAX_PAGINAS_RXH):
+            status, cuerpo_b64 = driver.execute_async_script(
+                """
+                var done = arguments[arguments.length - 1];
+                fetch(arguments[0], {method: 'POST', body: new URLSearchParams(arguments[1]), credentials: 'include'})
+                  .then(function (r) { return r.arrayBuffer().then(function (buf) {
+                      var bytes = new Uint8Array(buf), bin = '';
+                      for (var i = 0; i < bytes.length; i += 8192) {
+                          bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+                      }
+                      done([r.status, btoa(bin)]);
+                  }); })
+                  .catch(function (e) { done([0, '']); });
+                """,
+                url, pedido,
+            )
+            # Pantalla en Latin-1 (charset=iso-8859-1 en su cabecera).
+            pagina = extraer_rxh_recibidos(base64.b64decode(cuerpo_b64 or "").decode("cp1252", errors="replace")) if status == 200 else None
+            if pagina is None:
+                navegador._guardar_captura_error("rxh_sin_resultado")
+                return {**resultado_vacio, "error": f"SUNAT no devolvio la consulta de recibos por honorarios (HTTP {status})"}
+            for r in pagina["filas"]:
+                recibos[(r["doc_emisor"], r["tipo"], r["numero"])] = r
+            if pagina["hasta"] >= pagina["total"] or not pagina["filas"] or pagina["pagina_siguiente"] is None:
+                break
+            url = _URL_PAGINA_RXH
+            pedido = {"currPage": pagina["pagina_siguiente"], "Action": "next"}
+            time.sleep(0.5)
+        else:
+            return {**resultado_vacio, "error": f"La consulta de recibos por honorarios tiene mas de {_MAX_PAGINAS_RXH} paginas"}
+
+        logger.info(f"Recibos por honorarios recibidos {ruc}: {len(recibos)} entre {fecha_desde} y {fecha_hasta}")
+        return {"ok": True, "error": None, "recibos": list(recibos.values())}
+
+    except Exception as e:
+        logger.error(f"Error consultando los recibos por honorarios de {ruc}: {e}")
+        return {**resultado_vacio, "error": str(e)}
+    finally:
+        navegador.close_browser()

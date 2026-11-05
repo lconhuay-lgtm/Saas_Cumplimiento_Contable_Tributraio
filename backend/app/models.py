@@ -194,6 +194,8 @@ class Empresa(Base):
     consulta_deudas_jobs: Mapped[list["ConsultaDeudasJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     valores_deuda: Mapped[list["ValorDeuda"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     consulta_declaraciones_jobs: Mapped[list["ConsultaDeclaracionesJob"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    consulta_rxh_jobs: Mapped[list["ConsultaRxhJob"]] = relationship(cascade="all, delete-orphan")
+    recibos_honorarios: Mapped[list["ReciboHonorario"]] = relationship(cascade="all, delete-orphan")
     embargos: Mapped[list["EmbargoNotificado"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     recs: Mapped[list["RecCoactiva"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     declaraciones: Mapped[list["DeclaracionSunat"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
@@ -583,6 +585,49 @@ class ConsultaDeclaracionesJob(Base):
     error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="consulta_declaraciones_jobs")
+
+
+class ConsultaRxhJob(Base):
+    """Cola/bitacora de lecturas de los recibos por honorarios RECIBIDOS por una empresa en un periodo (obligacion PLAME)."""
+    __tablename__ = "consulta_rxh_jobs"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    solicitado_por: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=True)
+    periodo: Mapped[str] = mapped_column(String(7), nullable=False)  # "YYYY-MM"
+    estado: Mapped[str] = mapped_column(String(20), default="pendiente", nullable=False, index=True)
+    etapa: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    recibos_leidos: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    iniciado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finalizado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+
+
+class ReciboHonorario(Base):
+    """
+    Recibo por honorarios (o nota de credito / otro ingreso de 4ta) que la
+    empresa RECIBIO, leido de SUNAT (Menu SOL > Consulta Receptor). periodo =
+    mes de la fecha de emision. Un RH vigente obliga a presentar la PLAME.
+    """
+    __tablename__ = "recibos_honorarios"
+    __table_args__ = (UniqueConstraint("empresa_id", "doc_emisor", "tipo", "numero", name="uq_recibo_honorario"),)
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    periodo: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
+    fecha_emision: Mapped[date | None] = mapped_column(Date, nullable=True)
+    tipo: Mapped[str] = mapped_column(String(10), nullable=False)  # RH | NC | otros
+    numero: Mapped[str] = mapped_column(String(30), nullable=False)
+    estado: Mapped[str] = mapped_column(String(30), nullable=False)  # NO ANULADO | ANULADO | REVERTIDO
+    doc_emisor: Mapped[str] = mapped_column(String(15), nullable=False)
+    nombre_emisor: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    moneda: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    renta_bruta: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    retencion: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    renta_neta: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    pendiente_pago: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
 
 class DeclaracionSunat(Base):

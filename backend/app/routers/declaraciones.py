@@ -13,17 +13,21 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import (
-    ConsultaDeclaracionesJob, CronogramaVencimiento, DeclaracionSunat, Empresa, EmpresaObligacion, Usuario,
+    ConsultaDeclaracionesJob, ConsultaRxhJob, CronogramaVencimiento, DeclaracionSunat, Empresa, EmpresaObligacion,
+    ReciboHonorario, Usuario,
 )
 from app.cronograma_sunat import grupo_para_empresa
 from app.cumplimiento import ESTADOS_EN_CURSO, encolar_lecturas, filtrar_activas_en_sunat
 from app.schemas import (
-    ConsultaDeclaracionesJobResponse, ControlFormularioRequest, CumplimientoDeclaracionesFila,
-    CumplimientoDeclaracionesResponse, DeclaracionItem, DeclaracionPeriodoItem,
+    ConsultaDeclaracionesJobResponse, ConsultaRxhJobResponse, ConsultaRxhRequest, ControlFormularioRequest,
+    CumplimientoDeclaracionesFila, CumplimientoDeclaracionesResponse, DeclaracionItem, DeclaracionPeriodoItem,
+    ReciboHonorarioItem,
 )
 from app.deps import get_usuario_actual
 from app.queue_conn import cola_consultas
-from app.jobs import ejecutar_consulta_declaraciones
+from app.jobs import ejecutar_consulta_declaraciones, ejecutar_consulta_rxh
+from app.hora_peru import hoy_peru
+from app.plame import periodo_rxh_a_revisar, plame_desde, resumen_rxh
 from app.rate_limit import verificar_limite_ruc, LimiteExcedido
 from app.acceso import filtrar_empresas_visibles, obtener_empresa_visible
 from app.tareas import cambiar_control_formulario
@@ -130,6 +134,8 @@ def cumplimiento_declaraciones(
     # Apagada a mano ("no esta obligada") y sin otra activa: no se controla
     # aunque SUNAT tenga declaraciones viejas de ese formulario.
     apagadas -= obligaciones
+    desde_plame = plame_desde(db, ids)
+    rxh = resumen_rxh(db, ids, anio_elegido)
     vencimientos = {
         (periodo, grupo): fecha
         for periodo, grupo, fecha in db.query(
@@ -176,6 +182,10 @@ def cumplimiento_declaraciones(
                 obligado_desde[form] = None
                 no_controlados.append(form)
                 continue
+            if form == "0601":
+                # Incluye los recibos por honorarios recibidos (app/plame.py).
+                obligado_desde[form] = desde_plame.get(e.id)
+                continue
             desde = primer_periodo.get((e.id, form))
             obligado_desde[form] = desde or (SIEMPRE if (e.id, tipo_obligacion) in obligaciones else None)
         job = ultimo_job.get(e.id)
@@ -189,6 +199,7 @@ def cumplimiento_declaraciones(
             actualizado_en=ultima_lectura_ok.get(e.id),
             consulta_en_curso=e.id in en_curso,
             ultimo_error=job.error if job is not None and job.estado == "error" else None,
+            rxh=rxh.get(e.id, {}),
         ))
 
     return CumplimientoDeclaracionesResponse(
@@ -225,3 +236,71 @@ def consultar_declaraciones_todas(
         db, _empresas_cumplimiento(db, usuario), ConsultaDeclaracionesJob, ejecutar_consulta_declaraciones,
         solicitado_por=usuario.id,
     )
+
+
+# --- Recibos por honorarios recibidos (obligacion PLAME, ver app/plame.py) ---
+
+@router.post(
+    "/empresas/{empresa_id}/rxh/consultar",
+    response_model=ConsultaRxhJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def consultar_rxh(
+    empresa_id: str,
+    datos: ConsultaRxhRequest | None = None,
+    usuario: Usuario = Depends(get_usuario_actual),
+    db: Session = Depends(get_db),
+):
+    """Lee de SUNAT los recibos por honorarios que la empresa recibio en un periodo (por defecto, el que vence este mes)."""
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
+    en_curso = (
+        db.query(ConsultaRxhJob)
+        .filter(ConsultaRxhJob.empresa_id == empresa.id, ConsultaRxhJob.estado.in_(ESTADOS_EN_CURSO))
+        .first()
+    )
+    if en_curso:
+        return en_curso
+    try:
+        verificar_limite_ruc(empresa.ruc)
+    except LimiteExcedido as e:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(e))
+
+    periodo = (datos.periodo if datos else None) or periodo_rxh_a_revisar(hoy_peru())
+    job = ConsultaRxhJob(empresa_id=empresa.id, solicitado_por=usuario.id, periodo=periodo, estado="pendiente")
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    cola_consultas.enqueue(ejecutar_consulta_rxh, job.id, job_timeout="10m", at_front=True)
+    return job
+
+
+@router.get("/empresas/{empresa_id}/rxh", response_model=list[ReciboHonorarioItem])
+def listar_rxh(
+    empresa_id: str,
+    periodo: str,
+    usuario: Usuario = Depends(get_usuario_actual),
+    db: Session = Depends(get_db),
+):
+    empresa = obtener_empresa_visible(empresa_id, usuario, db)
+    return (
+        db.query(ReciboHonorario)
+        .filter(ReciboHonorario.empresa_id == empresa.id, ReciboHonorario.periodo == periodo)
+        .order_by(ReciboHonorario.fecha_emision, ReciboHonorario.numero)
+        .all()
+    )
+
+
+@router.post("/cumplimiento/rxh/consultar-todas")
+def consultar_rxh_todas(
+    usuario: Usuario = Depends(get_usuario_actual),
+    db: Session = Depends(get_db),
+):
+    """Como la revision semanal, pero de las empresas visibles que todavia no figuran como obligadas a la PLAME."""
+    empresas = _empresas_cumplimiento(db, usuario)
+    desde = plame_desde(db, [e.id for e in empresas])
+    periodo = periodo_rxh_a_revisar(hoy_peru())
+    resultado = encolar_lecturas(
+        db, [e for e in empresas if desde.get(e.id) is None], ConsultaRxhJob, ejecutar_consulta_rxh,
+        solicitado_por=usuario.id, datos_job={"periodo": periodo},
+    )
+    return {**resultado, "periodo": periodo}

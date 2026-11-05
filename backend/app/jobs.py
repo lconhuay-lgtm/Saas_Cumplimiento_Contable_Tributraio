@@ -16,7 +16,7 @@ from app.models import (
     ConsultaJob, FichaRucJob, ReporteTributarioJob, Empresa, CredencialSol, MensajeBuzon, Usuario,
     TareaObligacion, ConsultaSireJob, SireEstadoPeriodo, ConsultaDeudasJob, ValorDeuda,
     ConsultaDeclaracionesJob, DeclaracionSunat, EmbargoNotificado, RecCoactiva, ConsultaDetraccionesJob, DetraccionPago,
-    DetraccionCobertura,
+    DetraccionCobertura, ConsultaRxhJob,
 )
 from app.security import descifrar_clave_sol, crear_token_ingreso_directo
 from app.rate_limit import adquirir_slot_global, liberar_slot_global, limite_mensajes_por_consulta
@@ -1680,6 +1680,102 @@ def _ejecutar_consulta_detracciones(job_id: str):
         logger.exception(f"Error ejecutando ConsultaDetraccionesJob {job_id}")
         db.rollback()
         job = db.query(ConsultaDetraccionesJob).filter(ConsultaDetraccionesJob.id == job_id).first()
+        if job:
+            _fallar(job, str(e))
+    finally:
+        db.close()
+
+
+def ejecutar_consulta_rxh(job_id: str):
+    """Lee de SUNAT los recibos por honorarios que la empresa recibio en job.periodo y revisa su obligacion de PLAME."""
+    from app.plame import aplicar_lectura_rxh, rango_del_periodo
+
+    db = SessionLocal()
+
+    def _reportar_etapa(etapa: str | None):
+        db_etapa = SessionLocal()
+        try:
+            job_actual = db_etapa.query(ConsultaRxhJob).filter(ConsultaRxhJob.id == job_id).first()
+            if job_actual:
+                job_actual.etapa = etapa
+                db_etapa.commit()
+        finally:
+            db_etapa.close()
+
+    def _fallar(job: ConsultaRxhJob, mensaje: str):
+        job.estado = "error"
+        job.error = mensaje[:1000]
+        job.finalizado_en = datetime.now(timezone.utc)
+        db.commit()
+        _reportar_etapa(None)
+
+    try:
+        job = db.query(ConsultaRxhJob).filter(ConsultaRxhJob.id == job_id).first()
+        if not job:
+            logger.error(f"ConsultaRxhJob {job_id} no encontrado")
+            return
+
+        job.estado = "en_progreso"
+        job.iniciado_en = datetime.now(timezone.utc)
+        db.commit()
+
+        empresa = db.query(Empresa).filter(Empresa.id == job.empresa_id).first()
+        credencial = (
+            db.query(CredencialSol).filter(CredencialSol.empresa_id == job.empresa_id).first()
+            if empresa else None
+        )
+        if not empresa or not credencial:
+            _fallar(job, "Empresa o credenciales no encontradas")
+            return
+
+        clave_en_claro = descifrar_clave_sol(credencial.clave_cifrada, credencial.dek_cifrada)
+        desde, hasta = rango_del_periodo(job.periodo)
+
+        from adapter import consultar_rxh_recibidos
+
+        token_slot = adquirir_slot_global()
+        try:
+            resultado = None
+            for intento in range(1, MAX_INTENTOS + 1):
+                resultado = consultar_rxh_recibidos(
+                    ruc=empresa.ruc,
+                    usuario_sol=credencial.usuario_sol,
+                    clave_sol=clave_en_claro,
+                    fecha_desde=desde,
+                    fecha_hasta=hasta,
+                    razon_social=empresa.razon_social,
+                    headless=False,
+                    on_progreso=_reportar_etapa,
+                )
+                if resultado["ok"]:
+                    break
+                logger.warning(f"Recibos por honorarios intento {intento}/{MAX_INTENTOS} fallo para {empresa.ruc}: {resultado['error']}")
+                if resultado.get("credenciales_rechazadas"):
+                    break
+                if intento < MAX_INTENTOS:
+                    time.sleep(ESPERA_ENTRE_INTENTOS_SEG * intento)
+        finally:
+            liberar_slot_global(token_slot)
+
+        if not resultado["ok"]:
+            _fallar(job, resultado["error"] or "Error desconocido")
+            return
+
+        ahora = datetime.now(timezone.utc)
+        leidos = aplicar_lectura_rxh(db, empresa.id, job.periodo, resultado["recibos"], ahora)
+        db.flush()
+        revisar_obligacion_plame(db, empresa.id)
+        job.estado = "completado"
+        job.recibos_leidos = leidos
+        job.finalizado_en = ahora
+        db.commit()
+        _reportar_etapa(None)
+        logger.info(f"ConsultaRxhJob {job_id} completado para {empresa.ruc} {job.periodo}: {leidos} recibo(s)")
+
+    except Exception as e:
+        logger.exception(f"Error ejecutando ConsultaRxhJob {job_id}")
+        db.rollback()
+        job = db.query(ConsultaRxhJob).filter(ConsultaRxhJob.id == job_id).first()
         if job:
             _fallar(job, str(e))
     finally:

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Empresa, EmpresaObligacion, TareaObligacion, CronogramaVencimiento, DeclaracionSunat, SireEstadoPeriodo,
+    ReciboHonorario,
 )
 from app.cronograma_sunat import grupo_para_empresa, empresas_para_cronograma
 from app.hora_peru import hoy_peru
@@ -198,9 +199,11 @@ def generar_tareas_mes(db: Session, tenant_id: str, anio: int, mes: int) -> dict
 
 
 # PLAME: quien la presento en el ultimo anio tiene trabajadores (o
-# pensionistas/4ta con retencion) y queda obligada mes a mes.
+# pensionistas/4ta con retencion) y queda obligada mes a mes. Quien recibio
+# recibos por honorarios tambien (rentas de cuarta, ver app/plame.py).
 MESES_PLAME_RECIENTE = 12
 NOMBRE_PLAME_DETECTADA = "PLAME -- Planilla (detectada en SUNAT)"
+NOMBRE_PLAME_POR_RXH = "PLAME -- detectada por recibos por honorarios"
 
 
 def revisar_obligacion_plame(db: Session, empresa_id: str) -> str | None:
@@ -208,7 +211,8 @@ def revisar_obligacion_plame(db: Session, empresa_id: str) -> str | None:
     No todas las empresas declaran PLAME, y hasta ahora dependia de que
     alguien marcara la casilla al registrar la empresa. Con lo que lee
     "Declaracion mensual": si SUNAT registra un 0601 en los ultimos 12
-    meses y la empresa no tiene NINGUNA obligacion de planilla, se le crea
+    meses (o, con la revision semanal, recibos por honorarios recibidos)
+    y la empresa no tiene NINGUNA obligacion de planilla, se le crea
     (regla cronograma_sunat, como la de la casilla) para que se generen sus
     tareas y el cuadro la controle. Nunca desactiva ni reactiva una que el
     usuario configuro: si la apago a mano, se respeta. No hace commit.
@@ -240,13 +244,23 @@ def revisar_obligacion_plame(db: Session, empresa_id: str) -> str | None:
         )
         .first()
     )
+    nombre = NOMBRE_PLAME_DETECTADA
     if not reciente:
-        return None
+        from app.plame import recibos_vigentes
+
+        con_recibos = (
+            recibos_vigentes(db.query(ReciboHonorario.id))
+            .filter(ReciboHonorario.empresa_id == empresa_id, ReciboHonorario.periodo >= desde)
+            .first()
+        )
+        if not con_recibos:
+            return None
+        nombre = NOMBRE_PLAME_POR_RXH
     db.add(EmpresaObligacion(
-        empresa_id=empresa_id, tipo="planilla", nombre=NOMBRE_PLAME_DETECTADA,
+        empresa_id=empresa_id, tipo="planilla", nombre=nombre,
         regla_vencimiento="cronograma_sunat", activa=True,
     ))
-    logger.info(f"Empresa {empresa_id}: presenta PLAME en SUNAT y no tenia la obligacion -- creada automaticamente")
+    logger.info(f"Empresa {empresa_id}: {nombre} -- obligacion creada automaticamente")
     return "creada"
 
 

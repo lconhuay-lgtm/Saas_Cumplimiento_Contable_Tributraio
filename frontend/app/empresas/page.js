@@ -21,6 +21,7 @@ import {
   LogIn,
   LogOut,
   CheckCheck,
+  KeyRound,
 } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
 import { api, getToken, API_URL } from "../../lib/api";
@@ -43,6 +44,7 @@ import InfoDialog from "../../components/InfoDialog";
 import { infoEtapaConsulta, infoEtapaFichaRuc, infoEtapaReporteTributario } from "../../lib/etapasTrabajos";
 import { useTrabajos, progresoPorTipo } from "../../contexts/TrabajosContext";
 import { fechaPeru } from "../../lib/fechas";
+import VentanaClaveSol, { LEYENDA_PLAME } from "../../components/ClaveSolPlame";
 
 // Menu SOL generico -- YA NO es el boton principal de "Op. en Linea" (eso
 // ahora hace login automatico, ver entrarDirectoASunat), pero se deja como
@@ -169,6 +171,8 @@ function EmpresasPageContenido() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [empresas, setEmpresas] = useState([]);
+  const [clavePlame, setClavePlame] = useState(null); // empresa de la que se pide la clave SOL
+  const [tienePin, setTienePin] = useState(true);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
   // Trabajos en curso (consulta, ficha RUC, reporte tributario) viven en
@@ -216,6 +220,7 @@ function EmpresasPageContenido() {
     // -- fire-and-forget: no importa si tarda o si falla, el boton "Ir a
     // SUNAT" de cada tarjeta funciona igual sin esto, solo que mas lento.
     api.prewarmIngresoDirecto().catch(() => {});
+    api.estadoPin().then((r) => setTienePin(r.tiene_pin)).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -711,6 +716,7 @@ function EmpresasPageContenido() {
                     onEntrarDeclaraciones={() => entrarDirectoADeclaraciones(e.id)}
                     entrandoRentaAnual={!!entrandoRentaAnual[e.id]}
                     onEntrarRentaAnual={() => entrarDirectoARentaAnual(e.id)}
+                    onClavePlame={() => setClavePlame({ empresa_id: e.id, ruc: e.ruc, razon_social: e.razon_social })}
                   />
                 ))}
               </div>
@@ -728,6 +734,14 @@ function EmpresasPageContenido() {
         />
       )}
       {pdfRapido && <ModalPdfRapido info={pdfRapido} onClose={() => setPdfRapido(null)} />}
+      {clavePlame && (
+        <VentanaClaveSol
+          empresa={clavePlame}
+          tienePin={tienePin}
+          onPinCreado={() => setTienePin(true)}
+          onCerrar={() => setClavePlame(null)}
+        />
+      )}
       {eligiendoTipoFicha && (
         <ModalElegirTipoFichaRuc
           info={eligiendoTipoFicha}
@@ -772,6 +786,7 @@ function TarjetaEmpresa({
   onEntrarDeclaraciones,
   entrandoRentaAnual,
   onEntrarRentaAnual,
+  onClavePlame,
 }) {
   return (
     <div className="surface-card animate-fade-in-up p-6 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-soft-lg">
@@ -937,6 +952,19 @@ function TarjetaEmpresa({
           )}
           {entrandoRentaAnual ? "Entrando..." : "DJ Anual"}
         </button>
+
+        {/* Solo empresas obligadas a la PLAME (por su historial, sus recibos por
+            honorarios recibidos o la obligacion marcada): copia su clave SOL con el PIN. */}
+        {e.obligada_plame && (
+          <button
+            onClick={onClavePlame}
+            title={LEYENDA_PLAME}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-accent-light px-2.5 py-1.5 text-xs font-bold text-accent transition-all duration-300 ease-out hover:-translate-y-0.5"
+          >
+            <KeyRound size={13} strokeWidth={2} />
+            PLAME
+          </button>
+        )}
 
         <button
           onClick={onVerFichaRuc}

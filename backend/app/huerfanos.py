@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from app.database import SessionLocal
 from app.models import (
     ConsultaDeclaracionesJob, ConsultaDetraccionesJob, ConsultaDeudasJob, ConsultaJob, ConsultaSireJob, FichaRucJob,
-    LiquidacionLectura, ReporteTributarioJob,
+    LiquidacionLectura, ReporteTributarioJob, ConsultaRxhJob,
 )
 
 logger = logging.getLogger("app.huerfanos")
@@ -33,6 +33,7 @@ LIMITES_HUERFANO = {
     ConsultaSireJob: timedelta(minutes=15),
     ConsultaDeudasJob: timedelta(minutes=15),
     ConsultaDeclaracionesJob: timedelta(minutes=15),
+    ConsultaRxhJob: timedelta(minutes=15),
     ConsultaDetraccionesJob: timedelta(minutes=45),
     LiquidacionLectura: timedelta(minutes=95),
 }

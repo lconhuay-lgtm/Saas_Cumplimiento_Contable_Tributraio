@@ -97,6 +97,11 @@ export const api = {
   guardarPin: (pin, password) => apiFetch("/auth/pin", { method: "POST", body: JSON.stringify({ pin, password }) }),
   verClaveSol: (empresaId, pin) =>
     apiFetch(`/empresas/${empresaId}/clave-sol/ver`, { method: "POST", body: JSON.stringify({ pin }) }),
+  // Recibos por honorarios recibidos (obligacion PLAME, ver backend/app/plame.py).
+  consultarRxh: (empresaId, periodo) =>
+    apiFetch(`/empresas/${empresaId}/rxh/consultar`, { method: "POST", body: JSON.stringify({ periodo }) }),
+  listarRxh: (empresaId, periodo) => apiFetch(`/empresas/${empresaId}/rxh?periodo=${periodo}`),
+  consultarRxhTodas: () => apiFetch("/cumplimiento/rxh/consultar-todas", { method: "POST" }),
 
   // Fase 5: verificacion de email (link de activacion, no bloquea el login).
   reenviarVerificacion: () => apiFetch("/auth/reenviar-verificacion", { method: "POST" }),
