@@ -1,6 +1,6 @@
 """Schemas Pydantic -- validacion de entrada/salida de la API."""
 from datetime import date, datetime
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class RegistroRequest(BaseModel):
@@ -31,6 +31,7 @@ class UsuarioResponse(BaseModel):
     pais_celular: str | None = None
     nombre: str | None = None
     apellidos: str | None = None
+    tiene_pin: bool = False
 
     class Config:
         from_attributes = True
@@ -1190,3 +1191,36 @@ class LiquidacionPanelItem(BaseModel):
 class LiquidacionPanelResponse(BaseModel):
     periodo: str
     empresas: list[LiquidacionPanelItem]
+
+
+# --- Clave SOL para la PLAME (app/routers/clave_sol.py) ---
+PIN_DEMASIADO_FACIL = {"0123", "1234", "2345", "3456", "4567", "5678", "6789", "9876", "8765", "7654", "6543", "5432", "4321", "3210"}
+
+
+class GuardarPinRequest(BaseModel):
+    pin: str = Field(pattern=r"^\d{4}$")
+    password: str = Field(min_length=1)
+
+    @field_validator("pin")
+    @classmethod
+    def _pin_no_obvio(cls, valor: str) -> str:
+        if len(set(valor)) == 1 or valor in PIN_DEMASIADO_FACIL:
+            raise ValueError("Elige un PIN menos obvio (no 1111, 1234, 4321...).")
+        return valor
+
+
+class EstadoPinResponse(BaseModel):
+    tiene_pin: bool
+    bloqueado_hasta: datetime | None = None
+
+
+class VerClaveSolRequest(BaseModel):
+    pin: str = Field(pattern=r"^\d{4}$")
+
+
+class ClaveSolResponse(BaseModel):
+    ruc: str
+    razon_social: str
+    usuario_sol: str
+    clave_sol: str
+    visible_seg: int

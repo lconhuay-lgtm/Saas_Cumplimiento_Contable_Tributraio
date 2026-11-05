@@ -7,6 +7,7 @@ import {
   Clock,
   Download,
   FileText,
+  KeyRound,
   Loader2,
   RefreshCw,
   Search,
@@ -17,6 +18,7 @@ import { api } from "../../lib/api";
 import { descargarCsv, periodoPorDefecto } from "./utilidades";
 import FiltroDigitoRuc, { coincideDigitoRuc } from "./FiltroDigitoRuc";
 import { fechaPeru, hoyPeruIso } from "../../lib/fechas";
+import VentanaClaveSol, { BotonPlame, LEYENDA_PLAME } from "../../components/ClaveSolPlame";
 
 const MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Set", "Oct", "Nov", "Dic"];
 const MESES_LARGOS = [
@@ -71,6 +73,11 @@ function situacionFormulario(fila, periodo, periodoTexto, formulario, ultimoCons
   return "no_presentado";
 }
 
+// Empresas que presentan PLAME: llevan el boton para copiar su clave SOL.
+function presentaPlame(fila) {
+  return !!fila.obligado_desde["0601"] && !fila.formularios_no_controlados?.includes("0601");
+}
+
 function formulariosDe(seleccion) {
   return seleccion === "ambos" ? Object.keys(FORMULARIOS) : [seleccion];
 }
@@ -96,6 +103,12 @@ export default function PanelDeclaraciones() {
   const [verNoObligadas, setVerNoObligadas] = useState(false);
   const [encolando, setEncolando] = useState(false);
   const [detalle, setDetalle] = useState(null); // {fila, mes}
+  const [clavePlame, setClavePlame] = useState(null); // fila de la empresa
+  const [tienePin, setTienePin] = useState(true);
+
+  useEffect(() => {
+    api.estadoPin().then((r) => setTienePin(r.tiene_pin)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     cargar(anio);
@@ -404,7 +417,10 @@ export default function PanelDeclaraciones() {
                     <Link href={`/empresas/${f.empresa_id}`} className="block truncate font-semibold text-ink hover:text-accent" title={f.razon_social}>
                       {f.razon_social}
                     </Link>
-                    <span className="text-xs text-slate-500">{f.ruc}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500">{f.ruc}</span>
+                      {presentaPlame(f) && <BotonPlame onClick={() => setClavePlame(f)} />}
+                    </div>
                   </td>
                   {MESES_LARGOS.map((nombreMes, i) => {
                     const p = f.porMes[i + 1];
@@ -474,6 +490,13 @@ export default function PanelDeclaraciones() {
           <span className="h-1.5 w-1.5 rounded-full bg-violet-500" />
           Tiene rectificatoria
         </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-flex items-center gap-0.5 rounded-full bg-accent-light px-1.5 py-0.5 text-[10px] font-bold text-accent">
+            <KeyRound size={10} strokeWidth={2.25} />
+            PLAME
+          </span>
+          Copia el RUC, usuario y clave SOL con tu PIN
+        </span>
       </div>
 
       {detalle && (
@@ -484,7 +507,17 @@ export default function PanelDeclaraciones() {
           nombrePeriodo={`${MESES_LARGOS[detalle.mes - 1]} ${anioActivo}`}
           ultimo={ultimo}
           onCambiarControl={(formulario, controlar) => cambiarControl(detalle.fila, formulario, controlar)}
+          onClavePlame={() => setClavePlame(detalle.fila)}
           onCerrar={() => setDetalle(null)}
+        />
+      )}
+
+      {clavePlame && (
+        <VentanaClaveSol
+          empresa={clavePlame}
+          tienePin={tienePin}
+          onPinCreado={() => setTienePin(true)}
+          onCerrar={() => setClavePlame(null)}
         />
       )}
     </>
@@ -493,10 +526,11 @@ export default function PanelDeclaraciones() {
 
 // Detalle de un mes de una empresa: estado de cada declaracion controlada y
 // todo lo que SUNAT lista para ese periodo (declaraciones y pagos).
-function PanelDetallePeriodo({ fila, periodo, periodoTexto, nombrePeriodo, ultimo, onCambiarControl, onCerrar }) {
+function PanelDetallePeriodo({ fila, periodo, periodoTexto, nombrePeriodo, ultimo, onCambiarControl, onClavePlame, onCerrar }) {
   useEffect(() => {
     function alTeclear(e) {
-      if (e.key === "Escape") onCerrar();
+      // Con la ventana de la clave abierta encima, Escape la cierra a ella sola.
+      if (e.key === "Escape" && !document.querySelector("[data-ventana-clave-sol]")) onCerrar();
     }
     window.addEventListener("keydown", alTeclear);
     return () => window.removeEventListener("keydown", alTeclear);
@@ -540,6 +574,12 @@ function PanelDetallePeriodo({ fila, periodo, periodoTexto, nombrePeriodo, ultim
                   >
                     {apagado ? "Volver a controlar" : "No esta obligada"}
                   </button>
+                  {codigo === "0601" && presentaPlame(fila) && (
+                    <div className="mt-2.5 border-t border-slate-100 pt-2.5">
+                      <BotonPlame onClick={onClavePlame} />
+                      <p className="mt-1 text-[10px] leading-snug text-slate-400">{LEYENDA_PLAME}</p>
+                    </div>
+                  )}
                 </div>
               );
             })}

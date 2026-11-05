@@ -87,8 +87,18 @@ class Usuario(Base):
     # en blanco hasta que entren y los completen.
     nombre: Mapped[str | None] = mapped_column(String(100), nullable=True)
     apellidos: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Clave SOL para la PLAME (ver app/routers/clave_sol.py): PIN de 4
+    # digitos propio de ESTE usuario, guardado con bcrypt como la contrasena.
+    # Tras varios PIN errados seguidos queda bloqueado unos minutos.
+    pin_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    pin_intentos_fallidos: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    pin_bloqueado_hasta: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     tenant: Mapped["Tenant"] = relationship(back_populates="usuarios")
+
+    @property
+    def tiene_pin(self) -> bool:
+        return bool(self.pin_hash)
 
 
 class Empresa(Base):
@@ -203,6 +213,7 @@ class Empresa(Base):
     liquidacion_cuenta_control: Mapped[list["LiquidacionCuentaControl"]] = relationship(cascade="all, delete-orphan")
     liquidacion_calculos: Mapped[list["LiquidacionCalculo"]] = relationship(cascade="all, delete-orphan")
     liquidacion_conciliaciones: Mapped[list["LiquidacionConciliacion"]] = relationship(cascade="all, delete-orphan")
+    vistas_clave_sol: Mapped[list["VistaClaveSol"]] = relationship(cascade="all, delete-orphan")
 
 
 class CredencialSol(Base):
@@ -223,6 +234,18 @@ class CredencialSol(Base):
     actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="credencial")
+
+
+class VistaClaveSol(Base):
+    """Cada vez que un usuario vio la clave SOL de una empresa con su PIN (boton PLAME)."""
+    __tablename__ = "vistas_clave_sol"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False, index=True)
+    usuario_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("usuarios.id"), nullable=False, index=True)
+    empresa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("empresas.id"), nullable=False, index=True)
+    motivo: Mapped[str] = mapped_column(String(20), default="plame", nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
 
 class MensajeBuzon(Base):

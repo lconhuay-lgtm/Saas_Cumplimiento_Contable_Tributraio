@@ -23,6 +23,7 @@ import { infoEtapa, TITULO_TIPO_TRABAJO } from "../lib/etapasTrabajos";
 import UserMenu from "./UserMenu";
 import ModalNotificacionesNuevas from "./ModalNotificacionesNuevas";
 import ModalValoresNuevos from "./ModalValoresNuevos";
+import VentanaClaveSol from "./ClaveSolPlame";
 
 const ENLACES = [
   { href: "/dashboard", label: "Dashboard", Icon: LayoutDashboard },
@@ -35,6 +36,27 @@ const ENLACES = [
   { href: "/configuracion", label: "Panel maestro", Icon: Settings, soloStaff: true },
 ];
 
+// Aviso de la novedad "clave SOL para la PLAME": sale mientras el usuario no
+// tenga PIN; "Ahora no" lo aparta unos dias (solo en este navegador).
+const CLAVE_AVISO_PIN = "aviso_pin_plame_hasta";
+const DIAS_SIN_AVISO_PIN = 7;
+
+function avisoPinApartado() {
+  try {
+    return Number(localStorage.getItem(CLAVE_AVISO_PIN) || 0) > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+function apartarAvisoPin() {
+  try {
+    localStorage.setItem(CLAVE_AVISO_PIN, String(Date.now() + DIAS_SIN_AVISO_PIN * 24 * 3600 * 1000));
+  } catch {
+    // sin almacenamiento el aviso vuelve a salir la proxima vez, nada mas
+  }
+}
+
 export default function Sidebar() {
   const router = useRouter();
   const pathname = usePathname();
@@ -44,6 +66,9 @@ export default function Sidebar() {
   const [comprobando, setComprobando] = useState(false);
   const [notificaciones, setNotificaciones] = useState([]);
   const [valoresNuevos, setValoresNuevos] = useState([]);
+  // El aviso del PIN espera a que se sepa si hay mensajes o deudas nuevas: nunca dos ventanas juntas.
+  const [avisosRevisados, setAvisosRevisados] = useState(false);
+  const [avisoPin, setAvisoPin] = useState(false);
   const { trabajosActivos, estadoMasiva } = useTrabajos();
 
   useEffect(() => {
@@ -58,17 +83,27 @@ export default function Sidebar() {
     // vive en la base de datos (MensajeBuzon.notificado_popup), en cuanto
     // se marcan vistos ya no vuelven a aparecer en la siguiente consulta.
     if (!usuario?.email_verificado) return;
-    api
+    const notif = api
       .listarNotificacionesNuevas()
       .then((grupos) => setNotificaciones(grupos))
       .catch(() => {});
     // Deudas nuevas en SUNAT (Cumplimiento > Deudas) -- misma mecanica de
     // "visto" en la base (ValorDeuda.notificado_popup).
-    api
+    const valores = api
       .listarValoresNuevos()
       .then((grupos) => setValoresNuevos(grupos))
       .catch(() => {});
+    Promise.all([notif, valores]).then(() => setAvisosRevisados(true));
   }, [usuario?.email_verificado]);
+
+  useEffect(() => {
+    if (avisosRevisados && usuario && !usuario.tiene_pin && !avisoPinApartado()) setAvisoPin(true);
+  }, [avisosRevisados, usuario]);
+
+  function cerrarAvisoPin() {
+    if (!usuario?.tiene_pin) apartarAvisoPin();
+    setAvisoPin(false);
+  }
 
   async function irADeuda(grupo, valores) {
     setValoresNuevos((actual) => actual.filter((g) => g.empresa_id !== grupo.empresa_id));
@@ -300,6 +335,14 @@ export default function Sidebar() {
     {/* Despues de la del buzon, nunca las dos juntas. */}
     {usuario?.email_verificado && notificaciones.length === 0 && valoresNuevos.length > 0 && (
       <ModalValoresNuevos grupos={valoresNuevos} onIrADeuda={irADeuda} onCerrar={cerrarValoresNuevos} />
+    )}
+
+    {avisoPin && notificaciones.length === 0 && valoresNuevos.length === 0 && (
+      <VentanaClaveSol
+        modo="aviso"
+        onPinCreado={() => setUsuario((u) => ({ ...u, tiene_pin: true }))}
+        onCerrar={cerrarAvisoPin}
+      />
     )}
     </>
   );

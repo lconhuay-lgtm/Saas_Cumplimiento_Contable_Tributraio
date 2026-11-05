@@ -92,6 +92,12 @@ export const api = {
   cambiarPassword: (data) =>
     apiFetch("/auth/cambiar-password", { method: "POST", body: JSON.stringify(data) }),
 
+  // Clave SOL para la PLAME: PIN de 4 digitos propio (ver backend/app/routers/clave_sol.py).
+  estadoPin: () => apiFetch("/auth/pin"),
+  guardarPin: (pin, password) => apiFetch("/auth/pin", { method: "POST", body: JSON.stringify({ pin, password }) }),
+  verClaveSol: (empresaId, pin) =>
+    apiFetch(`/empresas/${empresaId}/clave-sol/ver`, { method: "POST", body: JSON.stringify({ pin }) }),
+
   // Fase 5: verificacion de email (link de activacion, no bloquea el login).
   reenviarVerificacion: () => apiFetch("/auth/reenviar-verificacion", { method: "POST" }),
 
