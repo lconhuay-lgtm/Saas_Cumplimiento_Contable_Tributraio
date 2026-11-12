@@ -28,7 +28,27 @@ TIMEOUT_SEG = 20
 
 
 class ErrorApiSire(Exception):
-    """Falla con un mensaje ya listo para mostrar al usuario."""
+    """
+    Falla con un mensaje ya listo para mostrar al usuario. reintentable=False
+    cuando volver a intentar no sirve (credenciales rechazadas o faltantes):
+    la lectura automatica no la reintenta (parametro 3.13).
+    """
+
+    def __init__(self, mensaje: str, reintentable: bool = True):
+        super().__init__(mensaje)
+        self.reintentable = reintentable
+
+
+class TicketPendiente(ErrorApiSire):
+    """
+    SUNAT sigue generando la propuesta (paso el 05/11/2026: un ticket quedo
+    "En proceso" mas de 7 minutos). Lleva el numero de ticket para bajarlo en
+    el proximo intento en vez de pedir otro.
+    """
+
+    def __init__(self, mensaje: str, ticket: str):
+        super().__init__(mensaje)
+        self.ticket = ticket
 
 
 def _detalle_sunat(respuesta: requests.Response) -> str:
@@ -69,9 +89,11 @@ def obtener_token(client_id: str, client_secret: str, ruc: str, usuario_sol: str
     logger.warning(f"Token SIRE {ruc}: HTTP {r.status_code} {detalle}")
     texto = detalle.lower()
     if "client" in texto:
-        raise ErrorApiSire("El ID o la clave de la API no son válidos. Revisa que estén bien copiados del Menú SOL.")
+        raise ErrorApiSire(
+            "El ID o la clave de la API no son válidos. Revisa que estén bien copiados del Menú SOL.", reintentable=False,
+        )
     if "grant" in texto or "usuario" in texto or "password" in texto or "clave" in texto:
-        raise ErrorApiSire("SUNAT rechazó el usuario o la clave SOL guardados de la empresa.")
+        raise ErrorApiSire("SUNAT rechazó el usuario o la clave SOL guardados de la empresa.", reintentable=False)
     if r.status_code >= 500:
         raise ErrorApiSire("SUNAT no respondió. Intenta de nuevo en unos minutos.")
     raise ErrorApiSire(f"SUNAT rechazó la conexión: {detalle}")
@@ -136,8 +158,31 @@ def pedir_propuesta(token: str, libro: str, periodo: str) -> str:
     return str(ticket)
 
 
+def cantidad_informada(dato) -> int | None:
+    """El campo cntCPInformados del registro del ticket, donde venga (None si no viene)."""
+    if isinstance(dato, dict):
+        for clave, valor in dato.items():
+            if clave.lower() == "cntcpinformados":
+                try:
+                    return int(float(str(valor).strip() or "0"))
+                except ValueError:
+                    return None
+        dato = list(dato.values())
+    if isinstance(dato, list):
+        for valor in dato:
+            if isinstance(valor, (dict, list)):
+                n = cantidad_informada(valor)
+                if n is not None:
+                    return n
+    return None
+
+
 def descargar_ticket(token: str, libro: str, periodo: str, ticket: str) -> bytes:
-    """Espera a que el ticket termine y baja su archivo."""
+    """
+    Espera a que el ticket termine y baja su archivo. Devuelve b"" si SUNAT
+    termino sin comprobantes: en ese caso no hay archivo y pedirlo da 422 cod
+    2244 "El archivo solicitado no existe" (mes en curso, 05/11/2026).
+    """
     for _ in range(INTENTOS_TICKET):
         time.sleep(ESPERA_TICKET_SEG)
         r = _get(
@@ -147,8 +192,11 @@ def descargar_ticket(token: str, libro: str, periodo: str, ticket: str) -> bytes
         _exigir_200(r, f"consultar el ticket {ticket}")
         registros = (r.json() or {}).get("registros") or []
         reg = registros[0] if registros else {}
-        if "error" in str(reg.get("desEstadoProceso") or "").lower():
+        estado = str(reg.get("desEstadoProceso") or "").lower()
+        if "error" in estado:
             raise ErrorApiSire(f"El SIRE no pudo generar la propuesta {libro} {periodo}: {reg.get('desEstadoProceso')}")
+        if "termin" in estado and cantidad_informada(reg) == 0:
+            return b""
         archivos = reg.get("archivoReporte") or []
         if not archivos:
             continue
@@ -162,7 +210,10 @@ def descargar_ticket(token: str, libro: str, periodo: str, ticket: str) -> bytes
         )
         _exigir_200(d, f"descargar la propuesta {libro} {periodo}")
         return d.content
-    raise ErrorApiSire(f"El SIRE no terminó de generar la propuesta {libro} {periodo} en 3 minutos.")
+    raise TicketPendiente(
+        f"El SIRE no terminó de generar la propuesta {libro} {periodo} en 3 minutos. "
+        "Se bajará en el próximo intento.", ticket,
+    )
 
 
 def _clave_columna(nombre: str) -> str:
@@ -250,9 +301,13 @@ def normalizar_comprobante(libro: str, fila: dict, periodo: str) -> dict:
     }
 
 
-def descargar_propuesta(token: str, libro: str, periodo: str) -> list[dict]:
-    """Comprobantes de la propuesta del periodo ("AAAA-MM"), ya normalizados."""
+def descargar_propuesta(token: str, libro: str, periodo: str, ticket: str | None = None) -> list[dict]:
+    """
+    Comprobantes de la propuesta del periodo ("AAAA-MM"), ya normalizados.
+    ticket: uno pedido antes que no termino a tiempo (TicketPendiente); se baja
+    ese en vez de pedir otro.
+    """
     aaaamm = periodo.replace("-", "")
-    ticket = pedir_propuesta(token, libro, aaaamm)
+    ticket = ticket or pedir_propuesta(token, libro, aaaamm)
     filas = leer_archivo_propuesta(descargar_ticket(token, libro, aaaamm, ticket))
     return [normalizar_comprobante(libro, f, periodo) for f in filas]

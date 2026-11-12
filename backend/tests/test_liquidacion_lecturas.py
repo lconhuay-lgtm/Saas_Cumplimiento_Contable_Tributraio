@@ -256,7 +256,7 @@ def test_trabajo_de_lecturas(client, db_session, monkeypatch):
             ]},
         }}
 
-    def _propuesta(token, libro, periodo):
+    def _propuesta(token, libro, periodo, ticket=None):
         base = {"fecha_emision": "2026-10-01", "tipo_comprobante": "01", "serie": "F001", "numero": "1", "doc_contraparte": "",
                 "nombre_contraparte": "", "base_gravada": 100.0, "igv": 18.0, "descuento_base": 0.0, "descuento_igv": 0.0,
                 "base_dgng": 0.0, "igv_dgng": 0.0, "no_gravado": 0.0, "exportacion": 0.0, "total": 118.0, "moneda": "PEN",

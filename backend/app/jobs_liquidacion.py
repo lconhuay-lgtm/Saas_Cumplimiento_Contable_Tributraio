@@ -17,14 +17,14 @@ from datetime import date, datetime, timedelta, timezone
 
 from app.aduanas_lc import ErrorAduanas, leer_percepciones_importacion
 from app.database import SessionLocal
-from app.hora_peru import hoy_peru
+from app.hora_peru import ZONA_PERU, hoy_peru
 from app.models import (
     CredencialSol, Empresa, LiquidacionComprobante, LiquidacionCuentaControl, LiquidacionDeclaracion,
     LiquidacionEmpresa, LiquidacionLectura, LiquidacionRetencionPercepcion,
 )
 from app.rate_limit import adquirir_slot_global, liberar_slot_global
 from app.security import descifrar_clave_sol
-from app.sire_api import ErrorApiSire, descargar_propuesta, obtener_token
+from app.sire_api import ErrorApiSire, TicketPendiente, descargar_propuesta, obtener_token
 
 logger = logging.getLogger("app.jobs_liquidacion")
 
@@ -42,6 +42,16 @@ VIDA_MAXIMA_LECTURA = timedelta(hours=2)
 CLAVE_TURNO_SIRE = "liquidacion:sire:turno"
 SEGUNDOS_ENTRE_PEDIDOS_SIRE = 60
 ESPERA_MAXIMA_CUPO_SEG = 20 * 60
+# Ticket del SIRE que no termino a tiempo: el proximo intento lo baja en vez de
+# pedir otro. Pasadas 6 horas se pide uno nuevo (por si SUNAT lo perdio).
+CLAVE_TICKET_SIRE = "liquidacion:sire:ticket:{empresa}:{libro}:{periodo}"
+VIDA_TICKET_SIRE_SEG = 6 * 60 * 60
+# Parametro 3.13: una lectura automatica del SIRE o de Aduanas que falla se
+# vuelve a intentar a los 30 minutos, hasta 3 veces y hasta las 7:00 a.m.
+FUENTES_CON_REINTENTO = ("aduanas", "sire")
+REINTENTOS_AUTOMATICOS = 3
+ESPERA_REINTENTO = timedelta(minutes=30)
+HORA_LIMITE_REINTENTO = 7
 
 
 def sumar_meses(periodo: str, n: int) -> str:
@@ -377,6 +387,120 @@ def encolar_liquidacion_automatica(hoy: date | None = None) -> dict:
         db.close()
 
 
+def _ahora_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _clave_ticket(empresa_id: str, libro: str, periodo: str) -> str:
+    return CLAVE_TICKET_SIRE.format(empresa=empresa_id, libro=libro, periodo=periodo)
+
+
+def ticket_guardado(empresa_id: str, libro: str, periodo: str) -> str | None:
+    from app.queue_conn import redis_conn
+
+    try:
+        valor = redis_conn.get(_clave_ticket(empresa_id, libro, periodo))
+    except Exception:
+        logger.warning("No se pudo leer el ticket guardado del SIRE", exc_info=True)
+        return None
+    return valor.decode() if isinstance(valor, bytes) else valor
+
+
+def guardar_ticket(empresa_id: str, libro: str, periodo: str, ticket: str) -> None:
+    """nx: si ya estaba guardado (se reintento con el mismo ticket) conserva su vencimiento de 6 horas."""
+    from app.queue_conn import redis_conn
+
+    try:
+        redis_conn.set(_clave_ticket(empresa_id, libro, periodo), ticket, ex=VIDA_TICKET_SIRE_SEG, nx=True)
+    except Exception:
+        logger.warning("No se pudo guardar el ticket del SIRE", exc_info=True)
+
+
+def borrar_ticket(empresa_id: str, libro: str, periodo: str) -> None:
+    from app.queue_conn import redis_conn
+
+    try:
+        redis_conn.delete(_clave_ticket(empresa_id, libro, periodo))
+    except Exception:
+        logger.warning("No se pudo borrar el ticket del SIRE", exc_info=True)
+
+
+def leer_propuesta(db, empresa_id: str, token: str, libro: str, periodo: str, al_empezar=None) -> list[dict]:
+    """
+    La propuesta de un libro y periodo, reusando el ticket que quedo pendiente
+    en un intento anterior. Si SUNAT dice que no hay comprobantes pero ya habia
+    leidos, no se borran: se avisa con un error. al_empezar: se llama despues
+    de esperar el turno, al empezar la descarga (para la etapa en pantalla).
+    """
+    previo = ticket_guardado(empresa_id, libro, periodo)
+    if previo is None:
+        _esperar_turno_sire()  # el cupo de 1 por minuto es para pedir propuestas nuevas
+    if al_empezar:
+        al_empezar()
+    try:
+        filas = descargar_propuesta(token, libro, periodo, ticket=previo)
+    except TicketPendiente as e:
+        guardar_ticket(empresa_id, libro, periodo, e.ticket)
+        raise
+    except ErrorApiSire:
+        if previo:
+            borrar_ticket(empresa_id, libro, periodo)
+        raise
+    if previo:
+        borrar_ticket(empresa_id, libro, periodo)
+    if not filas:
+        guardados = db.query(LiquidacionComprobante.id).filter(
+            LiquidacionComprobante.empresa_id == empresa_id,
+            LiquidacionComprobante.libro == libro,
+            LiquidacionComprobante.fuente == "propuesta",
+            LiquidacionComprobante.periodo == periodo,
+        ).count()
+        if guardados:
+            nombre = "ventas" if libro == "RVIE" else "compras"
+            raise ErrorApiSire(
+                f"El SIRE informó 0 comprobantes de {nombre} de {periodo}, pero ya había {guardados} leídos: "
+                "se conservan.", reintentable=False,
+            )
+    return filas
+
+
+def programar_reintentos(db, fallidas: list[LiquidacionLectura], ahora: datetime | None = None) -> list[LiquidacionLectura]:
+    """
+    Parametro 3.13: las lecturas automaticas (sin usuario) que fallaron se
+    vuelven a pedir en un solo trabajo a los 30 minutos, mientras sea antes de
+    las 7:00 a.m. de Lima y no se haya intentado ya 1 + 3 veces hoy.
+    """
+    ahora = ahora or _ahora_utc()
+    automaticas = [l for l in fallidas if l.solicitado_por is None and l.fuente in FUENTES_CON_REINTENTO]
+    if not automaticas:
+        return []
+    lima = ahora.astimezone(ZONA_PERU)
+    limite = lima.replace(hour=HORA_LIMITE_REINTENTO, minute=0, second=0, microsecond=0)
+    if lima + ESPERA_REINTENTO > limite:
+        return []
+    inicio_del_dia = lima.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    rangos = {}
+    for l in automaticas:
+        intentos = db.query(LiquidacionLectura.id).filter(
+            LiquidacionLectura.empresa_id == l.empresa_id,
+            LiquidacionLectura.fuente == l.fuente,
+            LiquidacionLectura.periodo_desde == l.periodo_desde,
+            LiquidacionLectura.periodo_hasta == l.periodo_hasta,
+            LiquidacionLectura.solicitado_por.is_(None),
+            LiquidacionLectura.creado_en >= inicio_del_dia,
+        ).count()
+        if intentos <= REINTENTOS_AUTOMATICOS:
+            rangos[l.fuente] = (l.periodo_desde, l.periodo_hasta)
+    if not rangos:
+        return []
+    periodo = max(hasta for _, hasta in rangos.values())
+    nuevas = crear_lecturas(db, automaticas[0].empresa_id, None, periodo, list(rangos), rangos=rangos)
+    db.commit()
+    encolar_lecturas(nuevas, espera=ESPERA_REINTENTO)
+    logger.info(f"Reintento de liquidacion en 30 min: {automaticas[0].empresa_id} {', '.join(sorted(rangos))}")
+    return nuevas
+
+
 def _esperar_turno_sire(espera_maxima_seg: int = 30 * 60) -> None:
     from app.queue_conn import redis_conn
 
@@ -542,6 +666,9 @@ def ejecutar_lecturas_liquidacion(lectura_ids: list[str]) -> None:
                     if l.estado == "en_progreso":
                         _fallar(l, str(e))
 
+        # Lecturas de SIRE o Aduanas que vale la pena volver a intentar (parametro 3.13).
+        para_reintentar = []
+
         # 3. Aduanas (publica, sin clave)
         lectura = lecturas.get("aduanas")
         if lectura:
@@ -555,9 +682,11 @@ def ejecutar_lecturas_liquidacion(lectura_ids: list[str]) -> None:
                 ))
             except ErrorAduanas as e:
                 _fallar(lectura, str(e))
+                para_reintentar.append(lectura)
             except Exception as e:
                 logger.exception(f"Lectura Aduanas {lectura.id}")
                 _fallar(lectura, str(e))
+                para_reintentar.append(lectura)
 
         # 4. SIRE por la API oficial
         lectura = lecturas.get("sire")
@@ -567,7 +696,7 @@ def ejecutar_lecturas_liquidacion(lectura_ids: list[str]) -> None:
             leidos = 0
             try:
                 if config is None or not config.api_client_id or not config.api_secret_cifrado:
-                    raise ErrorApiSire("Faltan las credenciales de la API del SIRE.")
+                    raise ErrorApiSire("Faltan las credenciales de la API del SIRE.", reintentable=False)
                 token = obtener_token(
                     config.api_client_id, descifrar_clave_sol(config.api_secret_cifrado, config.api_dek_cifrada),
                     empresa.ruc, credencial.usuario_sol, clave,
@@ -577,18 +706,22 @@ def ejecutar_lecturas_liquidacion(lectura_ids: list[str]) -> None:
                 while periodo <= lectura.periodo_hasta:
                     for libro, etapa in (("RVIE", "leyendo_ventas"), ("RCE", "leyendo_compras")):
                         _reportero(lectura.id)("esperando_turno_sire")
-                        _esperar_turno_sire()
-                        _reportero(lectura.id)(etapa)
-                        filas = descargar_propuesta(token, libro, periodo)
+                        filas = leer_propuesta(
+                            db, empresa.id, token, libro, periodo,
+                            al_empezar=lambda etapa=etapa: _reportero(lectura.id)(etapa),
+                        )
                         leidos += aplicar_comprobantes(db, empresa.id, libro, periodo, filas, datetime.now(timezone.utc))
                         db.commit()
                     periodo = sumar_meses(periodo, 1)
                 _terminar(lectura, leidos)
             except ErrorApiSire as e:
                 _fallar(lectura, str(e), leidos)
+                if e.reintentable:
+                    para_reintentar.append(lectura)
             except Exception as e:
                 logger.exception(f"Lectura SIRE {lectura.id}")
                 _fallar(lectura, str(e), leidos)
+                para_reintentar.append(lectura)
 
         logger.info(f"Lecturas de liquidacion de {empresa.ruc}: " + ", ".join(f"{l.fuente}={l.estado}" for l in lecturas.values()))
 
@@ -601,6 +734,13 @@ def ejecutar_lecturas_liquidacion(lectura_ids: list[str]) -> None:
             db.commit()
         except Exception:
             logger.exception(f"Calculo de liquidacion de {empresa.ruc}")
+            db.rollback()
+
+        # 6. Reintento de lo que fallo en la lectura automatica (parametro 3.13).
+        try:
+            programar_reintentos(db, para_reintentar)
+        except Exception:
+            logger.exception(f"Reintento de liquidacion de {empresa.ruc}")
             db.rollback()
     except Exception:
         logger.exception(f"Error en las lecturas de liquidacion {lectura_ids}")
