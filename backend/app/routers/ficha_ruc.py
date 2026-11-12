@@ -120,4 +120,6 @@ def obtener_pdf_ficha_ruc(
     except AlmacenamientoError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
-    return Response(content=contenido, media_type="application/pdf")
+    # no-store: el PDF se reemplaza en la misma direccion cada vez que se
+    # genera uno nuevo; ninguna copia guardada por el navegador debe servirse.
+    return Response(content=contenido, media_type="application/pdf", headers={"Cache-Control": "no-store"})

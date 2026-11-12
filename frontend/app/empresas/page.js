@@ -43,7 +43,7 @@ import ConfirmDialog from "../../components/ConfirmDialog";
 import InfoDialog from "../../components/InfoDialog";
 import { infoEtapaConsulta, infoEtapaFichaRuc, infoEtapaReporteTributario } from "../../lib/etapasTrabajos";
 import { useTrabajos, progresoPorTipo } from "../../contexts/TrabajosContext";
-import { fechaPeru } from "../../lib/fechas";
+import { ZONA_PERU, fechaPeru, hoyPeruIso } from "../../lib/fechas";
 import VentanaClaveSol, { LEYENDA_PLAME } from "../../components/ClaveSolPlame";
 
 // Menu SOL generico -- YA NO es el boton principal de "Op. en Linea" (eso
@@ -152,7 +152,32 @@ function formatoRelativo(fechaIso) {
   const diffH = Math.floor(diffMin / 60);
   if (diffH < 24) return `hace ${diffH}h`;
   const diffD = Math.floor(diffH / 24);
-  return `hace ${diffD}d`;
+  return diffD === 1 ? "hace 1 dia" : `hace ${diffD} dias`;
+}
+
+// La Ficha RUC guardada solo se reusa si se genero HOY (hora de Peru). Antes
+// "Descargar Ficha" entregaba la ultima guardada aunque fuera de semanas
+// atras, sin decir de cuando era (reportado el 11/11/2026). Con QR, ademas,
+// reusar la de hoy cuida las 3 generaciones por dia que permite SUNAT.
+function esDeHoy(fechaIso) {
+  return !!fechaIso && hoyPeruIso(new Date(fechaIso)) === hoyPeruIso();
+}
+
+function horaPeru(fechaIso) {
+  return new Date(fechaIso).toLocaleTimeString("es-PE", { timeZone: ZONA_PERU, hour: "numeric", minute: "2-digit" });
+}
+
+// "de hoy, 10:32 a. m." o "del 20/10/2026 (hace 22 dias)".
+function fechaFichaGuardada(fechaIso) {
+  if (esDeHoy(fechaIso)) return `de hoy, ${horaPeru(fechaIso)}`;
+  return `del ${fechaPeru(fechaIso)} (${formatoRelativo(fechaIso)})`;
+}
+
+// Lo que va a pasar al elegir un tipo de ficha, para decirlo antes del clic.
+function accionFichaRuc(fechaIso, forzarRegenerar) {
+  if (!fechaIso) return "Se genera en SUNAT (1 a 2 minutos).";
+  if (!forzarRegenerar && esDeHoy(fechaIso)) return `Se descarga la generada hoy a las ${horaPeru(fechaIso)}.`;
+  return `Se genera una nueva en SUNAT (la guardada es ${fechaFichaGuardada(fechaIso)}).`;
 }
 
 // Fix Fase R4: useSearchParams() exige un limite de Suspense en el build de
@@ -353,18 +378,18 @@ function EmpresasPageContenido() {
     setEligiendoTipoFicha({ empresa, forzarRegenerar });
   }
 
-  // Si ya se genero una Ficha RUC de este tipo antes Y no se pide forzar,
-  // la descarga directo (rapido, sin volver a entrar a SUNAT). Si no
-  // existe todavia, o si forzarRegenerar=true (el usuario pidio
-  // explicitamente una version nueva porque la guardada puede estar
-  // desactualizada), primero la genera en vivo y recien despues la
-  // descarga. A pedido: descarga directa al disco del usuario en vez de
-  // mostrarla dentro de la app (mas simple, y el archivo queda listo para
-  // archivar/reenviar, que es el uso real que le da un estudio contable).
+  // Si ya se genero HOY una Ficha RUC de este tipo Y no se pide forzar, la
+  // descarga directo (rapido, sin volver a entrar a SUNAT). Si no existe,
+  // si es de otro dia (puede estar desactualizada) o si forzarRegenerar=true,
+  // primero la genera en vivo y recien despues la descarga. A pedido:
+  // descarga directa al disco del usuario en vez de mostrarla dentro de la
+  // app (el archivo queda listo para archivar/reenviar). El nombre lleva la
+  // fecha de la ficha, para no confundirla con otras ya descargadas.
   async function verFichaRuc(empresa, forzarRegenerar = false, conQr = false) {
     try {
       const yaGeneradaEn = conQr ? empresa.ficha_ruc_qr_generada_en : empresa.ficha_ruc_generada_en;
-      if (forzarRegenerar || !yaGeneradaEn) {
+      let generadaEn = yaGeneradaEn;
+      if (forzarRegenerar || !esDeHoy(yaGeneradaEn)) {
         const job = await api.generarFichaRuc(empresa.id, conQr);
         // El polling real vive en TrabajosContext -- sobrevive si el
         // usuario navega a otra pantalla mientras la Ficha RUC se genera.
@@ -374,9 +399,10 @@ function EmpresasPageContenido() {
           return;
         }
         cargar(); // refresca en segundo plano para que quede marcada como ya generada
+        generadaEn = new Date().toISOString();
       }
       const url = await api.obtenerFichaRucPdfUrl(empresa.id, conQr);
-      const nombreArchivo = `${conQr ? "reporte-ficha-ruc-qr" : "ficha-ruc"}-${empresa.ruc}.pdf`;
+      const nombreArchivo = `${conQr ? "reporte-ficha-ruc-qr" : "ficha-ruc"}-${empresa.ruc}-${hoyPeruIso(new Date(generadaEn))}.pdf`;
       const enlace = document.createElement("a");
       enlace.href = url;
       enlace.download = nombreArchivo;
@@ -970,8 +996,10 @@ function TarjetaEmpresa({
           onClick={onVerFichaRuc}
           disabled={generandoFicha}
           title={
-            e.ficha_ruc_generada_en
-              ? "Descarga el PDF de la Ficha RUC ya generado"
+            esDeHoy(e.ficha_ruc_generada_en)
+              ? `Descarga la Ficha RUC generada hoy a las ${horaPeru(e.ficha_ruc_generada_en)}`
+              : e.ficha_ruc_generada_en
+              ? `La Ficha RUC guardada es ${fechaFichaGuardada(e.ficha_ruc_generada_en)}: se genera una nueva entrando en vivo a SUNAT`
               : "Genera y descarga el PDF de la Ficha RUC entrando en vivo a SUNAT"
           }
           className="inline-flex items-center gap-1.5 rounded-lg bg-violet-50 px-2.5 py-1.5 text-xs font-bold text-violet-700 transition-all duration-300 ease-out hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:hover:translate-y-0"
@@ -983,11 +1011,11 @@ function TarjetaEmpresa({
           )}
           {generandoFicha
             ? `${infoEtapaFichaRuc(progresoFicha?.etapa).porcentaje}%`
-            : e.ficha_ruc_generada_en
+            : esDeHoy(e.ficha_ruc_generada_en)
             ? "Descargar Ficha"
             : "Ficha RUC"}
         </button>
-        {e.ficha_ruc_generada_en && !generandoFicha && (
+        {esDeHoy(e.ficha_ruc_generada_en) && !generandoFicha && (
           <button
             onClick={onRegenerarFichaRuc}
             title="Generar una version nueva de la Ficha RUC (por si la guardada quedo desactualizada)"
@@ -1202,15 +1230,21 @@ function ModalElegirTipoFichaRuc({ info, onCancelar, onElegir }) {
             onClick={() => onElegir(true)}
             disabled={cargandoLimite}
             title={limiteAlcanzado ? "Ya usaste el limite de hoy -- SUNAT devolvera el ultimo reporte con QR ya generado" : undefined}
-            className="flex items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-soft transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+            className="flex flex-col items-center justify-center gap-0.5 rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-soft transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
           >
-            Si, con codigo QR{limiteAlcanzado ? " (limite del dia alcanzado)" : ""}
+            <span>Si, con codigo QR{limiteAlcanzado ? " (limite del dia alcanzado)" : ""}</span>
+            <span className="text-xs font-normal text-violet-100">
+              {accionFichaRuc(info.empresa.ficha_ruc_qr_generada_en, info.forzarRegenerar)}
+            </span>
           </button>
           <button
             onClick={() => onElegir(false)}
-            className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-all duration-300 ease-out hover:border-violet-300 hover:text-violet-700"
+            className="flex flex-col items-center justify-center gap-0.5 rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-all duration-300 ease-out hover:border-violet-300 hover:text-violet-700"
           >
-            No, la version normal
+            <span>No, la version normal</span>
+            <span className="text-xs font-normal text-slate-500">
+              {accionFichaRuc(info.empresa.ficha_ruc_generada_en, info.forzarRegenerar)}
+            </span>
           </button>
           <button
             onClick={onCancelar}

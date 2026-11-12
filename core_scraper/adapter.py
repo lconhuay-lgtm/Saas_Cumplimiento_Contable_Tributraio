@@ -1048,7 +1048,10 @@ def generar_ficha_ruc_pdf(
             except Exception:
                 driver.execute_script("arguments[0].click();", boton_aceptar)
 
-            if not navegador._esperar_descarga(timeout=30):
+            # archivos_iniciales = listado de ANTES del clic: Chrome crea al
+            # instante el PDF vacio con su nombre final y, tomado despues, la
+            # descarga no se reconocia (mismo caso que el buzon, 22/10/2026).
+            if not navegador._esperar_descarga(timeout=30, archivos_iniciales=archivos_antes):
                 return {"ok": False, "pdf_bytes": None, "error": "El Reporte de Ficha RUC (con QR) no termino de descargarse a tiempo"}
 
             archivos_nuevos = [
