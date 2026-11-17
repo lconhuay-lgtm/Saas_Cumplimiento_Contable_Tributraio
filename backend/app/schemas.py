@@ -1034,6 +1034,7 @@ class LiquidacionEmpresaItem(BaseModel):
     responsable_id: str | None
     responsable_nombre: str | None
     activa: bool
+    activa_en_sunat: bool = True  # False: de baja o suspendida en SUNAT ("Activar todas" la salta)
     estado: str  # no_activada | falta_responsable | falta_api | sin_probar | api_error | no_afiliada | lista
     api_estado: str
     api_mensaje: str | None
@@ -1067,6 +1068,12 @@ class LiquidacionDetalleResponse(LiquidacionEmpresaItem):
 
 class LiquidacionActivarRequest(BaseModel):
     activa: bool
+
+
+class LiquidacionActivarTodasResponse(BaseModel):
+    activadas: int
+    ya_activas: int
+    saltadas: int  # dadas de baja o suspendidas en SUNAT
 
 
 class LiquidacionApiRequest(BaseModel):

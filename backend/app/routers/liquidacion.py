@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.acceso import es_admin, filtrar_empresas_visibles, obtener_empresa_visible
 from app.calculo_liquidacion import ACCION_VENTAS_ESCRITAS, calcular_periodo, serie_diaria
 from app.credito_compras import MESES_ATRAS, MOTIVOS as MOTIVOS_COMPRA, RevisionCompras
+from app.cumplimiento import filtrar_activas_en_sunat
 from app.database import get_db
 from app.deps import get_usuario_actual
 from app.hora_peru import hoy_peru
@@ -38,7 +39,7 @@ from app.models import (
     LiquidacionRetencionPercepcion, SireEstadoPeriodo, Tenant, Usuario,
 )
 from app.schemas import (
-    REGIMENES_LIQUIDACION, LiquidacionActivarRequest, LiquidacionApiRequest, LiquidacionDetalleResponse,
+    REGIMENES_LIQUIDACION, LiquidacionActivarRequest, LiquidacionActivarTodasResponse, LiquidacionApiRequest, LiquidacionDetalleResponse,
     LiquidacionCalculoResponse, LiquidacionEmpresaItem, LiquidacionEventoItem, LiquidacionLecturaRequest,
     LiquidacionLecturasResponse, LiquidacionListaResponse, LiquidacionPanelResponse, LiquidacionRegimenRequest,
     LiquidacionSerieResponse, LiquidacionActualizarResponse, LiquidacionPeriodoRequest, LiquidacionRevisadoItem,
@@ -107,6 +108,8 @@ def _item(db: Session, empresa: Empresa, config: LiquidacionEmpresa | None) -> d
         "responsable_id": empresa.asignado_a_usuario_id,
         "responsable_nombre": _nombre(empresa.asignado_a),
         "activa": bool(config and config.activa),
+        # Como filtrar_activas_en_sunat: sin estado leido cuenta como activa.
+        "activa_en_sunat": (empresa.estado_contribuyente or "ACTIVO").strip().upper() == "ACTIVO",
         "estado": _estado(empresa, config, periodos),
         "api_estado": config.api_estado if config else "sin_configurar",
         "api_mensaje": config.api_mensaje if config else None,
@@ -180,19 +183,54 @@ def activar_liquidacion(
     if not es_admin(usuario):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo un administrador puede activar o desactivar empresas.")
     empresa = obtener_empresa_visible(empresa_id, usuario, db)
+    config = _cambiar_activacion(db, empresa, usuario, datos.activa)
+    db.commit()
+    return _item(db, empresa, config)
+
+
+def _cambiar_activacion(db: Session, empresa: Empresa, usuario: Usuario, activa: bool) -> LiquidacionEmpresa:
     config = _config(db, empresa.id)
-    if config.activa != datos.activa:
-        config.activa = datos.activa
-        if datos.activa:
+    if config.activa != activa:
+        config.activa = activa
+        if activa:
             config.activada_en = datetime.now(timezone.utc)
             config.activada_por_usuario_id = usuario.id
             if not config.regimen:
                 sugerido = regimen_sugerido(db, empresa.id)
                 if sugerido:
                     config.regimen, config.regimen_origen = sugerido, "pagos"
-        _evento(db, empresa.id, usuario, "activada" if datos.activa else "desactivada")
+        _evento(db, empresa.id, usuario, "activada" if activa else "desactivada")
+    return config
+
+
+@router.post("/liquidacion/empresas/activar-todas", response_model=LiquidacionActivarTodasResponse)
+def activar_todas_liquidacion(db: Session = Depends(get_db), usuario: Usuario = Depends(get_usuario_actual)):
+    """
+    Boton "Activar todas" (a pedido, 17/11/2026): activa en un paso las
+    empresas del estudio que faltan. Las que SUNAT tiene de baja o suspendidas
+    se saltan: la lectura de madrugada no las consulta (filtrar_activas_en_sunat).
+    """
+    if not es_admin(usuario):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo un administrador puede activar empresas.")
+    empresas = filtrar_empresas_visibles(db.query(Empresa), usuario).filter(Empresa.activo.is_(True)).all()
+    ya_activas = {
+        c.empresa_id
+        for c in db.query(LiquidacionEmpresa).filter(
+            LiquidacionEmpresa.empresa_id.in_([e.id for e in empresas] or [""]), LiquidacionEmpresa.activa.is_(True),
+        )
+    }
+    activables = {e.id for e in filtrar_activas_en_sunat(db.query(Empresa).filter(Empresa.id.in_([e.id for e in empresas] or [""])))}
+    activadas = saltadas = 0
+    for empresa in empresas:
+        if empresa.id in ya_activas:
+            continue
+        if empresa.id not in activables:
+            saltadas += 1
+            continue
+        _cambiar_activacion(db, empresa, usuario, True)
+        activadas += 1
     db.commit()
-    return _item(db, empresa, config)
+    return {"activadas": activadas, "ya_activas": len(ya_activas), "saltadas": saltadas}
 
 
 @router.get("/empresas/{empresa_id}/liquidacion", response_model=LiquidacionDetalleResponse)

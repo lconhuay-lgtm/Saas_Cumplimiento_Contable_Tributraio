@@ -353,6 +353,7 @@ export const api = {
   listarLiquidacion: () => apiFetch("/liquidacion/empresas"),
   activarLiquidacion: (empresaId, activa) =>
     apiFetch(`/liquidacion/empresas/${empresaId}/activar`, { method: "POST", body: JSON.stringify({ activa }) }),
+  activarTodasLiquidacion: () => apiFetch("/liquidacion/empresas/activar-todas", { method: "POST" }),
   obtenerLiquidacionEmpresa: (empresaId) => apiFetch(`/empresas/${empresaId}/liquidacion`),
   guardarApiSire: (empresaId, clientId, clientSecret) =>
     apiFetch(`/empresas/${empresaId}/liquidacion/api`, {

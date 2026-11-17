@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { BookOpen, Loader2, Search, Settings2 } from "lucide-react";
 import { api } from "../../lib/api";
+import ConfirmDialog from "../../components/ConfirmDialog";
 import { ESTADOS_LIQUIDACION, textoRegimen } from "../../lib/liquidacion";
 import FiltroDigitoRuc, { coincideDigitoRuc } from "./FiltroDigitoRuc";
 import LiquidacionDelMes from "./LiquidacionDelMes";
@@ -20,6 +21,9 @@ export default function PanelLiquidacion() {
   const [digitos, setDigitos] = useState([]);
   const [soloActivadas, setSoloActivadas] = useState(true);
   const [cambiando, setCambiando] = useState(null);
+  const [confirmandoTodas, setConfirmandoTodas] = useState(false);
+  const [activandoTodas, setActivandoTodas] = useState(false);
+  const [aviso, setAviso] = useState("");
 
   useEffect(() => {
     cargar();
@@ -52,6 +56,30 @@ export default function PanelLiquidacion() {
       setCambiando(null);
     }
   }
+
+  // Boton "Activar todas" (a pedido, 17/11/2026): incluye de una vez las que
+  // faltan, en vez de pulsar "Activar" fila por fila.
+  async function activarTodas() {
+    setConfirmandoTodas(false);
+    setActivandoTodas(true);
+    setAviso("");
+    try {
+      const r = await api.activarTodasLiquidacion();
+      await cargar();
+      setSoloActivadas(true);
+      setAviso(
+        `Se activaron ${r.activadas} empresa(s).` +
+          (r.saltadas ? ` ${r.saltadas} se saltaron porque SUNAT las tiene de baja o suspendidas.` : "") +
+          " Desde esta madrugada se leen solas; las que no tengan la API del SIRE configurada no tendrán ventas ni compras."
+      );
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActivandoTodas(false);
+    }
+  }
+
+  const sinActivar = (datos?.empresas || []).filter((e) => !e.activa && e.activa_en_sunat !== false).length;
 
   const visibles = useMemo(() => {
     if (!datos) return [];
@@ -136,7 +164,38 @@ export default function PanelLiquidacion() {
               Solo activadas
             </label>
             <FiltroDigitoRuc digitos={digitos} onCambio={setDigitos} />
+            {datos?.es_admin && sinActivar > 0 && (
+              <button
+                onClick={() => setConfirmandoTodas(true)}
+                disabled={activandoTodas}
+                className="ml-auto flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-1.5 text-sm font-bold text-white hover:opacity-90 disabled:opacity-60"
+              >
+                {activandoTodas && <Loader2 size={14} className="animate-spin" />}
+                Activar todas ({sinActivar})
+              </button>
+            )}
           </div>
+
+          {aviso && (
+            <div className="mt-4 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-700">{aviso}</div>
+          )}
+
+          {confirmandoTodas && (
+            <ConfirmDialog
+              titulo={`¿Activar ${sinActivar} empresa(s) más?`}
+              mensaje={
+                `Se incluyen en la Liquidación en vivo todas las empresas que faltan y desde esta madrugada se leen ` +
+                `solas de SUNAT. Las que SUNAT tiene de baja o suspendidas se saltan. ` +
+                (datos.activas + sinActivar > datos.incluidas
+                  ? `Tu plan incluye ${datos.incluidas}; las demás quedan como adicionales. `
+                  : "") +
+                `Cada una se puede desactivar después.`
+              }
+              textoConfirmar="Sí, activar todas"
+              onConfirmar={activarTodas}
+              onCancelar={() => setConfirmandoTodas(false)}
+            />
+          )}
 
           <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 bg-white">
             <table className="w-full text-sm">
