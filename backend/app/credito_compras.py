@@ -280,10 +280,14 @@ class RevisionCompras:
     def del_periodo(self, periodo: str, compras: list[LiquidacionComprobante]) -> dict:
         """
         Las compras del periodo y las de meses anteriores que pesan en el: las
-        depositadas tarde cuyo credito pasa a este mes, las suspendidas y las
-        que todavia estan en plazo. `ajuste` es lo que cambia el IGV de compras
-        del registro; `movimientos` lo mismo por fecha, para el grafico dia a dia.
+        depositadas tarde cuyo credito pasa a este mes y, solo en el mes en
+        curso, las suspendidas y las que siguen sin confirmar (si se depositan
+        ahora, cuentan en este mes; en un mes ya pasado no pueden contar, y
+        mostrarlas ensucia la conciliacion con el SIRE). `ajuste` es lo que
+        cambia el IGV de compras del registro; `movimientos` lo mismo por
+        fecha, para el grafico dia a dia.
         """
+        mes_en_curso = periodo >= self.hoy.strftime("%Y-%m")
         filas = [self.clasificar(c) for c in compras]
         registro = sum(f["igv"] for f in filas)
         movimientos = []
@@ -297,7 +301,7 @@ class RevisionCompras:
                 fecha = max((d["fecha"] for d in f["depositos"] if d["fecha"]), default=None)
                 movimientos.append((fecha, f["igv"]))
                 filas.append(f)
-            elif f["credito"] in ("suspendido", "en_riesgo"):
+            elif mes_en_curso and f["credito"] in ("suspendido", "en_riesgo"):
                 filas.append(f)
 
         def suma(cond):

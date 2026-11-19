@@ -93,6 +93,11 @@ def test_estado_de_cada_compra_y_credito_del_mes(client, db_session):
     assert filas["CAR-3"]["credito_texto"] == "Cuenta (viene de octubre)" and filas["CAR-1"]["credito"] == "suspendido"
     assert (nov["ajuste"], nov["resumen"]["credito_viene"]) == (360, 360)
 
+    # Con noviembre ya pasado, lo suspendido de octubre no puede contar ahi: solo queda lo depositado en noviembre.
+    pasado = RevisionCompras(db_session, emp, RUC, date(2026, 12, 10)).del_periodo("2026-11", [])
+    assert [f["car"] for f in pasado["filas"]] == ["CAR-3"]
+    assert (pasado["ajuste"], pasado["resumen"]["suspendido"]) == (360, 0)
+
     # Antes del plazo: en riesgo y aviso de los dias habiles que faltan (5.14).
     temprano = RevisionCompras(db_session, emp, RUC, date(2026, 11, 3))
     r = temprano.del_periodo("2026-10", compras)

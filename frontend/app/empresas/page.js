@@ -45,6 +45,7 @@ import { infoEtapaConsulta, infoEtapaFichaRuc, infoEtapaReporteTributario } from
 import { useTrabajos, progresoPorTipo } from "../../contexts/TrabajosContext";
 import { ZONA_PERU, fechaPeru, hoyPeruIso } from "../../lib/fechas";
 import VentanaClaveSol, { LEYENDA_PLAME } from "../../components/ClaveSolPlame";
+import FiltroDigitoRuc, { coincideDigitoRuc } from "../cumplimiento/FiltroDigitoRuc";
 
 // Menu SOL generico -- YA NO es el boton principal de "Op. en Linea" (eso
 // ahora hace login automatico, ver entrarDirectoASunat), pero se deja como
@@ -217,7 +218,7 @@ function EmpresasPageContenido() {
   const [soloPendientes, setSoloPendientes] = useState(searchParams.get("pendientes") === "1");
   const [filtroEstadoContribuyente, setFiltroEstadoContribuyente] = useState("");
   const [filtroCondicionDomicilio, setFiltroCondicionDomicilio] = useState("");
-  const [filtroUltimoDigito, setFiltroUltimoDigito] = useState("");
+  const [digitos, setDigitos] = useState([]);
   const [pdfRapido, setPdfRapido] = useState(null); // {empresaId, mensaje} | null
   const generandoFicha = useMemo(() => progresoPorTipo(trabajos, "ficha"), [trabajos]);
   const progresoFicha = generandoFicha;
@@ -515,13 +516,6 @@ function EmpresasPageContenido() {
     () => Array.from(new Set(empresas.map((e) => e.condicion_domicilio).filter(Boolean))).sort(),
     [empresas]
   );
-  // Igual que los dos filtros de arriba: solo se listan los digitos que de
-  // verdad tiene alguna empresa registrada, para no mostrar "Termina en 5"
-  // si ninguna termina en 5.
-  const opcionesUltimoDigito = useMemo(
-    () => Array.from(new Set(empresas.map((e) => e.ruc.slice(-1)))).sort(),
-    [empresas]
-  );
 
   const textoBusqueda = busqueda.trim().toLowerCase();
   const empresasFiltradas = empresas.filter((e) => {
@@ -533,7 +527,7 @@ function EmpresasPageContenido() {
     const coincidePendientes = !soloPendientes || e.pendientes > 0;
     const coincideEstado = !filtroEstadoContribuyente || e.estado_contribuyente === filtroEstadoContribuyente;
     const coincideDomicilio = !filtroCondicionDomicilio || e.condicion_domicilio === filtroCondicionDomicilio;
-    const coincideDigito = !filtroUltimoDigito || e.ruc.slice(-1) === filtroUltimoDigito;
+    const coincideDigito = coincideDigitoRuc(e.ruc, digitos);
     return coincideBusqueda && coincideHoy && coincidePendientes && coincideEstado && coincideDomicilio && coincideDigito;
   });
   const empresasConNovedadesHoy = empresas.filter((e) => e.mensajes_hoy > 0).length;
@@ -697,19 +691,11 @@ function EmpresasPageContenido() {
                 ))}
               </select>
 
-              <select
-                value={filtroUltimoDigito}
-                onChange={(e) => setFiltroUltimoDigito(e.target.value)}
-                title="Filtrar por ultimo digito del RUC"
-                className="shrink-0 rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-600 outline-none focus:border-accent"
-              >
-                <option value="">Ultimo digito: todos</option>
-                {opcionesUltimoDigito.map((d) => (
-                  <option key={d} value={d}>
-                    Termina en {d}
-                  </option>
-                ))}
-              </select>
+            </div>
+
+            {/* El mismo filtro de Cumplimiento: se pueden marcar varios digitos. */}
+            <div className="mt-3">
+              <FiltroDigitoRuc digitos={digitos} onCambio={setDigitos} />
             </div>
 
             <p className="mt-4 text-xs font-medium uppercase tracking-wide text-slate-400">
