@@ -140,6 +140,13 @@ def arrastre_de(casillas: dict) -> dict[str, int]:
 
 # --- Calculo ---
 
+TIPO_OPERACION_ANTICIPO = "0104"
+
+
+def es_anticipo(comprobante) -> bool:
+    return str((comprobante.datos or {}).get("tipo operacion") or "").strip() == TIPO_OPERACION_ANTICIPO
+
+
 def sumar_sire(ventas: list, compras: list) -> dict[str, float]:
     """
     Casillas de ventas y compras con centimos, desde la propuesta del SIRE,
@@ -148,8 +155,10 @@ def sumar_sire(ventas: list, compras: list) -> dict[str, float]:
     (vienen en negativo), van a 100 y 101, y las de "Dscto" a 102 y 103. Los
     montos ya vienen en soles aunque el comprobante sea en dolares. La base
     de la Renta (301) es la venta neta: gravada, no gravada y exportacion,
-    menos las notas de credito (6.3). En compras las notas de credito restan
-    del credito.
+    menos las notas de credito (6.3), sin los anticipos (tipo de operacion
+    0104): pagan IGV pero no son ingreso de la Renta todavia (BASCAT 10/2026:
+    sin la factura de anticipo la 301 cuadra al sol). En compras las notas de
+    credito restan del credito.
     """
     s = dict.fromkeys(("100", "101", "102", "103", "105", "106", "109", "301", "107", "108", "110", "111", "114", "115"), 0.0)
     for c in ventas:
@@ -161,7 +170,8 @@ def sumar_sire(ventas: list, compras: list) -> dict[str, float]:
         s["105"] += exonerado
         s["109"] += inafecto
         s["106"] += c.exportacion
-        s["301"] += c.base_gravada + c.descuento_base + c.exportacion + exonerado + inafecto
+        if not es_anticipo(c):
+            s["301"] += c.base_gravada + c.descuento_base + c.exportacion + exonerado + inafecto
     for c in compras:
         if c.tipo_comprobante in TIPOS_IMPORTACION:
             s["114"] += c.base_gravada
@@ -363,6 +373,13 @@ def _calcular(datos: _Datos, periodo: str, regimen: str | None, nivel: int = 0) 
     c["131"] = c["101"] - c["103"]
     if lecturas["sire"] is None:
         avisos.append(f"Faltan las ventas y compras del SIRE de {texto_periodo(periodo)}: usa \"Leer datos de SUNAT\".")
+    anticipos = [v for v in ventas if es_anticipo(v)]
+    if anticipos:
+        monto = soles(sum(v.base_gravada + v.descuento_base for v in anticipos))
+        avisos.append(
+            f"{len(anticipos)} factura(s) de anticipo (tipo de operación 0104) por S/ {monto:,}: pagan IGV pero no "
+            "cuentan como ingreso de la Renta este mes."
+        )
 
     # Lo que se toma de los 0621 anteriores: coeficiente (380), porcentaje
     # aplicado (315), coeficiente de prorrata del credito (173) y cuanto de
@@ -462,6 +479,13 @@ def _calcular(datos: _Datos, periodo: str, regimen: str | None, nivel: int = 0) 
                 f"En el 0621 de {texto_periodo(p)} los ingresos de la Renta (S/ {soles(ingresos):,}) fueron el "
                 f"{proporcion * 100:.1f} % de las ventas declaradas (S/ {soles(ventas_declaradas):,}): se usa la misma proporción."
             )
+    if c["301"] < 0:
+        # QORI HOME 10/2026: notas de credito inafectas mayores que las ventas del mes.
+        avisos.append(
+            f"Las notas de crédito superan a las ventas del mes en S/ {-c['301']:,}: la Renta se calcula sobre S/ 0. "
+            "Revisa si esas notas corresponden a ventas de otros meses."
+        )
+        c["301"] = 0
     anio = int(periodo[:4])
     meses_previos = [f"{anio}-{m:02d}" for m in range(1, int(periodo[5:7]))]
     acumulado = float(c["301"])
@@ -487,7 +511,7 @@ def _calcular(datos: _Datos, periodo: str, regimen: str | None, nivel: int = 0) 
         "renta_por_pagar": max(c["312"] - c["317"], 0) if porcentaje is not None else None,
         "ventas": len(ventas),
         # Ventas netas del mes (sin la proporcion de la Renta): lo que proyecta la Fase 6.
-        "ventas_netas": soles(sire["301"]),
+        "ventas_netas": max(soles(sire["301"]), 0),
         "proporcion_renta": proporcion_renta,  # parte de las ventas netas que es base de la Renta (301)
         "compras": len(compras),
         "credito_regla": credito_regla,

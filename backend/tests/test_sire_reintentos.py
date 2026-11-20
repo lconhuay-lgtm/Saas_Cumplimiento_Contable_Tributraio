@@ -26,11 +26,13 @@ class _Respuesta:
         return self._datos
 
 
-def _sire_falso(monkeypatch, registro):
+def _sire_falso(monkeypatch, registro, descarga=None):
     pedidos = []
 
     def _get(token, url, **params):
         pedidos.append(url.rsplit("/", 1)[-1])
+        if url.endswith("archivoreporte") and descarga is not None:
+            return descarga
         return _Respuesta({"registros": [registro]})
 
     monkeypatch.setattr(sire_api.time, "sleep", lambda s: None)
@@ -38,14 +40,38 @@ def _sire_falso(monkeypatch, registro):
     return pedidos
 
 
-def test_ticket_terminado_sin_comprobantes_no_baja_archivo(monkeypatch):
+def test_ticket_terminado_sin_archivo_y_sin_comprobantes(monkeypatch):
+    pedidos = _sire_falso(monkeypatch, {"desEstadoProceso": "Terminado", "detalleTicket": {"cntCPInformados": "0"}})
+    assert sire_api.descargar_ticket("token", "RVIE", "202611", "123") == b""
+    assert pedidos == ["consultaestadotickets"]
+    assert sire_api.leer_archivo_propuesta(b"") == []
+
+
+def test_archivo_inexistente_cod_2244_es_periodo_sin_comprobantes(monkeypatch):
+    no_existe = _Respuesta({"cod": "422", "errors": [{"cod": "2244", "msg": "El archivo solicitado no existe"}]}, status=422)
+    pedidos = _sire_falso(monkeypatch, {
+        "desEstadoProceso": "Terminado", "detalleTicket": {"cntCPInformados": "0"},
+        "archivoReporte": [{"nomArchivoReporte": "x.zip"}],
+    }, descarga=no_existe)
+    assert sire_api.descargar_ticket("token", "RVIE", "202611", "123") == b""
+    assert pedidos == ["consultaestadotickets", "archivoreporte"]
+
+
+def test_cnt_en_cero_con_archivo_igual_lo_baja(monkeypatch):
+    # Octubre 2026: cntCPInformados venia en 0 y el archivo traia todas las ventas.
     pedidos = _sire_falso(monkeypatch, {
         "desEstadoProceso": "Terminado", "detalleTicket": {"cntCPInformados": "0"},
         "archivoReporte": [{"nomArchivoReporte": "x.zip"}],
     })
-    assert sire_api.descargar_ticket("token", "RVIE", "202611", "123") == b""
-    assert pedidos == ["consultaestadotickets"]  # pedir el archivo daria 422 cod 2244
-    assert sire_api.leer_archivo_propuesta(b"") == []
+    assert sire_api.descargar_ticket("token", "RVIE", "202610", "123") == b"archivo"
+    assert pedidos == ["consultaestadotickets", "archivoreporte"]
+
+
+def test_otro_422_sigue_siendo_error(monkeypatch):
+    _sire_falso(monkeypatch, {"desEstadoProceso": "Terminado", "archivoReporte": [{"nomArchivoReporte": "x.zip"}]},
+                descarga=_Respuesta({"msg": "Parametro invalido"}, status=422))
+    with pytest.raises(ErrorApiSire):
+        sire_api.descargar_ticket("token", "RVIE", "202610", "123")
 
 
 def test_ticket_terminado_con_comprobantes_baja_el_archivo(monkeypatch):

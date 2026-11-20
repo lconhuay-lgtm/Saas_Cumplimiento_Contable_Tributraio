@@ -180,8 +180,12 @@ def cantidad_informada(dato) -> int | None:
 def descargar_ticket(token: str, libro: str, periodo: str, ticket: str) -> bytes:
     """
     Espera a que el ticket termine y baja su archivo. Devuelve b"" si SUNAT
-    termino sin comprobantes: en ese caso no hay archivo y pedirlo da 422 cod
-    2244 "El archivo solicitado no existe" (mes en curso, 05/11/2026).
+    termino sin comprobantes: pedir el archivo da 422 cod 2244 "El archivo
+    solicitado no existe" (mes en curso, 05/11/2026).
+
+    cntCPInformados = 0 NO quiere decir que no haya comprobantes: en octubre
+    venia en 0 y el archivo traia todas las ventas (del 12 al 19/11/2026 eso
+    freno la lectura de octubre). Solo cuenta cuando no hay archivo que bajar.
     """
     for _ in range(INTENTOS_TICKET):
         time.sleep(ESPERA_TICKET_SEG)
@@ -195,10 +199,10 @@ def descargar_ticket(token: str, libro: str, periodo: str, ticket: str) -> bytes
         estado = str(reg.get("desEstadoProceso") or "").lower()
         if "error" in estado:
             raise ErrorApiSire(f"El SIRE no pudo generar la propuesta {libro} {periodo}: {reg.get('desEstadoProceso')}")
-        if "termin" in estado and cantidad_informada(reg) == 0:
-            return b""
         archivos = reg.get("archivoReporte") or []
         if not archivos:
+            if "termin" in estado and cantidad_informada(reg) == 0:
+                return b""
             continue
         a = archivos[0]
         d = _get(
@@ -208,6 +212,8 @@ def descargar_ticket(token: str, libro: str, periodo: str, ticket: str) -> bytes
             codTipoArchivoReporte=a.get("codTipoAchivoReporte") or a.get("codTipoArchivoReporte"),
             codLibro=COD_LIBRO[libro], perTributario=periodo, codProceso=reg.get("codProceso"), numTicket=ticket,
         )
+        if d.status_code == 422 and "2244" in (d.text or ""):
+            return b""
         _exigir_200(d, f"descargar la propuesta {libro} {periodo}")
         return d.content
     raise TicketPendiente(

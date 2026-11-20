@@ -196,6 +196,25 @@ def test_credito_sin_ventas_gravadas_y_con_prorrata(client, db_session):
     assert noviembre["casillas"]["178"] == 180  # 720 x 0.25
 
 
+def test_anticipos_fuera_de_la_renta_y_301_nunca_negativa(client, db_session):
+    ctx, emp = _empresa_con_octubre(client, db_session)
+    url = f"/empresas/{emp}/liquidacion/calculo?periodo=2026-10"
+    # BASCAT 10/2026: la factura de anticipo (0104) paga IGV pero no va a la 301.
+    db_session.add(_comprobante(emp, "RVIE", 4, "01", base=5000.0, igv=900.0, datos={"tipo operacion": "0104"}))
+    db_session.commit()
+    calculo = client.get(url, headers=ctx["headers_miembro"]).json()
+    c = calculo["casillas"]
+    assert (c["101"], c["301"], c["312"]) == (2520, 9300, 93)
+    assert any("anticipo (tipo de operación 0104) por S/ 5,000" in a for a in calculo["avisos"])
+
+    # QORI HOME 10/2026: notas de credito inafectas mayores que las ventas: la 301 queda en 0, no negativa.
+    db_session.add(_comprobante(emp, "RVIE", 5, "07", datos={"mto inafecto": "-20000.00"}))
+    db_session.commit()
+    calculo = client.get(url, headers=ctx["headers_miembro"]).json()
+    assert (calculo["casillas"]["301"], calculo["casillas"]["312"]) == (0, 0)
+    assert any("superan a las ventas del mes en S/ 10,700" in a for a in calculo["avisos"])
+
+
 def test_base_de_renta_con_la_proporcion_del_ultimo_0621(client, db_session):
     # Quien vende por cuenta de otros declara como ingreso solo su comision: 1 % de las ventas.
     ctx = _armar_tenant_con_miembro(client, db_session)
